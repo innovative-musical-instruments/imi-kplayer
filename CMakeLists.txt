@@ -5,7 +5,11 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Minimum macOS version")
 
-add_subdirectory(/Users/amirvinci/SDKs/JUCE JUCE)
+if(APPLE)
+    add_subdirectory(/Users/amirvinci/SDKs/JUCE JUCE)
+elseif(WIN32)
+    add_subdirectory(C:/SDKs/JUCE JUCE)
+endif()
 
 juce_add_gui_app(IMI_KPlayer
     PRODUCT_NAME "Kadabra K-Player"
@@ -27,6 +31,7 @@ target_sources(IMI_KPlayer PRIVATE
     Source/ChannelProcessor.h
     Source/ChannelComponent.cpp
     Source/ChannelComponent.h
+    Source/LoadingOverlayComponent.h
 )
 
 target_compile_definitions(IMI_KPlayer PRIVATE

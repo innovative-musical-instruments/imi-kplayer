@@ -23,6 +23,9 @@ MainComponent::MainComponent(juce::AudioDeviceManager& dm, PluginManager& pm)
         deviceManager.addMidiInputDeviceCallback(input.identifier, this);
     }
 
+    loadingOverlay = std::make_unique<LoadingOverlayComponent>();
+    addAndMakeVisible(loadingOverlay.get());
+
     setSize(900, 600);
 }
 
@@ -35,8 +38,17 @@ MainComponent::~MainComponent()
         deviceManager.removeMidiInputDeviceCallback(input.identifier, this);
 }
 
+void MainComponent::onScanComplete()
+{
+    pluginsReady = true;
+    loadingOverlay.reset();
+}
+
 void MainComponent::showPluginBrowser(bool isReplace)
 {
+    if (!pluginsReady)
+        return;
+
     PluginBrowserComponent::showAsCallOut(
         pluginManager.getPluginList(),
         [this, isReplace](const juce::PluginDescription& desc)
@@ -116,4 +128,7 @@ void MainComponent::resized()
     auto area = getLocalBounds().reduced(20);
     area.removeFromTop(40);
     channelComponent->setBounds(area.removeFromLeft(160).withHeight(500));
+
+    if (loadingOverlay != nullptr)
+        loadingOverlay->setBounds(getLocalBounds());
 }

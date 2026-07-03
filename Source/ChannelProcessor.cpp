@@ -1,5 +1,25 @@
 #include "ChannelProcessor.h"
 
+namespace
+{
+    // Plain juce::DocumentWindow::closeButtonPressed() is a no-op by default,
+    // so the titlebar X does nothing unless something overrides it.
+    class PluginEditorWindow : public juce::DocumentWindow
+    {
+    public:
+        PluginEditorWindow(const juce::String& name, ChannelProcessor& ownerIn)
+            : DocumentWindow(name, juce::Colours::darkgrey, juce::DocumentWindow::closeButton),
+              owner(ownerIn)
+        {
+        }
+
+        void closeButtonPressed() override { owner.hideEditor(); }
+
+    private:
+        ChannelProcessor& owner;
+    };
+}
+
 ChannelProcessor::ChannelProcessor() {}
 ChannelProcessor::~ChannelProcessor() { unloadPlugin(); }
 
@@ -172,10 +192,7 @@ void ChannelProcessor::showEditor()
         auto* ed = plugin->createEditorIfNeeded();
         if (ed == nullptr) return;
 
-        editorWindow = std::make_unique<juce::DocumentWindow>(
-            plugin->getName(),
-            juce::Colours::darkgrey,
-            juce::DocumentWindow::closeButton);
+        editorWindow = std::make_unique<PluginEditorWindow>(plugin->getName(), *this);
 
         editorWindow->setContentOwned(ed, true);
         editorWindow->setResizable(ed->isResizable(), false);

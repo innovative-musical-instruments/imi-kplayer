@@ -17,10 +17,15 @@ public:
     void initialise(const juce::String&) override
     {
         deviceManager.initialiseWithDefaultDevices(0, 2);
-        pluginManager.scanPlugins();
         mainWindow.reset(new MainWindow(getApplicationName(),
                                         deviceManager,
                                         pluginManager));
+
+        pluginManager.scanPluginsAsync([this]
+        {
+            if (mainWindow != nullptr)
+                mainWindow->mainComponent->onScanComplete();
+        });
     }
 
     void shutdown() override { mainWindow = nullptr; }

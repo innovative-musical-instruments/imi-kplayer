@@ -72,7 +72,7 @@ void ChannelComponent::showPluginSlotMenu()
     {
         menu.addItem(0, processor.getPluginName(), false, false);
         menu.addSeparator();
-        menu.addItem(2, processor.isEditorVisible() ? "Hide Editor" : "Show Editor");
+        menu.addItem(2, processor.isEditorVisible() ? "Hide Plugin" : "Show Plugin");
         menu.addSeparator();
         menu.addItem(3, "Replace Plugin...");
         menu.addSeparator();

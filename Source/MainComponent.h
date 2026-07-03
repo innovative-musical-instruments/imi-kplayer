@@ -5,6 +5,7 @@
 #include "ChannelProcessor.h"
 #include "ChannelComponent.h"
 #include "PluginManager.h"
+#include "LoadingOverlayComponent.h"
 
 class MainComponent : public juce::Component,
                       public juce::AudioIODeviceCallback,
@@ -30,6 +31,9 @@ public:
 
     void showPluginBrowser(bool isReplace);
 
+    // Called on the message thread once PluginManager's background scan finishes.
+    void onScanComplete();
+
     ChannelProcessor& getChannelProcessor() { return channelProcessor; }
 
 private:
@@ -38,6 +42,8 @@ private:
 
     ChannelProcessor channelProcessor;
     std::unique_ptr<ChannelComponent> channelComponent;
+    std::unique_ptr<LoadingOverlayComponent> loadingOverlay;
+    bool pluginsReady = false;
 
     juce::MidiBuffer   pendingMidi;
     juce::CriticalSection midiLock;

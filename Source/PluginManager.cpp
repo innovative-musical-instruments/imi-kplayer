@@ -9,7 +9,13 @@ PluginManager::PluginManager()
    #endif
 }
 
-PluginManager::~PluginManager() {}
+PluginManager::~PluginManager()
+{
+    // scanPlugins() has no cancellation checkpoints, so we can't interrupt it early -
+    // wait for it to finish rather than destroying formatManager/knownPluginList out from under it.
+    if (scanThread != nullptr)
+        scanThread->stopThread(-1);
+}
 
 juce::File PluginManager::getPluginCacheFile()
 {
@@ -58,4 +64,10 @@ void PluginManager::scanPlugins()
     cacheFile.getParentDirectory().createDirectory();
     if (auto xml = knownPluginList.createXml())
         xml->writeTo(cacheFile);
+}
+
+void PluginManager::scanPluginsAsync(std::function<void()> onComplete)
+{
+    scanThread = std::make_unique<ScanThread>(*this, std::move(onComplete));
+    scanThread->startThread();
 }
