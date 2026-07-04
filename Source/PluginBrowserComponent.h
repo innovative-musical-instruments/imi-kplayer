@@ -7,8 +7,11 @@ class PluginBrowserComponent : public juce::Component
 public:
     using PluginSelectedCallback = std::function<void(const juce::PluginDescription&)>;
 
+    // allowInstruments: pass false to filter instrument plugins out of the
+    // list (used for insert slots, which are audio-effect-only per spec).
     PluginBrowserComponent(juce::KnownPluginList& list,
-                           PluginSelectedCallback callback);
+                           PluginSelectedCallback callback,
+                           bool allowInstruments = true);
     ~PluginBrowserComponent() override;
 
     void paint(juce::Graphics&) override;
@@ -17,11 +20,13 @@ public:
     // Launch as a CallOutBox anchored to a component
     static void showAsCallOut(juce::KnownPluginList& list,
                               PluginSelectedCallback callback,
-                              juce::Component& anchorComponent);
+                              juce::Component& anchorComponent,
+                              bool allowInstruments = true);
 
 private:
     juce::KnownPluginList& pluginList;
     PluginSelectedCallback onPluginSelected;
+    bool allowInstruments;
 
     juce::TextEditor searchBox;
     juce::ListBox    listBox;

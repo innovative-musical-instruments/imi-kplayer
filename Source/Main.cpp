@@ -53,7 +53,7 @@ public:
             mainComponent = new MainComponent(dm, pm);
             setContentOwned(mainComponent, true);
             setResizable(true, true);
-            centreWithSize(900, 600);
+            centreWithSize(900, 720);
             setVisible(true);
         }
 

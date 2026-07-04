@@ -5,8 +5,8 @@ MainComponent::MainComponent(juce::AudioDeviceManager& dm, PluginManager& pm)
     : deviceManager(dm), pluginManager(pm)
 {
     channelComponent = std::make_unique<ChannelComponent>(channelProcessor);
-    channelComponent->onLoadPlugin    = [this] { showPluginBrowser(false); };
-    channelComponent->onReplacePlugin = [this] { showPluginBrowser(true);  };
+    channelComponent->onLoadPlugin    = [this](int slot) { showPluginBrowser(slot, false); };
+    channelComponent->onReplacePlugin = [this](int slot) { showPluginBrowser(slot, true);  };
     addAndMakeVisible(channelComponent.get());
 
     // ChannelProcessor needs these so it can pull itself off the audio
@@ -26,7 +26,7 @@ MainComponent::MainComponent(juce::AudioDeviceManager& dm, PluginManager& pm)
     loadingOverlay = std::make_unique<LoadingOverlayComponent>();
     addAndMakeVisible(loadingOverlay.get());
 
-    setSize(900, 600);
+    setSize(900, 720);
 }
 
 MainComponent::~MainComponent()
@@ -44,36 +44,41 @@ void MainComponent::onScanComplete()
     loadingOverlay.reset();
 }
 
-void MainComponent::showPluginBrowser(bool isReplace)
+void MainComponent::showPluginBrowser(int slotIndex, bool isReplace)
 {
     if (!pluginsReady)
         return;
 
+    // Slot 0 accepts instruments or audio effects; insert slots 1-5 are
+    // audio-effect-only per spec, so instruments are filtered out for them.
+    bool allowInstruments = (slotIndex == ChannelProcessor::slot0Index);
+
     PluginBrowserComponent::showAsCallOut(
         pluginManager.getPluginList(),
-        [this, isReplace](const juce::PluginDescription& desc)
+        [this, slotIndex, isReplace](const juce::PluginDescription& desc)
         {
             auto* device      = deviceManager.getCurrentAudioDevice();
             double sampleRate = device ? device->getCurrentSampleRate()        : 44100.0;
             int    blockSize  = device ? device->getCurrentBufferSizeSamples() : 512;
 
             if (isReplace)
-                channelProcessor.unloadPlugin();
+                channelProcessor.unloadPlugin(slotIndex);
 
             bool loaded = channelProcessor.loadPlugin(
-                desc, pluginManager.getFormatManager(), sampleRate, blockSize);
+                slotIndex, desc, pluginManager.getFormatManager(), sampleRate, blockSize);
 
             if (loaded)
             {
                 // Wait for CallOutBox to fully dismiss before opening editor
-                juce::Timer::callAfterDelay(100, [this]
+                juce::Timer::callAfterDelay(100, [this, slotIndex]
                 {
                     channelComponent->refresh();
-                    channelProcessor.showEditor();
+                    channelProcessor.showEditor(slotIndex);
                 });
             }
         },
-        *channelComponent
+        *channelComponent,
+        allowInstruments
     );
 }
 
@@ -122,7 +127,7 @@ void MainComponent::paint(juce::Graphics& g)
 void MainComponent::resized()
 {
     auto area = getLocalBounds().reduced(20);
-    channelComponent->setBounds(area.removeFromLeft(160).withHeight(500));
+    channelComponent->setBounds(area.removeFromLeft(160).withHeight(620));
 
     if (loadingOverlay != nullptr)
         loadingOverlay->setBounds(getLocalBounds());

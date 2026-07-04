@@ -7,34 +7,42 @@ namespace
     class PluginEditorWindow : public juce::DocumentWindow
     {
     public:
-        PluginEditorWindow(const juce::String& name, ChannelProcessor& ownerIn)
+        PluginEditorWindow(const juce::String& name, std::function<void()> onCloseIn)
             : DocumentWindow(name, juce::Colours::darkgrey, juce::DocumentWindow::closeButton),
-              owner(ownerIn)
+              onClose(std::move(onCloseIn))
         {
         }
 
-        void closeButtonPressed() override { owner.hideEditor(); }
+        void closeButtonPressed() override { if (onClose) onClose(); }
 
     private:
-        ChannelProcessor& owner;
+        std::function<void()> onClose;
     };
 }
 
 ChannelProcessor::ChannelProcessor() {}
-ChannelProcessor::~ChannelProcessor() { unloadPlugin(); }
+ChannelProcessor::~ChannelProcessor()
+{
+    for (int i = 0; i < totalSlotCount; ++i)
+        unloadPlugin(i);
+}
 
-bool ChannelProcessor::loadPlugin(const juce::PluginDescription& desc,
+bool ChannelProcessor::loadPlugin(int slotIndex,
+                                   const juce::PluginDescription& desc,
                                    juce::AudioPluginFormatManager& formatManager,
                                    double sampleRate,
                                    int blockSize)
 {
+    jassert(slotIndex >= 0 && slotIndex < totalSlotCount);
+    auto& slot = slots[(size_t) slotIndex];
+
     juce::String errorMessage;
 
     // Pull the audio thread off the callback entirely before touching
     // `plugin` - removeAudioCallback() blocks until any in-flight audio
     // callback returns and guarantees no further calls until it's added
     // back, so processBlock() cannot race the instantiation below.
-    pluginReady.store(false, std::memory_order_release);
+    slot.ready.store(false, std::memory_order_release);
     if (deviceManager && audioCallback)
         deviceManager->removeAudioCallback(audioCallback);
 
@@ -49,26 +57,30 @@ bool ChannelProcessor::loadPlugin(const juce::PluginDescription& desc,
         return false;
     }
 
-    // Force a plain 0-in/stereo-out bus layout *before* prepareToPlay().
-    // prepareToPlay() sizes the AU/VST3 wrapper's internal render buffers
-    // from whatever bus layout is active at that moment; calling
-    // setPlayConfigDetails() afterwards (the old approach) doesn't touch
-    // bus layout at all for bus-based formats. Instruments like HISE's
-    // K-Sampler can default to extra output busses (mic/RR routing),
-    // which left the AU wrapper rendering into more channels than our
-    // 2-channel buffer actually has room for - an out-of-bounds write
-    // that manifested as SIGBUS deep in AUBase::DoRender.
+    // Force a plain bus layout *before* prepareToPlay(). prepareToPlay()
+    // sizes the AU/VST3 wrapper's internal render buffers from whatever
+    // bus layout is active at that moment; calling setPlayConfigDetails()
+    // afterwards (the old approach) doesn't touch bus layout at all for
+    // bus-based formats. Instruments like HISE's K-Sampler can default to
+    // extra output busses (mic/RR routing), which left the AU wrapper
+    // rendering into more channels than our 2-channel buffer actually has
+    // room for - an out-of-bounds write that manifested as SIGBUS deep in
+    // AUBase::DoRender.
     newPlugin->disableNonMainBuses();
 
-    // Start from the plugin's own (now mostly-disabled) layout so the
-    // bus counts already match what it actually has - an instrument may
-    // report zero input busses, and building a BusesLayout with an
-    // assumed 1-in/1-out shape mismatches that and crashes inside
-    // syncBusLayouts() when it walks a bus that doesn't exist.
+    // Start from the plugin's own (now mostly-disabled) layout so the bus
+    // counts already match what it actually has - an instrument may report
+    // zero input busses, and building a BusesLayout with an assumed
+    // 1-in/1-out shape mismatches that and crashes inside syncBusLayouts()
+    // when it walks a bus that doesn't exist. Instruments get a disabled
+    // input bus (they're driven by MIDI only); insert-slot audio effects
+    // need a real stereo input bus so they actually receive the signal.
     auto layout = newPlugin->getBusesLayout();
 
     if (layout.inputBuses.size() > 0)
-        layout.inputBuses.getReference(0) = juce::AudioChannelSet::disabled();
+        layout.inputBuses.getReference(0) = desc.isInstrument
+            ? juce::AudioChannelSet::disabled()
+            : juce::AudioChannelSet::stereo();
 
     if (layout.outputBuses.size() > 0)
         layout.outputBuses.getReference(0) = juce::AudioChannelSet::stereo();
@@ -76,7 +88,7 @@ bool ChannelProcessor::loadPlugin(const juce::PluginDescription& desc,
     if (! newPlugin->setBusesLayout(layout))
     {
         juce::Logger::outputDebugString(
-            "Plugin does not support 0-in/stereo-out bus layout: " + desc.name);
+            "Plugin does not support the required bus layout: " + desc.name);
         if (deviceManager && audioCallback)
             deviceManager->addAudioCallback(audioCallback);
         return false;
@@ -85,7 +97,8 @@ bool ChannelProcessor::loadPlugin(const juce::PluginDescription& desc,
     newPlugin->setPlayHead(&playHead);
     newPlugin->prepareToPlay(sampleRate, blockSize);
 
-    plugin = std::move(newPlugin);
+    slot.plugin = std::move(newPlugin);
+    slot.bypassed = false;
     currentSampleRate = sampleRate;
     currentBlockSize  = blockSize;
 
@@ -96,61 +109,87 @@ bool ChannelProcessor::loadPlugin(const juce::PluginDescription& desc,
     // our own audio thread (that's already guaranteed above).
     juce::Thread::sleep(1000);
 
-    pluginReady.store(true, std::memory_order_release);
+    slot.ready.store(true, std::memory_order_release);
     if (deviceManager && audioCallback)
         deviceManager->addAudioCallback(audioCallback);
 
     return true;
 }
 
-void ChannelProcessor::unloadPlugin()
+void ChannelProcessor::unloadPlugin(int slotIndex)
 {
-    hideEditor();
+    jassert(slotIndex >= 0 && slotIndex < totalSlotCount);
+    auto& slot = slots[(size_t) slotIndex];
 
-    if (plugin == nullptr)
+    hideEditor(slotIndex);
+
+    if (slot.plugin == nullptr)
         return;
 
-    pluginReady.store(false, std::memory_order_release);
+    slot.ready.store(false, std::memory_order_release);
     if (deviceManager && audioCallback)
         deviceManager->removeAudioCallback(audioCallback);
 
-    plugin->setPlayHead(nullptr);
-    plugin->releaseResources();
+    slot.plugin->setPlayHead(nullptr);
+    slot.plugin->releaseResources();
 
     // Wait for HISE background threads to finish before the destructor runs
     juce::Thread::sleep(500);
 
-    plugin.reset();
+    slot.plugin.reset();
 
     if (deviceManager && audioCallback)
         deviceManager->addAudioCallback(audioCallback);
 }
 
-juce::String ChannelProcessor::getPluginName() const
+bool ChannelProcessor::hasPlugin(int slotIndex) const
 {
-    if (plugin != nullptr)
-        return plugin->getName();
+    return slots[(size_t) slotIndex].plugin != nullptr;
+}
+
+bool ChannelProcessor::isEditorVisible(int slotIndex) const
+{
+    auto& slot = slots[(size_t) slotIndex];
+    return slot.editorWindow != nullptr && slot.editorWindow->isVisible();
+}
+
+juce::String ChannelProcessor::getPluginName(int slotIndex) const
+{
+    auto& slot = slots[(size_t) slotIndex];
+    if (slot.plugin != nullptr)
+        return slot.plugin->getName();
     return "No Plugin";
+}
+
+void ChannelProcessor::setBypassed(int slotIndex, bool shouldBeBypassed)
+{
+    slots[(size_t) slotIndex].bypassed = shouldBeBypassed;
+}
+
+bool ChannelProcessor::isBypassed(int slotIndex) const
+{
+    return slots[(size_t) slotIndex].bypassed;
 }
 
 void ChannelProcessor::prepareToPlay(double sampleRate, int blockSize)
 {
     currentSampleRate = sampleRate;
     currentBlockSize  = blockSize;
-    if (plugin != nullptr)
-        plugin->prepareToPlay(sampleRate, blockSize);
+    for (auto& slot : slots)
+        if (slot.plugin != nullptr)
+            slot.plugin->prepareToPlay(sampleRate, blockSize);
 }
 
 void ChannelProcessor::processBlock(juce::AudioBuffer<float>& buffer,
                                      juce::MidiBuffer& midi)
 {
-    if (! pluginReady.load(std::memory_order_acquire) || plugin == nullptr)
+    auto& first = slots[(size_t) slot0Index];
+
+    if (! first.ready.load(std::memory_order_acquire) || first.plugin == nullptr || first.bypassed)
     {
         buffer.clear();
-        return;
     }
-
-    if (midiChannel > 0)
+    else if (midiChannel > 0)
     {
         juce::MidiBuffer filtered;
         for (auto meta : midi)
@@ -159,11 +198,19 @@ void ChannelProcessor::processBlock(juce::AudioBuffer<float>& buffer,
             if (msg.getChannel() == midiChannel || msg.getChannel() == 0)
                 filtered.addEvent(msg, meta.samplePosition);
         }
-        plugin->processBlock(buffer, filtered);
+        first.plugin->processBlock(buffer, filtered);
     }
     else
     {
-        plugin->processBlock(buffer, midi);
+        first.plugin->processBlock(buffer, midi);
+    }
+
+    juce::MidiBuffer noMidi;
+    for (int i = 1; i < totalSlotCount; ++i)
+    {
+        auto& slot = slots[(size_t) i];
+        if (slot.ready.load(std::memory_order_acquire) && slot.plugin != nullptr && ! slot.bypassed)
+            slot.plugin->processBlock(buffer, noMidi);
     }
 
     applyGainAndPan(buffer);
@@ -181,28 +228,33 @@ void ChannelProcessor::applyGainAndPan(juce::AudioBuffer<float>& buffer)
     buffer.applyGain(1, 0, buffer.getNumSamples(), rightGain);
 }
 
-void ChannelProcessor::showEditor()
+void ChannelProcessor::showEditor(int slotIndex)
 {
-    if (plugin == nullptr) return;
+    jassert(slotIndex >= 0 && slotIndex < totalSlotCount);
+    auto& slot = slots[(size_t) slotIndex];
 
-    hideEditor();
+    if (slot.plugin == nullptr) return;
 
-    if (plugin->hasEditor())
+    hideEditor(slotIndex);
+
+    if (slot.plugin->hasEditor())
     {
-        auto* ed = plugin->createEditorIfNeeded();
+        auto* ed = slot.plugin->createEditorIfNeeded();
         if (ed == nullptr) return;
 
-        editorWindow = std::make_unique<PluginEditorWindow>(plugin->getName(), *this);
+        auto* window = new PluginEditorWindow(slot.plugin->getName(),
+                                              [this, slotIndex] { hideEditor(slotIndex); });
+        slot.editorWindow.reset(window);
 
-        editorWindow->setContentOwned(ed, true);
-        editorWindow->setResizable(ed->isResizable(), false);
-        editorWindow->centreWithSize(ed->getWidth(), ed->getHeight());
-        editorWindow->setVisible(true);
-        editorWindow->setAlwaysOnTop(true);
+        window->setContentOwned(ed, true);
+        window->setResizable(ed->isResizable(), false);
+        window->centreWithSize(ed->getWidth(), ed->getHeight());
+        window->setVisible(true);
+        window->setAlwaysOnTop(true);
     }
 }
 
-void ChannelProcessor::hideEditor()
+void ChannelProcessor::hideEditor(int slotIndex)
 {
-    editorWindow.reset();
+    slots[(size_t) slotIndex].editorWindow.reset();
 }

@@ -29,7 +29,7 @@ public:
 
     void handleIncomingMidiMessage(juce::MidiInput*, const juce::MidiMessage& msg) override;
 
-    void showPluginBrowser(bool isReplace);
+    void showPluginBrowser(int slotIndex, bool isReplace);
 
     // Called on the message thread once PluginManager's background scan finishes.
     void onScanComplete();

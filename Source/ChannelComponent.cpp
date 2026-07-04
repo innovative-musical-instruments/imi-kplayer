@@ -1,19 +1,98 @@
 #include "ChannelComponent.h"
 
+namespace
+{
+    // Draws gain/pan as a console-mixer-style fader: a fully-highlighted
+    // groove (the highlight only ever indicated the *filled* portion in
+    // the default LookAndFeel, which reads as a level meter rather than a
+    // fader position) plus a bigger rectangular cap with a centre grip line.
+    class ConsoleFaderLookAndFeel : public juce::LookAndFeel_V4
+    {
+    public:
+        void drawLinearSlider(juce::Graphics& g, int x, int y, int width, int height,
+                              float sliderPos, float /*minSliderPos*/, float /*maxSliderPos*/,
+                              const juce::Slider::SliderStyle style, juce::Slider& slider) override
+        {
+            auto trackColour = juce::Colour(0xff3d5a80);
+            auto capColour   = juce::Colours::white;
+            auto capBorder   = juce::Colours::black.withAlpha(0.6f);
+
+            // Shared cross-axis size so the gain cap's width matches the
+            // pan cap's height, rather than each stretching to fill its
+            // own (very differently proportioned) slider bounds. Capped
+            // to fit within the pan slider's actual drawable height (its
+            // bounds minus the text box below it), since a cap taller
+            // than that overflows/clips.
+            const float crossAxisSize = 26.0f;
+
+            if (style == juce::Slider::LinearVertical)
+            {
+                const float trackWidth = 6.0f;
+                juce::Rectangle<float> track(x + width * 0.5f - trackWidth * 0.5f,
+                                             (float) y, trackWidth, (float) height);
+                g.setColour(trackColour);
+                g.fillRoundedRectangle(track, trackWidth * 0.5f);
+
+                const float capHeight = 20.0f;
+                const float capWidth  = crossAxisSize;
+                juce::Rectangle<float> cap(x + ((float) width - capWidth) * 0.5f,
+                                          sliderPos - capHeight * 0.5f, capWidth, capHeight);
+                g.setColour(capColour);
+                g.fillRoundedRectangle(cap, 3.0f);
+                g.setColour(capBorder);
+                g.drawRoundedRectangle(cap, 3.0f, 1.0f);
+                g.drawLine(cap.getX() + 4, cap.getCentreY(), cap.getRight() - 4, cap.getCentreY(), 2.0f);
+            }
+            else if (style == juce::Slider::LinearHorizontal)
+            {
+                const float trackHeight = 6.0f;
+                juce::Rectangle<float> track((float) x, y + height * 0.5f - trackHeight * 0.5f,
+                                             (float) width, trackHeight);
+                g.setColour(trackColour);
+                g.fillRoundedRectangle(track, trackHeight * 0.5f);
+
+                const float capWidth  = 20.0f;
+                const float capHeight = crossAxisSize;
+                juce::Rectangle<float> cap(sliderPos - capWidth * 0.5f,
+                                          y + ((float) height - capHeight) * 0.5f, capWidth, capHeight);
+                g.setColour(capColour);
+                g.fillRoundedRectangle(cap, 3.0f);
+                g.setColour(capBorder);
+                g.drawRoundedRectangle(cap, 3.0f, 1.0f);
+                g.drawLine(cap.getCentreX(), cap.getY() + 4, cap.getCentreX(), cap.getBottom() - 4, 2.0f);
+            }
+            else
+            {
+                LookAndFeel_V4::drawLinearSlider(g, x, y, width, height, sliderPos,
+                                                 0.0f, 0.0f, style, slider);
+            }
+        }
+    };
+}
+
 ChannelComponent::ChannelComponent(ChannelProcessor& p)
     : processor(p)
 {
+    faderLookAndFeel = std::make_unique<ConsoleFaderLookAndFeel>();
     pluginLabel.setText("Instrument", juce::dontSendNotification);
     pluginLabel.setFont(juce::Font(11.0f));
     pluginLabel.setJustificationType(juce::Justification::centredLeft);
     pluginLabel.setColour(juce::Label::textColourId, juce::Colour(0xffaaaaaa));
     addAndMakeVisible(pluginLabel);
 
-    pluginSlotButton.setButtonText("- empty -");
-    pluginSlotButton.setColour(juce::TextButton::buttonColourId,  juce::Colour(0xff2a2a3e));
-    pluginSlotButton.setColour(juce::TextButton::textColourOffId, juce::Colour(0xffaaaaaa));
-    pluginSlotButton.onClick = [this] { showPluginSlotMenu(); };
-    addAndMakeVisible(pluginSlotButton);
+    insertsLabel.setText("Inserts", juce::dontSendNotification);
+    insertsLabel.setFont(juce::Font(11.0f));
+    insertsLabel.setJustificationType(juce::Justification::centredLeft);
+    insertsLabel.setColour(juce::Label::textColourId, juce::Colour(0xffaaaaaa));
+    addAndMakeVisible(insertsLabel);
+
+    for (int i = 0; i < totalSlots; ++i)
+    {
+        auto& button = slotButtons[(size_t) i];
+        button.onClick = [this, i] { showPluginSlotMenu(i); };
+        addAndMakeVisible(button);
+        updateSlotButton(i);
+    }
 
     midiLabel.setText("MIDI Ch", juce::dontSendNotification);
     midiLabel.setFont(juce::Font(11.0f));
@@ -40,6 +119,7 @@ ChannelComponent::ChannelComponent(ChannelProcessor& p)
     gainSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 16);
     gainSlider.setTextValueSuffix(" dB");
     gainSlider.addListener(this);
+    gainSlider.setLookAndFeel(faderLookAndFeel.get());
     addAndMakeVisible(gainSlider);
 
     panLabel.setText("Pan", juce::dontSendNotification);
@@ -48,31 +128,37 @@ ChannelComponent::ChannelComponent(ChannelProcessor& p)
     panLabel.setColour(juce::Label::textColourId, juce::Colour(0xffaaaaaa));
     addAndMakeVisible(panLabel);
 
-    panSlider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
+    panSlider.setSliderStyle(juce::Slider::LinearHorizontal);
     panSlider.setRange(-1.0, 1.0, 0.01);
     panSlider.setValue(0.0);
     panSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 16);
     panSlider.addListener(this);
+    panSlider.setLookAndFeel(faderLookAndFeel.get());
     addAndMakeVisible(panSlider);
 
-    setSize(160, 500);
+    setSize(160, 620);
 }
 
-ChannelComponent::~ChannelComponent() {}
+ChannelComponent::~ChannelComponent()
+{
+    gainSlider.setLookAndFeel(nullptr);
+    panSlider.setLookAndFeel(nullptr);
+}
 
-void ChannelComponent::showPluginSlotMenu()
+void ChannelComponent::showPluginSlotMenu(int slotIndex)
 {
     juce::PopupMenu menu;
 
-    if (!processor.hasPlugin())
+    if (!processor.hasPlugin(slotIndex))
     {
         menu.addItem(1, "Load Plugin...");
     }
     else
     {
-        menu.addItem(0, processor.getPluginName(), false, false);
+        menu.addItem(0, processor.getPluginName(slotIndex), false, false);
         menu.addSeparator();
-        menu.addItem(2, processor.isEditorVisible() ? "Hide Plugin" : "Show Plugin");
+        menu.addItem(2, processor.isEditorVisible(slotIndex) ? "Hide Plugin" : "Show Plugin");
+        menu.addItem(5, processor.isBypassed(slotIndex) ? "Un-bypass" : "Bypass");
         menu.addSeparator();
         menu.addItem(3, "Replace Plugin...");
         menu.addSeparator();
@@ -80,26 +166,30 @@ void ChannelComponent::showPluginSlotMenu()
     }
 
     menu.showMenuAsync(
-        juce::PopupMenu::Options().withTargetComponent(&pluginSlotButton),
-        [this](int result)
+        juce::PopupMenu::Options().withTargetComponent(&slotButtons[(size_t) slotIndex]),
+        [this, slotIndex](int result)
         {
             switch (result)
             {
                 case 1:
-                    if (onLoadPlugin) onLoadPlugin();
+                    if (onLoadPlugin) onLoadPlugin(slotIndex);
                     break;
                 case 2:
-                    if (processor.isEditorVisible())
-                        processor.hideEditor();
+                    if (processor.isEditorVisible(slotIndex))
+                        processor.hideEditor(slotIndex);
                     else
-                        processor.showEditor();
+                        processor.showEditor(slotIndex);
                     break;
                 case 3:
-                    if (onReplacePlugin) onReplacePlugin();
+                    if (onReplacePlugin) onReplacePlugin(slotIndex);
                     break;
                 case 4:
-                    processor.unloadPlugin();
-                    updateSlotButton();
+                    processor.unloadPlugin(slotIndex);
+                    updateSlotButton(slotIndex);
+                    break;
+                case 5:
+                    processor.setBypassed(slotIndex, ! processor.isBypassed(slotIndex));
+                    updateSlotButton(slotIndex);
                     break;
                 default:
                     break;
@@ -107,29 +197,33 @@ void ChannelComponent::showPluginSlotMenu()
         });
 }
 
-void ChannelComponent::updateSlotButton()
+void ChannelComponent::updateSlotButton(int slotIndex)
 {
-    if (processor.hasPlugin())
+    auto& button = slotButtons[(size_t) slotIndex];
+    juce::String prefix = slotIndex == 0 ? juce::String() : (juce::String(slotIndex) + ". ");
+
+    if (processor.hasPlugin(slotIndex))
     {
-        pluginSlotButton.setButtonText(processor.getPluginName());
-        pluginSlotButton.setColour(juce::TextButton::buttonColourId,
-                                    juce::Colour(0xff3d5a80));
-        pluginSlotButton.setColour(juce::TextButton::textColourOffId,
-                                    juce::Colours::white);
+        button.setButtonText(prefix + processor.getPluginName(slotIndex));
+        button.setColour(juce::TextButton::buttonColourId,
+                          processor.isBypassed(slotIndex) ? juce::Colour(0xff4a4a5c)
+                                                           : juce::Colour(0xff3d5a80));
+        button.setColour(juce::TextButton::textColourOffId,
+                          processor.isBypassed(slotIndex) ? juce::Colour(0xffaaaaaa)
+                                                           : juce::Colours::white);
     }
     else
     {
-        pluginSlotButton.setButtonText("- empty -");
-        pluginSlotButton.setColour(juce::TextButton::buttonColourId,
-                                    juce::Colour(0xff2a2a3e));
-        pluginSlotButton.setColour(juce::TextButton::textColourOffId,
-                                    juce::Colour(0xffaaaaaa));
+        button.setButtonText(prefix + "- empty -");
+        button.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff2a2a3e));
+        button.setColour(juce::TextButton::textColourOffId, juce::Colour(0xffaaaaaa));
     }
 }
 
 void ChannelComponent::refresh()
 {
-    updateSlotButton();
+    for (int i = 0; i < totalSlots; ++i)
+        updateSlotButton(i);
 }
 
 void ChannelComponent::sliderValueChanged(juce::Slider* slider)
@@ -167,19 +261,29 @@ void ChannelComponent::resized()
     auto area = getLocalBounds().reduced(10);
 
     pluginLabel.setBounds(area.removeFromTop(16));
-    pluginSlotButton.setBounds(area.removeFromTop(28));
+    slotButtons[0].setBounds(area.removeFromTop(26));
+    area.removeFromTop(10);
+
+    insertsLabel.setBounds(area.removeFromTop(16));
+    for (int i = 1; i < totalSlots; ++i)
+    {
+        slotButtons[(size_t) i].setBounds(area.removeFromTop(22));
+        if (i != totalSlots - 1)
+            area.removeFromTop(3);
+    }
     area.removeFromTop(12);
 
     midiLabel.setBounds(area.removeFromTop(16));
     midiChannelBox.setBounds(area.removeFromTop(24));
     area.removeFromTop(16);
 
-    auto bottomArea = area.removeFromBottom(100);
-    auto panArea    = bottomArea.removeFromRight(bottomArea.getWidth() / 2);
-
-    panLabel.setBounds(panArea.removeFromTop(16));
-    panSlider.setBounds(panArea);
+    auto bottomArea = area.removeFromBottom(110);
 
     gainLabel.setBounds(area.removeFromTop(16));
     gainSlider.setBounds(area);
+
+    bottomArea.removeFromTop(20);
+    panLabel.setBounds(bottomArea.removeFromTop(16));
+    bottomArea.removeFromTop(8);
+    panSlider.setBounds(bottomArea.removeFromTop(44));
 }

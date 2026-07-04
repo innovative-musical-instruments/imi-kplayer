@@ -1,4 +1,5 @@
 #pragma once
+#include <array>
 #include <atomic>
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_audio_devices/juce_audio_devices.h>
@@ -28,25 +29,35 @@ private:
     std::atomic<double> bpm { 120.0 };
 };
 
+// A channel's plugin chain is slot 0 (instrument OR audio-effect plugin,
+// per the MVP spec) followed by 5 insert slots (audio-effect plugins only).
 class ChannelProcessor
 {
 public:
+    static constexpr int numInsertSlots = 5;
+    static constexpr int totalSlotCount = 1 + numInsertSlots;
+    static constexpr int slot0Index     = 0;
+
     ChannelProcessor();
     ~ChannelProcessor();
 
     void setAudioDeviceManager(juce::AudioDeviceManager* dm) { deviceManager = dm; }
     void setAudioCallback(juce::AudioIODeviceCallback* cb)   { audioCallback = cb; }
 
-    bool loadPlugin(const juce::PluginDescription& desc,
+    // slotIndex: 0 = instrument/effect slot, 1..numInsertSlots = insert slots
+    bool loadPlugin(int slotIndex,
+                    const juce::PluginDescription& desc,
                     juce::AudioPluginFormatManager& formatManager,
                     double sampleRate,
                     int blockSize);
 
-    void unloadPlugin();
-    bool hasPlugin() const       { return plugin != nullptr; }
-    bool isEditorVisible() const { return editorWindow != nullptr
-                                       && editorWindow->isVisible(); }
-    juce::String getPluginName() const;
+    void unloadPlugin(int slotIndex);
+    bool hasPlugin(int slotIndex) const;
+    bool isEditorVisible(int slotIndex) const;
+    juce::String getPluginName(int slotIndex) const;
+
+    void setBypassed(int slotIndex, bool shouldBeBypassed);
+    bool isBypassed(int slotIndex) const;
 
     void processBlock(juce::AudioBuffer<float>& buffer,
                       juce::MidiBuffer& midi);
@@ -61,23 +72,29 @@ public:
     void   setTempo(double bpm) { playHead.setBpm(bpm); }
     double getTempo() const     { return playHead.getBpm(); }
 
-    void showEditor();
-    void hideEditor();
+    void showEditor(int slotIndex);
+    void hideEditor(int slotIndex);
 
 private:
-    std::unique_ptr<juce::AudioPluginInstance> plugin;
-    std::unique_ptr<juce::DocumentWindow>      editorWindow;
-    KPlayerAudioPlayHead                       playHead;
+    struct Slot
+    {
+        std::unique_ptr<juce::AudioPluginInstance> plugin;
+        std::unique_ptr<juce::DocumentWindow>      editorWindow;
+
+        // Belt-and-suspenders: the audio thread checks this before touching
+        // `plugin` at all. removeAudioCallback()/addAudioCallback() around
+        // load/unload are what actually keep the audio thread out, but this
+        // flag means a wiring mistake there degrades to silence instead of a
+        // dangling-pointer crash.
+        std::atomic<bool> ready { false };
+        bool bypassed = false;
+    };
+
+    std::array<Slot, totalSlotCount> slots;
+    KPlayerAudioPlayHead playHead;
 
     juce::AudioDeviceManager*    deviceManager = nullptr;
     juce::AudioIODeviceCallback* audioCallback = nullptr;
-
-    // Belt-and-suspenders: the audio thread checks this before touching
-    // `plugin` at all. removeAudioCallback()/addAudioCallback() around
-    // load/unload are what actually keep the audio thread out, but this
-    // flag means a wiring mistake there degrades to silence instead of a
-    // dangling-pointer crash.
-    std::atomic<bool> pluginReady { false };
 
     double currentSampleRate = 44100.0;
     int    currentBlockSize  = 512;

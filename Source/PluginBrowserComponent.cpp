@@ -1,8 +1,9 @@
 #include "PluginBrowserComponent.h"
 
 PluginBrowserComponent::PluginBrowserComponent(juce::KnownPluginList& list,
-                                               PluginSelectedCallback callback)
-    : pluginList(list), onPluginSelected(std::move(callback))
+                                               PluginSelectedCallback callback,
+                                               bool allowInstrumentsIn)
+    : pluginList(list), onPluginSelected(std::move(callback)), allowInstruments(allowInstrumentsIn)
 {
     listModel.onSelected = [this](const juce::PluginDescription& desc)
     {
@@ -45,6 +46,9 @@ void PluginBrowserComponent::updateList(const juce::String& filter)
     auto types = pluginList.getTypes();
     for (auto& t : types)
     {
+        if (! allowInstruments && t.isInstrument)
+            continue;
+
         if (filter.isEmpty() ||
             t.name.containsIgnoreCase(filter) ||
             t.manufacturerName.containsIgnoreCase(filter))
@@ -71,9 +75,10 @@ void PluginBrowserComponent::resized()
 
 void PluginBrowserComponent::showAsCallOut(juce::KnownPluginList& list,
                                             PluginSelectedCallback callback,
-                                            juce::Component& anchorComponent)
+                                            juce::Component& anchorComponent,
+                                            bool allowInstruments)
 {
-    auto* browser = new PluginBrowserComponent(list, std::move(callback));
+    auto* browser = new PluginBrowserComponent(list, std::move(callback), allowInstruments);
     juce::CallOutBox::launchAsynchronously(
         std::unique_ptr<juce::Component>(browser),
         anchorComponent.getScreenBounds(),
