@@ -35,24 +35,35 @@ MainComponent::MainComponent(juce::AudioDeviceManager& dm, PluginManager& pm)
     masterVolumeSlider.setTextValueSuffix(" dB");
     masterVolumeSlider.onValueChange = [this]
     {
-        double dB = masterVolumeSlider.getValue();
-        masterVolume = (dB <= -60.0) ? 0.0f : juce::Decibels::decibelsToGain((float) dB);
+        masterVolume = juce::Decibels::decibelsToGain((float) masterVolumeSlider.getValue(), -60.0f);
     };
     addAndMakeVisible(masterVolumeSlider);
 
     deviceManager.addAudioCallback(this);
 
-    auto midiInputs = juce::MidiInput::getAvailableDevices();
-    for (auto& input : midiInputs)
-    {
-        deviceManager.setMidiInputDeviceEnabled(input.identifier, true);
-        deviceManager.addMidiInputDeviceCallback(input.identifier, this);
-    }
+    enableAllMidiInputs();
+
+    // Devices connected/disconnected after launch never got a callback
+    // registered at all otherwise - re-enable/register on every device-list
+    // change rather than only once at startup.
+    midiDeviceListConnection = juce::MidiDeviceListConnection::make([this] { enableAllMidiInputs(); });
 
     loadingOverlay = std::make_unique<LoadingOverlayComponent>();
     addAndMakeVisible(loadingOverlay.get());
 
     setSize(900, 800);
+}
+
+void MainComponent::enableAllMidiInputs()
+{
+    // addMidiInputDeviceCallback() removes any existing registration for the
+    // same (identifier, callback) pair before re-adding, so it's safe to
+    // call this repeatedly for devices that were already enabled.
+    for (auto& input : juce::MidiInput::getAvailableDevices())
+    {
+        deviceManager.setMidiInputDeviceEnabled(input.identifier, true);
+        deviceManager.addMidiInputDeviceCallback(input.identifier, this);
+    }
 }
 
 MainComponent::~MainComponent()
@@ -75,6 +86,13 @@ void MainComponent::setGlobalTempo(double bpm)
     currentTempo = bpm;
     for (auto& channel : channelProcessors)
         channel->setTempo(bpm);
+}
+
+void MainComponent::setMasterVolume(float linearGain)
+{
+    masterVolume = linearGain;
+    masterVolumeSlider.setValue(juce::Decibels::gainToDecibels(linearGain, -60.0f),
+                                juce::dontSendNotification);
 }
 
 void MainComponent::showPluginBrowser(int channelIndex, int slotIndex, bool isReplace)
@@ -209,7 +227,7 @@ void MainComponent::resized()
 
     channelViewport.setBounds(area);
 
-    const int channelWidth = 160;
+    const int channelWidth = 80;
     channelRackContent.setSize(channelWidth * numChannels, area.getHeight());
     for (int i = 0; i < (int) channelComponents.size(); ++i)
         channelComponents[(size_t) i]->setBounds(i * channelWidth, 0, channelWidth, area.getHeight());

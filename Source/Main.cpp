@@ -5,6 +5,7 @@
 #include "PreferencesComponent.h"
 #include "PluginManager.h"
 #include "PluginBrowserComponent.h"
+#include "SessionIO.h"
 
 class KPlayerApplication : public juce::JUCEApplication
 {
@@ -31,12 +32,25 @@ public:
     void shutdown() override { mainWindow = nullptr; }
     void systemRequestedQuit() override { quit(); }
 
+    enum CommandIDs
+    {
+        cmdOpenSession = 1,
+        cmdSaveSession,
+        cmdSaveSessionAs,
+        cmdPreferences,
+        cmdQuit
+    };
+
     struct MainWindow : public juce::DocumentWindow,
-                        public juce::MenuBarModel
+                        public juce::MenuBarModel,
+                        public juce::ApplicationCommandTarget
     {
         juce::AudioDeviceManager& deviceManager;
         PluginManager& pluginManager;
         MainComponent* mainComponent = nullptr;
+        std::unique_ptr<juce::FileChooser> fileChooser;
+        juce::File currentSessionFile;
+        juce::ApplicationCommandManager commandManager;
 
         MainWindow(juce::String name,
                    juce::AudioDeviceManager& dm,
@@ -54,6 +68,11 @@ public:
             setContentOwned(mainComponent, true);
             setResizable(true, true);
             centreWithSize(900, 800);
+
+            commandManager.registerAllCommandsForTarget(this);
+            commandManager.setFirstCommandTarget(this);
+            addKeyListener(commandManager.getKeyMappings());
+
             setVisible(true);
         }
 
@@ -68,18 +87,118 @@ public:
         {
             juce::PopupMenu menu;
             if (index == 0)
-                menu.addItem(1, "Quit");
+            {
+                menu.addCommandItem(&commandManager, cmdOpenSession);
+                menu.addCommandItem(&commandManager, cmdSaveSession);
+                menu.addCommandItem(&commandManager, cmdSaveSessionAs);
+                menu.addSeparator();
+                menu.addCommandItem(&commandManager, cmdQuit);
+            }
             else if (index == 1)
-                menu.addItem(100, "Audio & MIDI...");
+            {
+                menu.addCommandItem(&commandManager, cmdPreferences);
+            }
             return menu;
         }
 
-        void menuItemSelected(int itemID, int) override
+        void menuItemSelected(int, int) override {}
+
+        // juce::ApplicationCommandTarget
+        juce::ApplicationCommandTarget* getNextCommandTarget() override { return nullptr; }
+
+        void getAllCommands(juce::Array<juce::CommandID>& commands) override
         {
-            if (itemID == 1)
-                juce::JUCEApplication::getInstance()->systemRequestedQuit();
-            if (itemID == 100)
-                showPreferences();
+            commands.addArray({ cmdOpenSession, cmdSaveSession, cmdSaveSessionAs, cmdPreferences, cmdQuit });
+        }
+
+        void getCommandInfo(juce::CommandID commandID, juce::ApplicationCommandInfo& result) override
+        {
+            switch (commandID)
+            {
+                case cmdOpenSession:
+                    result.setInfo("Open Session...", "Open a saved session", "File", 0);
+                    result.addDefaultKeypress('o', juce::ModifierKeys::commandModifier);
+                    break;
+                case cmdSaveSession:
+                    result.setInfo("Save Session", "Save the current session", "File", 0);
+                    result.addDefaultKeypress('s', juce::ModifierKeys::commandModifier);
+                    break;
+                case cmdSaveSessionAs:
+                    result.setInfo("Save Session As...", "Save the current session to a new file", "File", 0);
+                    result.addDefaultKeypress('s', juce::ModifierKeys::commandModifier | juce::ModifierKeys::shiftModifier);
+                    break;
+                case cmdPreferences:
+                    result.setInfo("Audio & MIDI...", "Open audio/MIDI preferences", "Preferences", 0);
+                    break;
+                case cmdQuit:
+                    result.setInfo("Quit", "Quit the application", "File", 0);
+                    result.addDefaultKeypress('q', juce::ModifierKeys::commandModifier);
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        bool perform(const juce::ApplicationCommandTarget::InvocationInfo& info) override
+        {
+            switch (info.commandID)
+            {
+                case cmdOpenSession:   openSession();      return true;
+                case cmdSaveSession:   saveSession();       return true;
+                case cmdSaveSessionAs: saveSessionAs();      return true;
+                case cmdPreferences:   showPreferences();    return true;
+                case cmdQuit:          juce::JUCEApplication::getInstance()->systemRequestedQuit(); return true;
+                default: return false;
+            }
+        }
+
+        void openSession()
+        {
+            fileChooser = std::make_unique<juce::FileChooser>(
+                "Open Session", juce::File(), "*.kplayer");
+
+            fileChooser->launchAsync(
+                juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                [this](const juce::FileChooser& fc)
+                {
+                    auto file = fc.getResult();
+                    if (file.existsAsFile() &&
+                        SessionIO::loadSession(file, *mainComponent, pluginManager, deviceManager))
+                    {
+                        currentSessionFile = file;
+                    }
+                });
+        }
+
+        // Saves over currentSessionFile if one is already known, otherwise
+        // falls back to the same file-picker flow as "Save Session As...".
+        void saveSession()
+        {
+            if (currentSessionFile != juce::File())
+                SessionIO::saveSession(currentSessionFile, *mainComponent, deviceManager);
+            else
+                saveSessionAs();
+        }
+
+        void saveSessionAs()
+        {
+            fileChooser = std::make_unique<juce::FileChooser>(
+                "Save Session As", juce::File(), "*.kplayer");
+
+            fileChooser->launchAsync(
+                juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles,
+                [this](const juce::FileChooser& fc)
+                {
+                    auto file = fc.getResult();
+                    if (file == juce::File())
+                        return;
+
+                    if (! file.hasFileExtension(".kplayer"))
+                        file = file.withFileExtension(".kplayer");
+
+                    if (SessionIO::saveSession(file, *mainComponent, deviceManager))
+                        currentSessionFile = file;
+                });
         }
 
         void showPreferences()

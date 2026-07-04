@@ -6,8 +6,7 @@
 
 class ChannelComponent : public juce::Component,
                          public juce::Slider::Listener,
-                         public juce::ComboBox::Listener,
-                         private juce::Timer
+                         public juce::ComboBox::Listener
 {
 public:
     static constexpr int totalSlots = ChannelProcessor::totalSlotCount;
@@ -27,7 +26,7 @@ public:
     void comboBoxChanged(juce::ComboBox* combo) override;
 
 private:
-    void timerCallback() override;
+    void refreshMidiDeviceList();
     void updateMidiDeviceWarning();
 
     ChannelProcessor& processor;
@@ -42,6 +41,7 @@ private:
     juce::Label      midiInLabel;
     juce::ComboBox   midiDeviceBox;
     juce::Array<juce::MidiDeviceInfo> availableMidiInputs;
+    juce::MidiDeviceListConnection midiDeviceListConnection;
 
     juce::ComboBox   midiChannelBox;
     juce::Slider     gainSlider;

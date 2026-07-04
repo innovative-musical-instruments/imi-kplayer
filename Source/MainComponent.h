@@ -14,7 +14,7 @@ class MainComponent : public juce::Component,
                       public juce::MidiInputCallback
 {
 public:
-    static constexpr int numChannels = 4;
+    static constexpr int numChannels = 12;
 
     MainComponent(juce::AudioDeviceManager& dm, PluginManager& pm);
     ~MainComponent() override;
@@ -41,6 +41,15 @@ public:
     // Tempo is transport-wide, applied to every channel's playhead.
     void   setGlobalTempo(double bpm);
     double getGlobalTempo() const { return currentTempo; }
+
+    // Accessors for SessionIO - it reads/writes channel and master state
+    // without needing its own copy of MainComponent's internals.
+    int getNumChannels() const { return (int) channelProcessors.size(); }
+    ChannelProcessor& getChannelProcessor(int index) { return *channelProcessors[(size_t) index]; }
+    void refreshChannelUI(int index) { channelComponents[(size_t) index]->refresh(); }
+
+    float getMasterVolume() const { return masterVolume; }
+    void  setMasterVolume(float linearGain);
 
 private:
     juce::AudioDeviceManager& deviceManager;
@@ -74,6 +83,9 @@ private:
     double currentSampleRate = 44100.0;
     int    currentBlockSize  = 512;
     double currentTempo      = 120.0;
+
+    juce::MidiDeviceListConnection midiDeviceListConnection;
+    void enableAllMidiInputs();
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MainComponent)
 };

@@ -31,7 +31,8 @@ bool ChannelProcessor::loadPlugin(int slotIndex,
                                    const juce::PluginDescription& desc,
                                    juce::AudioPluginFormatManager& formatManager,
                                    double sampleRate,
-                                   int blockSize)
+                                   int blockSize,
+                                   const juce::MemoryBlock* initialState)
 {
     jassert(slotIndex >= 0 && slotIndex < totalSlotCount);
 
@@ -105,6 +106,9 @@ bool ChannelProcessor::loadPlugin(int slotIndex,
     newPlugin->setPlayHead(&playHead);
     newPlugin->prepareToPlay(sampleRate, blockSize);
 
+    if (initialState != nullptr && initialState->getSize() > 0)
+        newPlugin->setStateInformation(initialState->getData(), (int) initialState->getSize());
+
     slot.plugin = std::move(newPlugin);
     slot.bypassed = false;
     currentSampleRate = sampleRate;
@@ -160,6 +164,23 @@ juce::String ChannelProcessor::getPluginName(int slotIndex) const
     if (slot.plugin != nullptr)
         return slot.plugin->getName();
     return "No Plugin";
+}
+
+juce::PluginDescription ChannelProcessor::getPluginDescription(int slotIndex) const
+{
+    auto& slot = slots[(size_t) slotIndex];
+    if (slot.plugin != nullptr)
+        return slot.plugin->getPluginDescription();
+    return {};
+}
+
+juce::MemoryBlock ChannelProcessor::getPluginState(int slotIndex) const
+{
+    juce::MemoryBlock block;
+    auto& slot = slots[(size_t) slotIndex];
+    if (slot.plugin != nullptr)
+        slot.plugin->getStateInformation(block);
+    return block;
 }
 
 void ChannelProcessor::setBypassed(int slotIndex, bool shouldBeBypassed)

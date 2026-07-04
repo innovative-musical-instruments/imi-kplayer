@@ -32,6 +32,8 @@ target_sources(IMI_KPlayer PRIVATE
     Source/ChannelComponent.cpp
     Source/ChannelComponent.h
     Source/LoadingOverlayComponent.h
+    Source/SessionIO.cpp
+    Source/SessionIO.h
 )
 
 target_compile_definitions(IMI_KPlayer PRIVATE

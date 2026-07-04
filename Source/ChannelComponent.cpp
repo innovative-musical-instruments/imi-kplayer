@@ -128,7 +128,14 @@ ChannelComponent::ChannelComponent(ChannelProcessor& p)
     if (defaultId > 1)
         processor.setMidiDeviceIdentifier(availableMidiInputs[defaultId - 2].identifier);
 
-    startTimer(2000);
+    // Devices connecting/disconnecting after construction need to update
+    // this channel's dropdown and warning state - event-driven rather than
+    // polling, so it's reflected immediately, not after up to a few seconds.
+    midiDeviceListConnection = juce::MidiDeviceListConnection::make([this]
+    {
+        refreshMidiDeviceList();
+        updateMidiDeviceWarning();
+    });
 
     midiLabel.setText("MIDI Ch", juce::dontSendNotification);
     midiLabel.setFont(juce::Font(11.0f));
@@ -172,19 +179,19 @@ ChannelComponent::ChannelComponent(ChannelProcessor& p)
     panSlider.setLookAndFeel(faderLookAndFeel.get());
     addAndMakeVisible(panSlider);
 
-    muteButton.setButtonText("Mute");
+    muteButton.setButtonText("M");
     muteButton.setClickingTogglesState(true);
     muteButton.setColour(juce::TextButton::buttonOnColourId, juce::Colours::orange);
     muteButton.onClick = [this] { processor.setMuted(muteButton.getToggleState()); };
     addAndMakeVisible(muteButton);
 
-    soloButton.setButtonText("Solo");
+    soloButton.setButtonText("S");
     soloButton.setClickingTogglesState(true);
     soloButton.setColour(juce::TextButton::buttonOnColourId, juce::Colours::yellow);
     soloButton.onClick = [this] { processor.setSolo(soloButton.getToggleState()); };
     addAndMakeVisible(soloButton);
 
-    setSize(160, 700);
+    setSize(80, 700);
 
     updateMidiDeviceWarning();
 }
@@ -274,6 +281,32 @@ void ChannelComponent::refresh()
 {
     for (int i = 0; i < totalSlots; ++i)
         updateSlotButton(i);
+
+    channelNameLabel.setText(processor.getName(), juce::dontSendNotification);
+
+    float gainDb = juce::Decibels::gainToDecibels(processor.getGain(), -96.0f);
+    gainSlider.setValue(gainDb, juce::dontSendNotification);
+    panSlider.setValue((double) processor.getPan(), juce::dontSendNotification);
+
+    int midiChannel = processor.getMidiChannel();
+    midiChannelBox.setSelectedId(midiChannel <= 0 ? 1 : midiChannel + 1, juce::dontSendNotification);
+
+    auto deviceId = processor.getMidiDeviceIdentifier();
+    int deviceItemId = 1;
+    for (int i = 0; i < availableMidiInputs.size(); ++i)
+    {
+        if (availableMidiInputs[i].identifier == deviceId)
+        {
+            deviceItemId = i + 2;
+            break;
+        }
+    }
+    midiDeviceBox.setSelectedId(deviceItemId, juce::dontSendNotification);
+
+    muteButton.setToggleState(processor.isMuted(), juce::dontSendNotification);
+    soloButton.setToggleState(processor.isSolo(), juce::dontSendNotification);
+
+    updateMidiDeviceWarning();
 }
 
 void ChannelComponent::sliderValueChanged(juce::Slider* slider)
@@ -314,9 +347,30 @@ void ChannelComponent::comboBoxChanged(juce::ComboBox* combo)
     }
 }
 
-void ChannelComponent::timerCallback()
+void ChannelComponent::refreshMidiDeviceList()
 {
-    updateMidiDeviceWarning();
+    auto freshDevices = juce::MidiInput::getAvailableDevices();
+    if (freshDevices == availableMidiInputs)
+        return;
+
+    auto currentIdentifier = processor.getMidiDeviceIdentifier();
+    availableMidiInputs = freshDevices;
+
+    midiDeviceBox.clear(juce::dontSendNotification);
+    midiDeviceBox.addItem("None", 1);
+    for (int i = 0; i < availableMidiInputs.size(); ++i)
+        midiDeviceBox.addItem(availableMidiInputs[i].name, i + 2);
+
+    int selectedId = 1;
+    for (int i = 0; i < availableMidiInputs.size(); ++i)
+    {
+        if (availableMidiInputs[i].identifier == currentIdentifier)
+        {
+            selectedId = i + 2;
+            break;
+        }
+    }
+    midiDeviceBox.setSelectedId(selectedId, juce::dontSendNotification);
 }
 
 void ChannelComponent::updateMidiDeviceWarning()
@@ -346,7 +400,7 @@ void ChannelComponent::paint(juce::Graphics& g)
 
 void ChannelComponent::resized()
 {
-    auto area = getLocalBounds().reduced(10);
+    auto area = getLocalBounds().reduced(6);
 
     channelNameLabel.setBounds(area.removeFromTop(18));
     area.removeFromTop(6);

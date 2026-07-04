@@ -45,16 +45,24 @@ public:
     // Loading an instrument (PluginDescription::isInstrument) into an insert
     // slot is rejected here at the engine level, not just filtered out of
     // the plugin browser's list - insert slots are audio-effect-only.
+    // initialState, if non-null, is applied via setStateInformation() right
+    // after the plugin is prepared - used to restore a saved session's
+    // per-plugin state (preset/patch) as part of instantiation.
     bool loadPlugin(int slotIndex,
                     const juce::PluginDescription& desc,
                     juce::AudioPluginFormatManager& formatManager,
                     double sampleRate,
-                    int blockSize);
+                    int blockSize,
+                    const juce::MemoryBlock* initialState = nullptr);
 
     void unloadPlugin(int slotIndex);
     bool hasPlugin(int slotIndex) const;
     bool isEditorVisible(int slotIndex) const;
     juce::String getPluginName(int slotIndex) const;
+
+    // Empty/default if the slot has no plugin loaded.
+    juce::PluginDescription getPluginDescription(int slotIndex) const;
+    juce::MemoryBlock getPluginState(int slotIndex) const;
 
     void setBypassed(int slotIndex, bool shouldBeBypassed);
     bool isBypassed(int slotIndex) const;
@@ -64,8 +72,10 @@ public:
 
     void prepareToPlay(double sampleRate, int blockSize);
 
-    void setGain(float g)       { gain = g; }
-    void setPan(float p)        { pan = juce::jlimit(-1.0f, 1.0f, p); }
+    void  setGain(float g)      { gain = g; }
+    float getGain() const       { return gain; }
+    void  setPan(float p)       { pan = juce::jlimit(-1.0f, 1.0f, p); }
+    float getPan() const        { return pan; }
     void setMidiChannel(int ch) { midiChannel = ch; }
     int  getMidiChannel() const { return midiChannel; }
 
@@ -75,7 +85,8 @@ public:
     void showEditor(int slotIndex);
     void hideEditor(int slotIndex);
 
-    const juce::Uuid& getId() const { return id; }
+    const juce::Uuid& getId() const          { return id; }
+    void setId(const juce::Uuid& newId)      { id = newId; }
 
     void setName(const juce::String& newName) { name = newName; }
     juce::String getName() const              { return name; }
