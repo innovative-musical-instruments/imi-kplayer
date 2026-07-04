@@ -47,6 +47,8 @@ void PluginManager::scanPlugins()
     searchPath.add(juce::File("C:\\Program Files\\Common Files\\VST3"));
    #endif
 
+    auto deadMansPedalFile = getPluginCacheFile().getSiblingFile("plugin_scan_deadmanspedal.txt");
+
     for (auto* format : formatManager.getFormats())
     {
         juce::PluginDirectoryScanner scanner(
@@ -54,11 +56,28 @@ void PluginManager::scanPlugins()
             *format,
             searchPath,
             true,
-            juce::File()
+            deadMansPedalFile
         );
 
+        // Some plugins (e.g. Kontakt's VST3) do main-thread-only work - such as
+        // querying macOS text input sources - as part of their module init, and
+        // will hit a dispatch_assert_queue crash if that happens off the message
+        // thread. Run each scan step there and block this thread until it's done,
+        // so the scan is still orchestrated in the background (window shows
+        // immediately, UI stays responsive between plugins) without touching
+        // plugin internals from the wrong thread.
         juce::String pluginBeingScanned;
-        while (scanner.scanNextFile(true, pluginBeingScanned)) {}
+        bool more = true;
+        while (more)
+        {
+            juce::WaitableEvent stepDone;
+            juce::MessageManager::callAsync([&scanner, &pluginBeingScanned, &more, &stepDone]
+            {
+                more = scanner.scanNextFile(true, pluginBeingScanned);
+                stepDone.signal();
+            });
+            stepDone.wait();
+        }
     }
 
     cacheFile.getParentDirectory().createDirectory();
