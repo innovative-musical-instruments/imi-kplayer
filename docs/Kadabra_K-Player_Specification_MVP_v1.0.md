@@ -107,7 +107,8 @@ Each channel carries the following properties:
 | `solo` | Boolean: all non-soloed channels are silenced |
 | `volume` | Float 0.0–1.0, default 1.0 (displayed as 0 dB) |
 | `pan` | Float -1.0 to +1.0, default 0.0 (center) |
-| `midiDevice` | String: name of the assigned MIDI input device |
+| `midiDeviceIdentifier` | String: JUCE `MidiDeviceInfo::identifier` of the assigned MIDI input device — the stable key used for matching/reconnection (see §7.3); empty string means unassigned |
+| `midiDeviceName` | String: display name of the assigned device at time of save, kept alongside the identifier as a human-readable fallback for when the identifier can't be resolved |
 | `midiChannel` | Int 1–16: the MIDI channel this channel listens on |
 | `slot0Plugin` | `PluginSlot` (see §3.2), nullable. Accepts **either** an instrument **or** an audio-effect plugin |
 | `insertPlugins` | Array of **5** `PluginSlot` entries (see §3.2). Accepts **audio-effect plugins only** — instrument plugins are filtered out of the browser for these slots |
@@ -121,11 +122,12 @@ A `PluginSlot` represents a single plugin position (slot 0 or one of the 5 inser
 
 | Field | Description |
 |---|---|
-| `pluginDescription` | JUCE `PluginDescription`: format, name, manufacturer, uid, fileOrIdentifier |
+| `pluginDescription` | JUCE `PluginDescription`: format, name, manufacturer, uid, fileOrIdentifier, and everything else JUCE itself considers part of a plugin's identity |
 | `isLoaded` | Boolean: plugin was successfully instantiated |
 | `isBypassed` | Boolean: plugin is in the signal path but bypassed |
 | `stateBlob` | Base64-encoded binary: the plugin's full state (preset/patch) |
-| `editorVisible` | Boolean: whether the plugin editor window is currently open |
+
+> **Session format note (2026-07-04):** in the `.kplayer` JSON, `pluginDescription` is serialized via JUCE's own `PluginDescription::createXml()`/`loadFromXml()` (an XML string embedded as one JSON field), not as flat JSON keys — see §6.4. This captures every field JUCE's own plugin-matching logic considers, not just the 5 the earlier draft of this spec listed, and reuses the same mechanism the plugin scan cache already relies on (`KnownPluginList`'s own XML serialization). Editor window visibility/position persistence (`editorVisible`/`editorBounds` in the original draft) is deferred out of the first session-format pass — see §4.4 and §6.4.
 
 ### 3.3 Signal Flow per Channel (MVP)
 
@@ -188,7 +190,7 @@ Accessed by clicking an empty slot-0 or insert slot. The browser provides:
 - Clicking a loaded plugin slot opens the plugin's native editor window
 - Editor windows are floating (non-modal), associated with their channel and slot
 - Multiple editor windows may be open simultaneously
-- Editor window positions are saved per-session
+- Editor window positions are saved per-session *(deferred — first session-format pass does not persist editor visibility/position; sessions reopen with all editor windows closed. See §6.4.)*
 - Closing the main K-Player window hides but does not destroy editor windows; re-opening restores them
 
 ## 5. User Interface
@@ -255,11 +257,14 @@ Sessions are stored as UTF-8 JSON files with the extension `.kplayer`. The forma
   "appVersion": "0.1.0",
   "createdAt": "<ISO 8601 timestamp>",
   "sessionName": "My Session",
-  "audioDevice": { ... },
+  "audioDeviceStateXml": "<AudioDeviceManager::createStateXml() as a string>",
   "masterVolume": 1.0,
+  "tempo": 120.0,
   "channels": [ ... 16 channel objects ... ]
 }
 ```
+
+`audioDeviceStateXml` embeds JUCE's own `AudioDeviceManager::createStateXml()` output (device name, sample rate, buffer size, enabled MIDI inputs) rather than a hand-rolled set of fields — same rationale as `pluginDescription` below: JUCE already owns this serialization and `AudioDeviceManager::initialise()` takes it straight back on load. `tempo` (BPM, global/transport-wide across all channels) was missing from the original draft of this schema even though the tempo feature already exists in the app; added here alongside `masterVolume`.
 
 ### 6.3 Channel Object
 
@@ -274,28 +279,27 @@ Sessions are stored as UTF-8 JSON files with the extension `.kplayer`. The forma
   "solo": false,
   "volume": 1.0,
   "pan": 0.0,
-  "midiDevice": "Arturia KeyLab 61",
+  "midiDeviceIdentifier": "<JUCE MidiDeviceInfo::identifier, or empty for none>",
+  "midiDeviceName": "Kadabra Virtual MIDI",
   "midiChannel": 1,
   "slot0Plugin": { <PluginSlot> | null },
   "insertPlugins": [ <PluginSlot x5> ]
 }
 ```
 
+`color` and `enabled` are serialized with defaults (`color` a fixed default, `enabled` always `true`) even though no UI exists yet to change them — cheaper to include from the start than to schema-migrate later once that UI is built.
+
 ### 6.4 PluginSlot Object
 
 ```json
 {
-  "format": "VST3",
-  "name": "Kadabra Grand",
-  "manufacturer": "IMI",
-  "uid": "<JUCE plugin UID>",
-  "fileOrIdentifier": "/Library/Audio/Plug-Ins/VST3/KadabraGrand.vst3",
+  "pluginDescriptionXml": "<PLUGIN name=\"Kadabra Grand\" format=\"VST3\" manufacturer=\"IMI\" .../>",
   "isBypassed": false,
-  "stateBlob": "<base64 encoded binary>",
-  "editorVisible": false,
-  "editorBounds": { "x": 200, "y": 150, "w": 800, "h": 600 }
+  "stateBlob": "<base64 encoded binary, from AudioProcessor::getStateInformation()>"
 }
 ```
+
+`pluginDescriptionXml` is the string form of `PluginDescription::createXml()` (parsed back via `juce::XmlDocument::parse()` + `PluginDescription::loadFromXml()` on load), replacing the flat `format`/`name`/`manufacturer`/`uid`/`fileOrIdentifier` fields from the original draft of this schema — see the note in §3.2. `isLoaded` isn't serialized; it's derived at load time from whether `formatManager.createPluginInstance()` succeeds. `editorVisible`/`editorBounds` from the original draft are deferred (see §4.4) — not part of the schema in this first pass.
 
 ## 7. MIDI Routing Details
 
@@ -314,7 +318,7 @@ A channel with no MIDI device assigned will receive no MIDI events and produce n
 
 ### 7.3 MIDI Device Reconnection
 
-If a previously assigned MIDI device is not present at launch, the channel retains its assignment string but shows a warning indicator. When the device becomes available (hot-plug), K-Player reconnects automatically.
+If a previously assigned MIDI device is not present, the channel retains its `midiDeviceIdentifier`/`midiDeviceName` assignment but shows a warning indicator. **Implemented 2026-07-04** as a periodic (2s) check that colors the channel's MIDI-In control and shows a tooltip when the assigned identifier isn't in the currently available device list. Automatic hot-plug reconnection (re-enabling the channel the moment the device reappears, without waiting on the next periodic check or a restart) is **not yet implemented** — still open.
 
 ## 8. Master Section
 
@@ -396,6 +400,7 @@ The architecture should reserve slot space for future master insert effects (lim
 ## Changelog
 
 - **2026-07-04:** Converted from `.docx` to Markdown (tracked in git going forward). Reduced insert slot count from 8 to 5 (§1.1, §2.3, §3.1, §3.3, §5.3, §6.3, §9 Phase 2). Renamed `instrumentPlugin` to `slot0Plugin` and made it accept either an instrument or an audio-effect plugin, while insert slots 1–5 are restricted to audio-effect plugins only (§3.1, §3.3, §4.3, §6.3, §7.1). Added MIDI-FX slot as a deferred open question (§1.2, §10.1) rather than part of the MVP insert chain.
+- **2026-07-04 (session format design pass):** designed the `.kplayer` session format ahead of implementation (§6). Split `midiDevice` into `midiDeviceIdentifier` (stable match key) + `midiDeviceName` (display fallback), matching the identifier-based routing already implemented (§3.1, §6.3). Switched `PluginSlot`'s plugin identity from flat JSON fields to an embedded `PluginDescription::createXml()` string (`pluginDescriptionXml`), and `audioDevice` similarly to an embedded `AudioDeviceManager::createStateXml()` string — both reuse JUCE's own serialization instead of hand-rolled field lists (§3.2, §6.2, §6.4). Added the previously-undocumented `tempo` field at the top level (§6.2). Deferred `editorVisible`/`editorBounds` persistence out of the first implementation pass (§4.4, §6.4). Documented the MIDI-device warning indicator as implemented, with hot-plug auto-reconnect still open (§7.3).
 
 ---
 End of Specification — Kadabra K-Player MVP v1.0
