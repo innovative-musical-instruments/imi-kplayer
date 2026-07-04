@@ -4,15 +4,46 @@
 MainComponent::MainComponent(juce::AudioDeviceManager& dm, PluginManager& pm)
     : deviceManager(dm), pluginManager(pm)
 {
-    channelComponent = std::make_unique<ChannelComponent>(channelProcessor);
-    channelComponent->onLoadPlugin    = [this](int slot) { showPluginBrowser(slot, false); };
-    channelComponent->onReplacePlugin = [this](int slot) { showPluginBrowser(slot, true);  };
-    addAndMakeVisible(channelComponent.get());
+    for (int i = 0; i < numChannels; ++i)
+    {
+        auto processor = std::make_unique<ChannelProcessor>();
+        processor->setName("Channel " + juce::String(i + 1));
 
-    // ChannelProcessor needs these so it can pull itself off the audio
-    // thread while a plugin is being loaded/unloaded.
-    channelProcessor.setAudioDeviceManager(&deviceManager);
-    channelProcessor.setAudioCallback(this);
+        // ChannelProcessor needs these so it can pull itself off the audio
+        // thread while a plugin is being loaded/unloaded.
+        processor->setAudioDeviceManager(&deviceManager);
+        processor->setAudioCallback(this);
+
+        auto component = std::make_unique<ChannelComponent>(*processor);
+        component->onLoadPlugin    = [this, i](int slot) { showPluginBrowser(i, slot, false); };
+        component->onReplacePlugin = [this, i](int slot) { showPluginBrowser(i, slot, true);  };
+        channelRackContent.addAndMakeVisible(component.get());
+
+        channelProcessors.push_back(std::move(processor));
+        channelComponents.push_back(std::move(component));
+    }
+
+    channelViewport.setViewedComponent(&channelRackContent, false);
+    channelViewport.setScrollBarsShown(false, true);
+    addAndMakeVisible(channelViewport);
+
+    masterVolumeLabel.setText("Master", juce::dontSendNotification);
+    masterVolumeLabel.setFont(juce::Font(11.0f));
+    masterVolumeLabel.setJustificationType(juce::Justification::centred);
+    masterVolumeLabel.setColour(juce::Label::textColourId, juce::Colour(0xffaaaaaa));
+    addAndMakeVisible(masterVolumeLabel);
+
+    masterVolumeSlider.setSliderStyle(juce::Slider::LinearVertical);
+    masterVolumeSlider.setRange(-60.0, 6.0, 0.1);
+    masterVolumeSlider.setValue(0.0);
+    masterVolumeSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 16);
+    masterVolumeSlider.setTextValueSuffix(" dB");
+    masterVolumeSlider.onValueChange = [this]
+    {
+        double dB = masterVolumeSlider.getValue();
+        masterVolume = (dB <= -60.0) ? 0.0f : juce::Decibels::decibelsToGain((float) dB);
+    };
+    addAndMakeVisible(masterVolumeSlider);
 
     deviceManager.addAudioCallback(this);
 
@@ -26,7 +57,7 @@ MainComponent::MainComponent(juce::AudioDeviceManager& dm, PluginManager& pm)
     loadingOverlay = std::make_unique<LoadingOverlayComponent>();
     addAndMakeVisible(loadingOverlay.get());
 
-    setSize(900, 720);
+    setSize(900, 800);
 }
 
 MainComponent::~MainComponent()
@@ -44,7 +75,14 @@ void MainComponent::onScanComplete()
     loadingOverlay.reset();
 }
 
-void MainComponent::showPluginBrowser(int slotIndex, bool isReplace)
+void MainComponent::setGlobalTempo(double bpm)
+{
+    currentTempo = bpm;
+    for (auto& channel : channelProcessors)
+        channel->setTempo(bpm);
+}
+
+void MainComponent::showPluginBrowser(int channelIndex, int slotIndex, bool isReplace)
 {
     if (!pluginsReady)
         return;
@@ -55,50 +93,56 @@ void MainComponent::showPluginBrowser(int slotIndex, bool isReplace)
 
     PluginBrowserComponent::showAsCallOut(
         pluginManager.getPluginList(),
-        [this, slotIndex, isReplace](const juce::PluginDescription& desc)
+        [this, channelIndex, slotIndex, isReplace](const juce::PluginDescription& desc)
         {
+            auto& proc = *channelProcessors[(size_t) channelIndex];
+
             auto* device      = deviceManager.getCurrentAudioDevice();
             double sampleRate = device ? device->getCurrentSampleRate()        : 44100.0;
             int    blockSize  = device ? device->getCurrentBufferSizeSamples() : 512;
 
             if (isReplace)
-                channelProcessor.unloadPlugin(slotIndex);
+                proc.unloadPlugin(slotIndex);
 
-            bool loaded = channelProcessor.loadPlugin(
+            bool loaded = proc.loadPlugin(
                 slotIndex, desc, pluginManager.getFormatManager(), sampleRate, blockSize);
 
             if (loaded)
             {
                 // Wait for CallOutBox to fully dismiss before opening editor
-                juce::Timer::callAfterDelay(100, [this, slotIndex]
+                juce::Timer::callAfterDelay(100, [this, channelIndex, slotIndex]
                 {
-                    channelComponent->refresh();
-                    channelProcessor.showEditor(slotIndex);
+                    channelComponents[(size_t) channelIndex]->refresh();
+                    channelProcessors[(size_t) channelIndex]->showEditor(slotIndex);
                 });
             }
         },
-        *channelComponent,
+        *channelComponents[(size_t) channelIndex],
         allowInstruments
     );
 }
 
-void MainComponent::handleIncomingMidiMessage(juce::MidiInput*,
+void MainComponent::handleIncomingMidiMessage(juce::MidiInput* source,
                                                const juce::MidiMessage& msg)
 {
     const juce::ScopedLock sl(midiLock);
-    pendingMidi.addEvent(msg, 0);
+    pendingMidiByDevice[source->getIdentifier()].addEvent(msg, 0);
 }
 
 void MainComponent::audioDeviceAboutToStart(juce::AudioIODevice* device)
 {
     currentSampleRate = device->getCurrentSampleRate();
     currentBlockSize  = device->getCurrentBufferSizeSamples();
-    channelProcessor.prepareToPlay(currentSampleRate, currentBlockSize);
+    channelScratch.setSize(2, currentBlockSize);
+
+    for (auto& channel : channelProcessors)
+        channel->prepareToPlay(currentSampleRate, currentBlockSize);
 }
 
 void MainComponent::audioDeviceStopped()
 {
-    channelProcessor.prepareToPlay(44100.0, 512);
+    for (auto& channel : channelProcessors)
+        channel->prepareToPlay(44100.0, 512);
 }
 
 void MainComponent::audioDeviceIOCallbackWithContext(
@@ -106,17 +150,51 @@ void MainComponent::audioDeviceIOCallbackWithContext(
     float* const* outputChannelData, int numOutputChannels,
     int numSamples, const juce::AudioIODeviceCallbackContext&)
 {
-    juce::AudioBuffer<float> buffer(outputChannelData, numOutputChannels, numSamples);
-    buffer.clear();
+    juce::AudioBuffer<float> masterBuffer(outputChannelData, numOutputChannels, numSamples);
+    masterBuffer.clear();
 
-    juce::MidiBuffer midi;
+    std::map<juce::String, juce::MidiBuffer> midiSnapshot;
     {
         const juce::ScopedLock sl(midiLock);
-        midi = pendingMidi;
-        pendingMidi.clear();
+        midiSnapshot.swap(pendingMidiByDevice);
     }
 
-    channelProcessor.processBlock(buffer, midi);
+    bool anySolo = false;
+    for (auto& channel : channelProcessors)
+    {
+        if (channel->isSolo())
+        {
+            anySolo = true;
+            break;
+        }
+    }
+
+    for (auto& channel : channelProcessors)
+    {
+        channelScratch.clear();
+
+        // Each channel gets its own *copy* of its device's MIDI buffer -
+        // JUCE plugins can mutate the buffer they're given, and per spec
+        // 7.1 multiple channels may share one device on different channel
+        // numbers, so they must not all reference the same instance.
+        juce::MidiBuffer channelMidi;
+        auto deviceId = channel->getMidiDeviceIdentifier();
+        if (deviceId.isNotEmpty())
+        {
+            auto it = midiSnapshot.find(deviceId);
+            if (it != midiSnapshot.end())
+                channelMidi = it->second;
+        }
+
+        channel->processBlock(channelScratch, channelMidi);
+
+        bool audible = ! channel->isMuted() && (! anySolo || channel->isSolo());
+        if (audible)
+            for (int ch = 0; ch < numOutputChannels; ++ch)
+                masterBuffer.addFrom(ch, 0, channelScratch, ch, 0, numSamples);
+    }
+
+    masterBuffer.applyGain(masterVolume);
 }
 
 void MainComponent::paint(juce::Graphics& g)
@@ -127,7 +205,19 @@ void MainComponent::paint(juce::Graphics& g)
 void MainComponent::resized()
 {
     auto area = getLocalBounds().reduced(20);
-    channelComponent->setBounds(area.removeFromLeft(160).withHeight(620));
+
+    auto masterArea = area.removeFromRight(90);
+    masterVolumeLabel.setBounds(masterArea.removeFromTop(16));
+    masterVolumeSlider.setBounds(masterArea);
+
+    area.removeFromRight(20);
+
+    channelViewport.setBounds(area);
+
+    const int channelWidth = 160;
+    channelRackContent.setSize(channelWidth * numChannels, area.getHeight());
+    for (int i = 0; i < (int) channelComponents.size(); ++i)
+        channelComponents[(size_t) i]->setBounds(i * channelWidth, 0, channelWidth, area.getHeight());
 
     if (loadingOverlay != nullptr)
         loadingOverlay->setBounds(getLocalBounds());

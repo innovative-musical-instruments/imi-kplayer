@@ -30,9 +30,14 @@ private:
 
     std::unique_ptr<juce::LookAndFeel_V4> faderLookAndFeel;
 
+    juce::Label channelNameLabel;
     juce::Label pluginLabel;
     juce::Label insertsLabel;
     std::array<juce::TextButton, totalSlots> slotButtons;
+
+    juce::Label      midiInLabel;
+    juce::ComboBox   midiDeviceBox;
+    juce::Array<juce::MidiDeviceInfo> availableMidiInputs;
 
     juce::ComboBox   midiChannelBox;
     juce::Slider     gainSlider;
@@ -40,6 +45,9 @@ private:
     juce::Label      gainLabel;
     juce::Label      panLabel;
     juce::Label      midiLabel;
+
+    juce::TextButton muteButton;
+    juce::TextButton soloButton;
 
     void showPluginSlotMenu(int slotIndex);
     void updateSlotButton(int slotIndex);

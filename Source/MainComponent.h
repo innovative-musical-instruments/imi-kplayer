@@ -1,4 +1,6 @@
 #pragma once
+#include <map>
+#include <vector>
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_audio_devices/juce_audio_devices.h>
 #include <juce_audio_processors/juce_audio_processors.h>
@@ -12,6 +14,8 @@ class MainComponent : public juce::Component,
                       public juce::MidiInputCallback
 {
 public:
+    static constexpr int numChannels = 4;
+
     MainComponent(juce::AudioDeviceManager& dm, PluginManager& pm);
     ~MainComponent() override;
 
@@ -29,27 +33,42 @@ public:
 
     void handleIncomingMidiMessage(juce::MidiInput*, const juce::MidiMessage& msg) override;
 
-    void showPluginBrowser(int slotIndex, bool isReplace);
+    void showPluginBrowser(int channelIndex, int slotIndex, bool isReplace);
 
     // Called on the message thread once PluginManager's background scan finishes.
     void onScanComplete();
 
-    ChannelProcessor& getChannelProcessor() { return channelProcessor; }
+    // Tempo is transport-wide, applied to every channel's playhead.
+    void   setGlobalTempo(double bpm);
+    double getGlobalTempo() const { return currentTempo; }
 
 private:
     juce::AudioDeviceManager& deviceManager;
     PluginManager& pluginManager;
 
-    ChannelProcessor channelProcessor;
-    std::unique_ptr<ChannelComponent> channelComponent;
+    std::vector<std::unique_ptr<ChannelProcessor>> channelProcessors;
+    std::vector<std::unique_ptr<ChannelComponent>> channelComponents;
+
+    juce::Component channelRackContent;
+    juce::Viewport  channelViewport;
+
+    juce::Label  masterVolumeLabel;
+    juce::Slider masterVolumeSlider;
+    float        masterVolume = 1.0f;
+
     std::unique_ptr<LoadingOverlayComponent> loadingOverlay;
     bool pluginsReady = false;
 
-    juce::MidiBuffer   pendingMidi;
+    // Keyed by MidiInput device identifier so each channel can be routed to
+    // a specific (device, channel-number) pair per spec 7.1.
+    std::map<juce::String, juce::MidiBuffer> pendingMidiByDevice;
     juce::CriticalSection midiLock;
+
+    juce::AudioBuffer<float> channelScratch;
 
     double currentSampleRate = 44100.0;
     int    currentBlockSize  = 512;
+    double currentTempo      = 120.0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MainComponent)
 };

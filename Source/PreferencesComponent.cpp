@@ -1,7 +1,9 @@
 #include "PreferencesComponent.h"
 
-PreferencesComponent::PreferencesComponent(juce::AudioDeviceManager& dm, ChannelProcessor& cp)
-    : deviceManager(dm), channelProcessor(cp)
+PreferencesComponent::PreferencesComponent(juce::AudioDeviceManager& dm,
+                                            double initialTempo,
+                                            std::function<void(double)> onTempoChangedIn)
+    : deviceManager(dm), onTempoChanged(std::move(onTempoChangedIn))
 {
     selector = std::make_unique<juce::AudioDeviceSelectorComponent>(
         deviceManager,
@@ -20,9 +22,9 @@ PreferencesComponent::PreferencesComponent(juce::AudioDeviceManager& dm, Channel
     addAndMakeVisible(tempoLabel);
 
     tempoSlider.setRange(20.0, 300.0, 0.1);
-    tempoSlider.setValue(channelProcessor.getTempo(), juce::dontSendNotification);
+    tempoSlider.setValue(initialTempo, juce::dontSendNotification);
     tempoSlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 70, 22);
-    tempoSlider.onValueChange = [this] { channelProcessor.setTempo(tempoSlider.getValue()); };
+    tempoSlider.onValueChange = [this] { if (onTempoChanged) onTempoChanged(tempoSlider.getValue()); };
     addAndMakeVisible(tempoSlider);
 
     setSize(500, 450);

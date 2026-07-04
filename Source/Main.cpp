@@ -53,7 +53,7 @@ public:
             mainComponent = new MainComponent(dm, pm);
             setContentOwned(mainComponent, true);
             setResizable(true, true);
-            centreWithSize(900, 720);
+            centreWithSize(900, 800);
             setVisible(true);
         }
 
@@ -84,7 +84,8 @@ public:
 
         void showPreferences()
         {
-            auto* prefs = new PreferencesComponent(deviceManager, mainComponent->getChannelProcessor());
+            auto* prefs = new PreferencesComponent(deviceManager, mainComponent->getGlobalTempo(),
+                                                    [this](double bpm) { mainComponent->setGlobalTempo(bpm); });
             juce::DialogWindow::LaunchOptions opts;
             opts.content.setOwned(prefs);
             opts.dialogTitle = "Preferences";

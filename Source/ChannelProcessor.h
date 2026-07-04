@@ -75,6 +75,24 @@ public:
     void showEditor(int slotIndex);
     void hideEditor(int slotIndex);
 
+    const juce::Uuid& getId() const { return id; }
+
+    void setName(const juce::String& newName) { name = newName; }
+    juce::String getName() const              { return name; }
+
+    void setMuted(bool shouldBeMuted) { mute.store(shouldBeMuted, std::memory_order_relaxed); }
+    bool isMuted() const               { return mute.load(std::memory_order_relaxed); }
+
+    void setSolo(bool shouldBeSolo)   { solo.store(shouldBeSolo, std::memory_order_relaxed); }
+    bool isSolo() const               { return solo.load(std::memory_order_relaxed); }
+
+    // Read on the audio thread once per block to decide which device's MIDI
+    // buffer to feed this channel, so it's guarded by its own lock rather
+    // than relying on juce::String's ref-counting to be safe unsynchronized
+    // across threads.
+    void setMidiDeviceIdentifier(const juce::String& deviceId);
+    juce::String getMidiDeviceIdentifier() const;
+
 private:
     struct Slot
     {
@@ -102,6 +120,14 @@ private:
     float gain        = 1.0f;
     float pan         = 0.0f;
     int   midiChannel = 0;
+
+    juce::Uuid id;
+    juce::String name;
+    std::atomic<bool> mute { false };
+    std::atomic<bool> solo { false };
+
+    mutable juce::CriticalSection midiDeviceLock;
+    juce::String midiDeviceIdentifier;
 
     void applyGainAndPan(juce::AudioBuffer<float>& buffer);
 

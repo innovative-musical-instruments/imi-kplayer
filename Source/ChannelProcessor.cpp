@@ -258,3 +258,15 @@ void ChannelProcessor::hideEditor(int slotIndex)
 {
     slots[(size_t) slotIndex].editorWindow.reset();
 }
+
+void ChannelProcessor::setMidiDeviceIdentifier(const juce::String& deviceId)
+{
+    const juce::ScopedLock sl(midiDeviceLock);
+    midiDeviceIdentifier = deviceId;
+}
+
+juce::String ChannelProcessor::getMidiDeviceIdentifier() const
+{
+    const juce::ScopedLock sl(midiDeviceLock);
+    return midiDeviceIdentifier;
+}

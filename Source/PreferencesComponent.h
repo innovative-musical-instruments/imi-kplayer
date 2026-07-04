@@ -1,19 +1,23 @@
 #pragma once
+#include <functional>
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_audio_utils/juce_audio_utils.h>
 #include <juce_audio_devices/juce_audio_devices.h>
-#include "ChannelProcessor.h"
 
 class PreferencesComponent : public juce::Component
 {
 public:
-    PreferencesComponent(juce::AudioDeviceManager& dm, ChannelProcessor& cp);
+    // Tempo is a transport-wide setting shared by all channels, so this
+    // takes a plain value + change callback rather than a ChannelProcessor&.
+    PreferencesComponent(juce::AudioDeviceManager& dm,
+                        double initialTempo,
+                        std::function<void(double)> onTempoChanged);
     ~PreferencesComponent() override;
     void resized() override;
 
 private:
     juce::AudioDeviceManager& deviceManager;
-    ChannelProcessor& channelProcessor;
+    std::function<void(double)> onTempoChanged;
 
     std::unique_ptr<juce::AudioDeviceSelectorComponent> selector;
     juce::Label  tempoLabel;

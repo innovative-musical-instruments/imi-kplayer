@@ -74,6 +74,13 @@ ChannelComponent::ChannelComponent(ChannelProcessor& p)
     : processor(p)
 {
     faderLookAndFeel = std::make_unique<ConsoleFaderLookAndFeel>();
+
+    channelNameLabel.setText(processor.getName(), juce::dontSendNotification);
+    channelNameLabel.setFont(juce::Font(13.0f, juce::Font::bold));
+    channelNameLabel.setJustificationType(juce::Justification::centred);
+    channelNameLabel.setColour(juce::Label::textColourId, juce::Colours::white);
+    addAndMakeVisible(channelNameLabel);
+
     pluginLabel.setText("Instrument", juce::dontSendNotification);
     pluginLabel.setFont(juce::Font(11.0f));
     pluginLabel.setJustificationType(juce::Justification::centredLeft);
@@ -93,6 +100,20 @@ ChannelComponent::ChannelComponent(ChannelProcessor& p)
         addAndMakeVisible(button);
         updateSlotButton(i);
     }
+
+    midiInLabel.setText("MIDI In", juce::dontSendNotification);
+    midiInLabel.setFont(juce::Font(11.0f));
+    midiInLabel.setJustificationType(juce::Justification::centredLeft);
+    midiInLabel.setColour(juce::Label::textColourId, juce::Colour(0xffaaaaaa));
+    addAndMakeVisible(midiInLabel);
+
+    availableMidiInputs = juce::MidiInput::getAvailableDevices();
+    midiDeviceBox.addItem("None", 1);
+    for (int i = 0; i < availableMidiInputs.size(); ++i)
+        midiDeviceBox.addItem(availableMidiInputs[i].name, i + 2);
+    midiDeviceBox.setSelectedId(1);
+    midiDeviceBox.addListener(this);
+    addAndMakeVisible(midiDeviceBox);
 
     midiLabel.setText("MIDI Ch", juce::dontSendNotification);
     midiLabel.setFont(juce::Font(11.0f));
@@ -136,7 +157,19 @@ ChannelComponent::ChannelComponent(ChannelProcessor& p)
     panSlider.setLookAndFeel(faderLookAndFeel.get());
     addAndMakeVisible(panSlider);
 
-    setSize(160, 620);
+    muteButton.setButtonText("Mute");
+    muteButton.setClickingTogglesState(true);
+    muteButton.setColour(juce::TextButton::buttonOnColourId, juce::Colours::orange);
+    muteButton.onClick = [this] { processor.setMuted(muteButton.getToggleState()); };
+    addAndMakeVisible(muteButton);
+
+    soloButton.setButtonText("Solo");
+    soloButton.setClickingTogglesState(true);
+    soloButton.setColour(juce::TextButton::buttonOnColourId, juce::Colours::yellow);
+    soloButton.onClick = [this] { processor.setSolo(soloButton.getToggleState()); };
+    addAndMakeVisible(soloButton);
+
+    setSize(160, 700);
 }
 
 ChannelComponent::~ChannelComponent()
@@ -247,6 +280,20 @@ void ChannelComponent::comboBoxChanged(juce::ComboBox* combo)
         int selected = midiChannelBox.getSelectedId();
         processor.setMidiChannel(selected <= 1 ? 0 : selected - 1);
     }
+    else if (combo == &midiDeviceBox)
+    {
+        int selected = midiDeviceBox.getSelectedId();
+        if (selected <= 1)
+        {
+            processor.setMidiDeviceIdentifier({});
+        }
+        else
+        {
+            int index = selected - 2;
+            if (index >= 0 && index < availableMidiInputs.size())
+                processor.setMidiDeviceIdentifier(availableMidiInputs[index].identifier);
+        }
+    }
 }
 
 void ChannelComponent::paint(juce::Graphics& g)
@@ -259,6 +306,9 @@ void ChannelComponent::paint(juce::Graphics& g)
 void ChannelComponent::resized()
 {
     auto area = getLocalBounds().reduced(10);
+
+    channelNameLabel.setBounds(area.removeFromTop(18));
+    area.removeFromTop(6);
 
     pluginLabel.setBounds(area.removeFromTop(16));
     slotButtons[0].setBounds(area.removeFromTop(26));
@@ -273,17 +323,25 @@ void ChannelComponent::resized()
     }
     area.removeFromTop(12);
 
+    midiInLabel.setBounds(area.removeFromTop(16));
+    midiDeviceBox.setBounds(area.removeFromTop(24));
+    area.removeFromTop(8);
+
     midiLabel.setBounds(area.removeFromTop(16));
     midiChannelBox.setBounds(area.removeFromTop(24));
     area.removeFromTop(16);
 
-    auto bottomArea = area.removeFromBottom(110);
+    auto bottomArea = area.removeFromBottom(140);
 
     gainLabel.setBounds(area.removeFromTop(16));
     gainSlider.setBounds(area);
 
     bottomArea.removeFromTop(20);
     panLabel.setBounds(bottomArea.removeFromTop(16));
-    bottomArea.removeFromTop(8);
     panSlider.setBounds(bottomArea.removeFromTop(44));
+
+    bottomArea.removeFromTop(8);
+    auto muteSoloArea = bottomArea.removeFromTop(24);
+    muteButton.setBounds(muteSoloArea.removeFromLeft(muteSoloArea.getWidth() / 2).reduced(4, 0));
+    soloButton.setBounds(muteSoloArea.reduced(4, 0));
 }
