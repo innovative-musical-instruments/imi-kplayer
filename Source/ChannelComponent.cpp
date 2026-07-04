@@ -1,4 +1,5 @@
 #include "ChannelComponent.h"
+#include <algorithm>
 
 namespace
 {
@@ -109,11 +110,25 @@ ChannelComponent::ChannelComponent(ChannelProcessor& p)
 
     availableMidiInputs = juce::MidiInput::getAvailableDevices();
     midiDeviceBox.addItem("None", 1);
+
+    // Default a fresh channel to our own Kadabra MIDI port if it's present,
+    // rather than "None" - this only ever applies at construction time, so
+    // it never overrides a deliberate later choice (including "None").
+    int defaultId = 1;
     for (int i = 0; i < availableMidiInputs.size(); ++i)
+    {
         midiDeviceBox.addItem(availableMidiInputs[i].name, i + 2);
-    midiDeviceBox.setSelectedId(1);
+        if (defaultId == 1 && availableMidiInputs[i].name.containsIgnoreCase("kadabra"))
+            defaultId = i + 2;
+    }
+    midiDeviceBox.setSelectedId(defaultId, juce::dontSendNotification);
     midiDeviceBox.addListener(this);
     addAndMakeVisible(midiDeviceBox);
+
+    if (defaultId > 1)
+        processor.setMidiDeviceIdentifier(availableMidiInputs[defaultId - 2].identifier);
+
+    startTimer(2000);
 
     midiLabel.setText("MIDI Ch", juce::dontSendNotification);
     midiLabel.setFont(juce::Font(11.0f));
@@ -170,6 +185,8 @@ ChannelComponent::ChannelComponent(ChannelProcessor& p)
     addAndMakeVisible(soloButton);
 
     setSize(160, 700);
+
+    updateMidiDeviceWarning();
 }
 
 ChannelComponent::~ChannelComponent()
@@ -293,7 +310,31 @@ void ChannelComponent::comboBoxChanged(juce::ComboBox* combo)
             if (index >= 0 && index < availableMidiInputs.size())
                 processor.setMidiDeviceIdentifier(availableMidiInputs[index].identifier);
         }
+        updateMidiDeviceWarning();
     }
+}
+
+void ChannelComponent::timerCallback()
+{
+    updateMidiDeviceWarning();
+}
+
+void ChannelComponent::updateMidiDeviceWarning()
+{
+    auto deviceId = processor.getMidiDeviceIdentifier();
+    bool missing = false;
+
+    if (deviceId.isNotEmpty())
+    {
+        auto currentDevices = juce::MidiInput::getAvailableDevices();
+        missing = std::none_of(currentDevices.begin(), currentDevices.end(),
+                               [&](const juce::MidiDeviceInfo& d) { return d.identifier == deviceId; });
+    }
+
+    midiDeviceBox.setColour(juce::ComboBox::textColourId,
+                            missing ? juce::Colours::orange : juce::Colours::white);
+    midiDeviceBox.setTooltip(missing ? "This channel's MIDI device is not currently connected"
+                                     : juce::String());
 }
 
 void ChannelComponent::paint(juce::Graphics& g)

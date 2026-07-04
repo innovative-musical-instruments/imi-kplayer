@@ -41,10 +41,10 @@ public:
     ChannelProcessor();
     ~ChannelProcessor();
 
-    void setAudioDeviceManager(juce::AudioDeviceManager* dm) { deviceManager = dm; }
-    void setAudioCallback(juce::AudioIODeviceCallback* cb)   { audioCallback = cb; }
-
-    // slotIndex: 0 = instrument/effect slot, 1..numInsertSlots = insert slots
+    // slotIndex: 0 = instrument/effect slot, 1..numInsertSlots = insert slots.
+    // Loading an instrument (PluginDescription::isInstrument) into an insert
+    // slot is rejected here at the engine level, not just filtered out of
+    // the plugin browser's list - insert slots are audio-effect-only.
     bool loadPlugin(int slotIndex,
                     const juce::PluginDescription& desc,
                     juce::AudioPluginFormatManager& formatManager,
@@ -99,20 +99,18 @@ private:
         std::unique_ptr<juce::AudioPluginInstance> plugin;
         std::unique_ptr<juce::DocumentWindow>      editorWindow;
 
-        // Belt-and-suspenders: the audio thread checks this before touching
-        // `plugin` at all. removeAudioCallback()/addAudioCallback() around
-        // load/unload are what actually keep the audio thread out, but this
-        // flag means a wiring mistake there degrades to silence instead of a
-        // dangling-pointer crash.
+        // The audio thread checks this before touching `plugin` at all.
+        // load/unload set it false, sleep long enough to guarantee at least
+        // one audio callback has observed that (block periods are a few ms
+        // at most; the sleep is tens of ms), then safely mutate/destroy
+        // `plugin` without ever detaching the shared device callback - that
+        // would silence every other channel's audio too, not just this slot.
         std::atomic<bool> ready { false };
         bool bypassed = false;
     };
 
     std::array<Slot, totalSlotCount> slots;
     KPlayerAudioPlayHead playHead;
-
-    juce::AudioDeviceManager*    deviceManager = nullptr;
-    juce::AudioIODeviceCallback* audioCallback = nullptr;
 
     double currentSampleRate = 44100.0;
     int    currentBlockSize  = 512;

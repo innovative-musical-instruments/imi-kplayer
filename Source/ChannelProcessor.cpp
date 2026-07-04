@@ -34,17 +34,29 @@ bool ChannelProcessor::loadPlugin(int slotIndex,
                                    int blockSize)
 {
     jassert(slotIndex >= 0 && slotIndex < totalSlotCount);
+
+    // Insert slots are audio-effect-only per spec - enforced here at the
+    // engine level so any caller (not just the plugin browser's filtered
+    // list) is held to it.
+    if (slotIndex != slot0Index && desc.isInstrument)
+    {
+        juce::Logger::outputDebugString(
+            "Refusing to load instrument \"" + desc.name + "\" into insert slot "
+            + juce::String(slotIndex) + " - insert slots are audio-effect-only");
+        return false;
+    }
+
     auto& slot = slots[(size_t) slotIndex];
 
     juce::String errorMessage;
 
-    // Pull the audio thread off the callback entirely before touching
-    // `plugin` - removeAudioCallback() blocks until any in-flight audio
-    // callback returns and guarantees no further calls until it's added
-    // back, so processBlock() cannot race the instantiation below.
+    // Tell the audio thread not to touch this slot, then sleep long enough
+    // to guarantee at least one audio callback has observed that before we
+    // mutate `plugin` below - deliberately not detaching the shared device
+    // callback here, since that would silence every channel, not just this
+    // slot (see the comment on `Slot::ready` in the header).
     slot.ready.store(false, std::memory_order_release);
-    if (deviceManager && audioCallback)
-        deviceManager->removeAudioCallback(audioCallback);
+    juce::Thread::sleep(50);
 
     auto newPlugin = formatManager.createPluginInstance(
         desc, sampleRate, blockSize, errorMessage);
@@ -52,8 +64,6 @@ bool ChannelProcessor::loadPlugin(int slotIndex,
     if (newPlugin == nullptr)
     {
         juce::Logger::outputDebugString("Failed to load plugin: " + errorMessage);
-        if (deviceManager && audioCallback)
-            deviceManager->addAudioCallback(audioCallback);
         return false;
     }
 
@@ -89,8 +99,6 @@ bool ChannelProcessor::loadPlugin(int slotIndex,
     {
         juce::Logger::outputDebugString(
             "Plugin does not support the required bus layout: " + desc.name);
-        if (deviceManager && audioCallback)
-            deviceManager->addAudioCallback(audioCallback);
         return false;
     }
 
@@ -104,14 +112,9 @@ bool ChannelProcessor::loadPlugin(int slotIndex,
 
     // Grace period for HISE's async sample-mapping/streaming threads to
     // settle before we let the audio thread anywhere near the plugin.
-    // The audio callback is still detached at this point, so this is a
-    // safety margin against HISE's own background threads, not against
-    // our own audio thread (that's already guaranteed above).
     juce::Thread::sleep(1000);
 
     slot.ready.store(true, std::memory_order_release);
-    if (deviceManager && audioCallback)
-        deviceManager->addAudioCallback(audioCallback);
 
     return true;
 }
@@ -126,9 +129,10 @@ void ChannelProcessor::unloadPlugin(int slotIndex)
     if (slot.plugin == nullptr)
         return;
 
+    // See loadPlugin() - sleep is the drain margin, not a device-callback
+    // detach, so other channels keep processing uninterrupted.
     slot.ready.store(false, std::memory_order_release);
-    if (deviceManager && audioCallback)
-        deviceManager->removeAudioCallback(audioCallback);
+    juce::Thread::sleep(50);
 
     slot.plugin->setPlayHead(nullptr);
     slot.plugin->releaseResources();
@@ -137,9 +141,6 @@ void ChannelProcessor::unloadPlugin(int slotIndex)
     juce::Thread::sleep(500);
 
     slot.plugin.reset();
-
-    if (deviceManager && audioCallback)
-        deviceManager->addAudioCallback(audioCallback);
 }
 
 bool ChannelProcessor::hasPlugin(int slotIndex) const

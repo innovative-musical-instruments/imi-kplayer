@@ -6,7 +6,8 @@
 
 class ChannelComponent : public juce::Component,
                          public juce::Slider::Listener,
-                         public juce::ComboBox::Listener
+                         public juce::ComboBox::Listener,
+                         private juce::Timer
 {
 public:
     static constexpr int totalSlots = ChannelProcessor::totalSlotCount;
@@ -26,6 +27,9 @@ public:
     void comboBoxChanged(juce::ComboBox* combo) override;
 
 private:
+    void timerCallback() override;
+    void updateMidiDeviceWarning();
+
     ChannelProcessor& processor;
 
     std::unique_ptr<juce::LookAndFeel_V4> faderLookAndFeel;

@@ -9,11 +9,6 @@ MainComponent::MainComponent(juce::AudioDeviceManager& dm, PluginManager& pm)
         auto processor = std::make_unique<ChannelProcessor>();
         processor->setName("Channel " + juce::String(i + 1));
 
-        // ChannelProcessor needs these so it can pull itself off the audio
-        // thread while a plugin is being loaded/unloaded.
-        processor->setAudioDeviceManager(&deviceManager);
-        processor->setAudioCallback(this);
-
         auto component = std::make_unique<ChannelComponent>(*processor);
         component->onLoadPlugin    = [this, i](int slot) { showPluginBrowser(i, slot, false); };
         component->onReplacePlugin = [this, i](int slot) { showPluginBrowser(i, slot, true);  };

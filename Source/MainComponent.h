@@ -52,6 +52,11 @@ private:
     juce::Component channelRackContent;
     juce::Viewport  channelViewport;
 
+    // Nothing renders a SettableTooltipClient's tooltip text without one of
+    // these existing somewhere in the app - it watches the whole desktop
+    // for hover, not just its own bounds.
+    juce::TooltipWindow tooltipWindow;
+
     juce::Label  masterVolumeLabel;
     juce::Slider masterVolumeSlider;
     float        masterVolume = 1.0f;
