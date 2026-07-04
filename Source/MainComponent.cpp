@@ -117,16 +117,11 @@ void MainComponent::audioDeviceIOCallbackWithContext(
 void MainComponent::paint(juce::Graphics& g)
 {
     g.fillAll(juce::Colour(0xff1a1a2e));
-    g.setColour(juce::Colours::white);
-    g.setFont(16.0f);
-    g.drawText("Kadabra K-Player", getLocalBounds().removeFromTop(40),
-               juce::Justification::centred);
 }
 
 void MainComponent::resized()
 {
     auto area = getLocalBounds().reduced(20);
-    area.removeFromTop(40);
     channelComponent->setBounds(area.removeFromLeft(160).withHeight(500));
 
     if (loadingOverlay != nullptr)
