@@ -1,6 +1,8 @@
 #include "SessionIO.h"
 #include "MainComponent.h"
 #include "ChannelProcessor.h"
+#include "SessionMigrator.h"
+#include "SessionFormat.h"
 
 namespace
 {
@@ -134,8 +136,18 @@ bool SessionIO::saveSession(const juce::File& file,
                             MainComponent& mainComponent,
                             juce::AudioDeviceManager& deviceManager)
 {
+    // Backup-on-save: preserve the previous on-disk copy before overwriting.
+    // A failed backup shouldn't block the user from saving their work.
+    SessionFormat::backupExistingFile(file);
+
     auto* root = new juce::DynamicObject();
-    root->setProperty("version", "1.0");
+
+    // Normally this is kCurrentFormatVersion (upgraded on save, spec §5 rule
+    // 1a). If the loaded file was newer than this app understands, it's the
+    // file's original formatVersion instead, so a no-op load->save round
+    // trip doesn't silently downgrade a Muse this app couldn't fully parse
+    // (spec §4.5/§5 rule 1b).
+    root->setProperty("formatVersion", mainComponent.getLastLoadedFormatVersion());
     root->setProperty("appVersion", JUCE_APPLICATION_VERSION_STRING);
     root->setProperty("createdAt", juce::Time::getCurrentTime().toISO8601(true));
     root->setProperty("sessionName", file.getFileNameWithoutExtension());
@@ -151,6 +163,10 @@ bool SessionIO::saveSession(const juce::File& file,
         channelArray.add(channelToVar(mainComponent.getChannelProcessor(i)));
     root->setProperty("channels", channelArray);
 
+    // Round-trip any fields this app version doesn't recognize (spec §4.4);
+    // known fields set above always take precedence over a stale extra.
+    SessionFormat::mergeExtraFields(*root, mainComponent.getLastLoadedExtraFields());
+
     return file.replaceWithText(juce::JSON::toString(juce::var(root)));
 }
 
@@ -162,6 +178,31 @@ bool SessionIO::loadSession(const juce::File& file,
     auto parsed = juce::JSON::parse(file.loadFileAsString());
     if (! parsed.isObject())
         return false;
+
+    int fileFormatVersion = (int) parsed.getProperty("formatVersion", 0);
+
+    if (fileFormatVersion > SessionMigrator::kCurrentFormatVersion)
+    {
+        // Newer file than this app understands. Don't migrate backward -
+        // just tell the user plainly and fall through to the tolerant parse
+        // below for a best-effort load (spec §4.5).
+        juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon,
+            "Newer Session Format",
+            "This Muse was created with a newer version of K-Player. "
+            "Some features may not load correctly.");
+    }
+    else if (fileFormatVersion < SessionMigrator::kCurrentFormatVersion)
+    {
+        auto migrateResult = SessionMigrator::migrate(parsed);
+        if (migrateResult.failed())
+            return false;
+    }
+
+    // Remember round-trip bookkeeping for the next save (spec §4.5/§5 rule 1b):
+    // a newer-than-supported file keeps its original formatVersion rather
+    // than being silently stamped down to what this app understands.
+    mainComponent.setLastLoadedFormatVersion(SessionFormat::resolveLoadedFormatVersion(fileFormatVersion));
+    mainComponent.setLastLoadedExtraFields(SessionFormat::extractExtraFields(parsed));
 
     auto deviceXmlString = parsed.getProperty("audioDeviceStateXml", juce::String()).toString();
     if (deviceXmlString.isNotEmpty())

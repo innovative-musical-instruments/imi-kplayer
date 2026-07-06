@@ -34,6 +34,10 @@ target_sources(IMI_KPlayer PRIVATE
     Source/LoadingOverlayComponent.h
     Source/SessionIO.cpp
     Source/SessionIO.h
+    Source/SessionMigrator.cpp
+    Source/SessionMigrator.h
+    Source/SessionFormat.cpp
+    Source/SessionFormat.h
 )
 
 target_compile_definitions(IMI_KPlayer PRIVATE
@@ -62,3 +66,39 @@ target_link_libraries(IMI_KPlayer PRIVATE
     juce::juce_recommended_lto_flags
     juce::juce_recommended_warning_flags
 )
+
+# Regression tests for the session format versioning/migration system (see
+# docs/K-Player_Session_Format_Versioning_Spec_Increment0.md §6). Kept as a
+# separate juce_core-only console app so it builds fast and doesn't need
+# audio devices, plugin hosting, or a GUI to run.
+juce_add_console_app(IMI_KPlayer_Tests
+    PRODUCT_NAME "IMI_KPlayer_Tests"
+)
+
+target_sources(IMI_KPlayer_Tests PRIVATE
+    Tests/TestMain.cpp
+    Tests/SessionMigratorTests.cpp
+    Tests/SessionFormatTests.cpp
+    Source/SessionMigrator.cpp
+    Source/SessionMigrator.h
+    Source/SessionFormat.cpp
+    Source/SessionFormat.h
+)
+
+target_include_directories(IMI_KPlayer_Tests PRIVATE Source)
+
+target_compile_definitions(IMI_KPlayer_Tests PRIVATE
+    JUCE_STANDALONE_APPLICATION=1
+    KPLAYER_TEST_FIXTURES_DIR="${CMAKE_SOURCE_DIR}/test/fixtures/session-formats"
+)
+
+target_link_libraries(IMI_KPlayer_Tests PRIVATE
+    juce::juce_core
+    PUBLIC
+    juce::juce_recommended_config_flags
+    juce::juce_recommended_lto_flags
+    juce::juce_recommended_warning_flags
+)
+
+enable_testing()
+add_test(NAME SessionFormatTests COMMAND IMI_KPlayer_Tests)

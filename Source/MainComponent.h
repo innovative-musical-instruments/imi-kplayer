@@ -8,6 +8,7 @@
 #include "ChannelComponent.h"
 #include "PluginManager.h"
 #include "LoadingOverlayComponent.h"
+#include "SessionMigrator.h"
 
 class MainComponent : public juce::Component,
                       public juce::AudioIODeviceCallback,
@@ -51,6 +52,18 @@ public:
     float getMasterVolume() const { return masterVolume; }
     void  setMasterVolume(float linearGain);
 
+    // Session-format round-trip bookkeeping for SessionIO (spec §4.5/§5):
+    // remembers the formatVersion and any unrecognized top-level fields from
+    // the last loaded file, so re-saving a newer-than-supported file doesn't
+    // silently downgrade it or drop data this app version doesn't understand.
+    // Defaults to "brand new session, nothing loaded yet" - current version,
+    // no extra fields.
+    int  getLastLoadedFormatVersion() const { return lastLoadedFormatVersion; }
+    void setLastLoadedFormatVersion(int formatVersion) { lastLoadedFormatVersion = formatVersion; }
+
+    juce::var getLastLoadedExtraFields() const { return lastLoadedExtraFields; }
+    void setLastLoadedExtraFields(juce::var extraFields) { lastLoadedExtraFields = std::move(extraFields); }
+
 private:
     juce::AudioDeviceManager& deviceManager;
     PluginManager& pluginManager;
@@ -69,6 +82,9 @@ private:
     juce::Label  masterVolumeLabel;
     juce::Slider masterVolumeSlider;
     float        masterVolume = 1.0f;
+
+    int       lastLoadedFormatVersion = SessionMigrator::kCurrentFormatVersion;
+    juce::var lastLoadedExtraFields;
 
     std::unique_ptr<LoadingOverlayComponent> loadingOverlay;
     bool pluginsReady = false;
