@@ -146,7 +146,7 @@ ChannelComponent::ChannelComponent(ChannelProcessor& p)
     midiChannelBox.addItem("All", 1);
     for (int i = 1; i <= 16; ++i)
         midiChannelBox.addItem(juce::String(i), i + 1);
-    midiChannelBox.setSelectedId(1);
+    midiChannelBox.setSelectedId(1, juce::dontSendNotification);
     midiChannelBox.addListener(this);
     addAndMakeVisible(midiChannelBox);
 
@@ -158,7 +158,7 @@ ChannelComponent::ChannelComponent(ChannelProcessor& p)
 
     gainSlider.setSliderStyle(juce::Slider::LinearVertical);
     gainSlider.setRange(-96.0, 0.0, 0.1);
-    gainSlider.setValue(0.0);
+    gainSlider.setValue(0.0, juce::dontSendNotification);
     gainSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 16);
     gainSlider.setTextValueSuffix(" dB");
     gainSlider.addListener(this);
@@ -173,7 +173,7 @@ ChannelComponent::ChannelComponent(ChannelProcessor& p)
 
     panSlider.setSliderStyle(juce::Slider::LinearHorizontal);
     panSlider.setRange(-1.0, 1.0, 0.01);
-    panSlider.setValue(0.0);
+    panSlider.setValue(0.0, juce::dontSendNotification);
     panSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 16);
     panSlider.addListener(this);
     panSlider.setLookAndFeel(faderLookAndFeel.get());
@@ -182,13 +182,21 @@ ChannelComponent::ChannelComponent(ChannelProcessor& p)
     muteButton.setButtonText("M");
     muteButton.setClickingTogglesState(true);
     muteButton.setColour(juce::TextButton::buttonOnColourId, juce::Colours::orange);
-    muteButton.onClick = [this] { processor.setMuted(muteButton.getToggleState()); };
+    muteButton.onClick = [this]
+    {
+        processor.setMuted(muteButton.getToggleState());
+        if (onDirty) onDirty();
+    };
     addAndMakeVisible(muteButton);
 
     soloButton.setButtonText("S");
     soloButton.setClickingTogglesState(true);
     soloButton.setColour(juce::TextButton::buttonOnColourId, juce::Colours::yellow);
-    soloButton.onClick = [this] { processor.setSolo(soloButton.getToggleState()); };
+    soloButton.onClick = [this]
+    {
+        processor.setSolo(soloButton.getToggleState());
+        if (onDirty) onDirty();
+    };
     addAndMakeVisible(soloButton);
 
     setSize(80, 700);
@@ -238,15 +246,39 @@ void ChannelComponent::showPluginSlotMenu(int slotIndex)
                         processor.showEditor(slotIndex);
                     break;
                 case 3:
-                    if (onReplacePlugin) onReplacePlugin(slotIndex);
+                    juce::AlertWindow::showAsync(
+                        juce::MessageBoxOptions::makeOptionsOkCancel(
+                            juce::MessageBoxIconType::WarningIcon,
+                            "Replace Plugin",
+                            "Replace the plugin loaded in this slot? Its current state will be lost.",
+                            "Replace", "Cancel", this),
+                        [this, slotIndex](int confirmResult)
+                        {
+                            if (confirmResult == 1 && onReplacePlugin)
+                                onReplacePlugin(slotIndex);
+                        });
                     break;
                 case 4:
-                    processor.unloadPlugin(slotIndex);
-                    updateSlotButton(slotIndex);
+                    juce::AlertWindow::showAsync(
+                        juce::MessageBoxOptions::makeOptionsOkCancel(
+                            juce::MessageBoxIconType::WarningIcon,
+                            "Remove Plugin",
+                            "Remove the plugin loaded in this slot? Its current state will be lost.",
+                            "Remove", "Cancel", this),
+                        [this, slotIndex](int confirmResult)
+                        {
+                            if (confirmResult == 1)
+                            {
+                                processor.unloadPlugin(slotIndex);
+                                updateSlotButton(slotIndex);
+                                if (onDirty) onDirty();
+                            }
+                        });
                     break;
                 case 5:
                     processor.setBypassed(slotIndex, ! processor.isBypassed(slotIndex));
                     updateSlotButton(slotIndex);
+                    if (onDirty) onDirty();
                     break;
                 default:
                     break;
@@ -321,6 +353,8 @@ void ChannelComponent::sliderValueChanged(juce::Slider* slider)
     {
         processor.setPan((float)panSlider.getValue());
     }
+
+    if (onDirty) onDirty();
 }
 
 void ChannelComponent::comboBoxChanged(juce::ComboBox* combo)
@@ -345,6 +379,8 @@ void ChannelComponent::comboBoxChanged(juce::ComboBox* combo)
         }
         updateMidiDeviceWarning();
     }
+
+    if (onDirty) onDirty();
 }
 
 void ChannelComponent::refreshMidiDeviceList()

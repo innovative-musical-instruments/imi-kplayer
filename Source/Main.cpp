@@ -50,6 +50,7 @@ public:
         MainComponent* mainComponent = nullptr;
         std::unique_ptr<juce::FileChooser> fileChooser;
         juce::File currentSessionFile;
+        bool sessionDirty = false;
         juce::ApplicationCommandManager commandManager;
 
         MainWindow(juce::String name,
@@ -65,9 +66,11 @@ public:
             setUsingNativeTitleBar(false);
             setMenuBar(this);
             mainComponent = new MainComponent(dm, pm);
+            mainComponent->onDirty = [this] { markDirty(); };
             setContentOwned(mainComponent, true);
             setResizable(true, true);
             centreWithSize(900, 800);
+            updateWindowTitle();
 
             commandManager.registerAllCommandsForTarget(this);
             commandManager.setFirstCommandTarget(this);
@@ -152,6 +155,25 @@ public:
             }
         }
 
+        void markDirty()
+        {
+            sessionDirty = true;
+            updateWindowTitle();
+        }
+
+        void clearDirty()
+        {
+            sessionDirty = false;
+            updateWindowTitle();
+        }
+
+        void updateWindowTitle()
+        {
+            auto name = currentSessionFile != juce::File() ? currentSessionFile.getFileNameWithoutExtension()
+                                                             : juce::String("Untitled Session");
+            setName(name + (sessionDirty ? " *" : ""));
+        }
+
         void openSession()
         {
             fileChooser = std::make_unique<juce::FileChooser>(
@@ -166,6 +188,7 @@ public:
                         SessionIO::loadSession(file, *mainComponent, pluginManager, deviceManager))
                     {
                         currentSessionFile = file;
+                        clearDirty();
                     }
                 });
         }
@@ -175,7 +198,10 @@ public:
         void saveSession()
         {
             if (currentSessionFile != juce::File())
-                SessionIO::saveSession(currentSessionFile, *mainComponent, deviceManager);
+            {
+                if (SessionIO::saveSession(currentSessionFile, *mainComponent, deviceManager))
+                    clearDirty();
+            }
             else
                 saveSessionAs();
         }
@@ -197,14 +223,17 @@ public:
                         file = file.withFileExtension(".kplayer");
 
                     if (SessionIO::saveSession(file, *mainComponent, deviceManager))
+                    {
                         currentSessionFile = file;
+                        clearDirty();
+                    }
                 });
         }
 
         void showPreferences()
         {
             auto* prefs = new PreferencesComponent(deviceManager, mainComponent->getGlobalTempo(),
-                                                    [this](double bpm) { mainComponent->setGlobalTempo(bpm); });
+                                                    [this](double bpm) { mainComponent->setGlobalTempo(bpm); markDirty(); });
             juce::DialogWindow::LaunchOptions opts;
             opts.content.setOwned(prefs);
             opts.dialogTitle = "Preferences";

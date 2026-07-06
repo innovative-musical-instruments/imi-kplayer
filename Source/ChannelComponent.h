@@ -15,6 +15,12 @@ public:
     std::function<void(int slotIndex)> onLoadPlugin;
     std::function<void(int slotIndex)> onReplacePlugin;
 
+    // Fired for every user-driven structural/parameter change made directly
+    // in this component (gain/pan/mute/solo/MIDI routing, remove/bypass).
+    // Load and replace are reported by the owner instead, since those only
+    // complete once MainComponent's plugin browser callback runs.
+    std::function<void()> onDirty;
+
     explicit ChannelComponent(ChannelProcessor& processor);
     ~ChannelComponent() override;
 

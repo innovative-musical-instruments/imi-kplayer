@@ -12,6 +12,7 @@ MainComponent::MainComponent(juce::AudioDeviceManager& dm, PluginManager& pm)
         auto component = std::make_unique<ChannelComponent>(*processor);
         component->onLoadPlugin    = [this, i](int slot) { showPluginBrowser(i, slot, false); };
         component->onReplacePlugin = [this, i](int slot) { showPluginBrowser(i, slot, true);  };
+        component->onDirty         = [this] { notifyDirty(); };
         channelRackContent.addAndMakeVisible(component.get());
 
         channelProcessors.push_back(std::move(processor));
@@ -30,12 +31,13 @@ MainComponent::MainComponent(juce::AudioDeviceManager& dm, PluginManager& pm)
 
     masterVolumeSlider.setSliderStyle(juce::Slider::LinearVertical);
     masterVolumeSlider.setRange(-60.0, 6.0, 0.1);
-    masterVolumeSlider.setValue(0.0);
+    masterVolumeSlider.setValue(0.0, juce::dontSendNotification);
     masterVolumeSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 16);
     masterVolumeSlider.setTextValueSuffix(" dB");
     masterVolumeSlider.onValueChange = [this]
     {
         masterVolume = juce::Decibels::decibelsToGain((float) masterVolumeSlider.getValue(), -60.0f);
+        notifyDirty();
     };
     addAndMakeVisible(masterVolumeSlider);
 
@@ -119,6 +121,9 @@ void MainComponent::showPluginBrowser(int channelIndex, int slotIndex, bool isRe
 
             bool loaded = proc.loadPlugin(
                 slotIndex, desc, pluginManager.getFormatManager(), sampleRate, blockSize);
+
+            if (isReplace || loaded)
+                notifyDirty();
 
             if (loaded)
             {

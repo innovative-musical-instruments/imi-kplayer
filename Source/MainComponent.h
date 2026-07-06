@@ -52,6 +52,12 @@ public:
     float getMasterVolume() const { return masterVolume; }
     void  setMasterVolume(float linearGain);
 
+    // Fired for genuine user-driven structural changes only - never during
+    // SessionIO::loadSession, which mutates ChannelProcessors/state directly
+    // rather than through these UI-facing paths.
+    std::function<void()> onDirty;
+    void notifyDirty() { if (onDirty) onDirty(); }
+
     // Session-format round-trip bookkeeping for SessionIO (spec §4.5/§5):
     // remembers the formatVersion and any unrecognized top-level fields from
     // the last loaded file, so re-saving a newer-than-supported file doesn't
