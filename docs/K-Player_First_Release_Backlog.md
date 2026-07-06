@@ -5,22 +5,28 @@
 
 ---
 
-## Increment 0 — Session format versioning & migration
+## Increment 0 — Session format versioning & migration — DONE (`31120ea`)
 
 Ahead of everything else, since Increment 3 below adds new fields to the session schema — those additions should be the first real migration, not more unversioned drift. Full spec: `docs/K-Player_Session_Format_Versioning_Spec_Increment0.md`.
 
-1. `formatVersion` field on all session files, migration-chain scaffolding (`SessionMigrator`)
-2. Tolerant parsing of unknown fields; graceful handling of newer-file-than-app
-3. Backup-on-save (`.kplayer.bak`)
-4. Fixture-based regression tests per format version
+1. `formatVersion` field on all session files, migration-chain scaffolding (`SessionMigrator`) — done: `Source/SessionMigrator.h/.cpp`, `migrate_v0_to_v1` for every pre-spec file.
+2. Tolerant parsing of unknown fields; graceful handling of newer-file-than-app — done: `Source/SessionFormat.h/.cpp` (`extractExtraFields`/`mergeExtraFields`), "Newer Session Format" alert in `SessionIO::loadSession`, no silent downgrade on save.
+3. Backup-on-save (`.kplayer.bak`) — done: `SessionFormat::backupExistingFile`.
+4. Fixture-based regression tests per format version — done: first test infra in the repo (`IMI_KPlayer_Tests`, a `juce_core`-only console app), fixtures in `test/fixtures/session-formats/`.
 
-## Increment 1 — Session safety
+Verified both by the automated test suite and by driving the built app live (fresh save writes `formatVersion: 1`; second save creates `.kplayer.bak`; opening/re-saving a hand-edited `formatVersion: 999` file with an unknown field shows the warning and doesn't downgrade or drop the field).
 
-1. Dirty-state `*` indicator next to session name — tracks both structural changes (channel/insert/routing edits) and plugin parameter changes; clears on save
-2. Cmd/Ctrl+S save, wired to the same dirty flag
+## Increment 1 — Session safety — DONE (`733e889`)
+
+1. Dirty-state `*` indicator next to session name — done, but **scoped to structural changes only** (channel/insert/routing/plugin load-replace-unload-bypass, master volume, tempo); plugin-internal parameter edits (turning a knob inside a hosted plugin's own UI) do **not** mark the session dirty — that would need a new `AudioProcessorListener`/`AsyncUpdater` per loaded plugin instance, deliberately deferred as a separate chunk of work. Clears on save. Implemented in `Main.cpp` (`MainWindow::markDirty/clearDirty/updateWindowTitle`), wired down through `MainComponent`/`ChannelComponent` via an `onDirty` callback.
+2. Cmd/Ctrl+S save, wired to the same dirty flag — done.
 3. Destructive-action confirmation guards:
-   - Reducing channel count when a channel above the new count has a loaded plugin
-   - Unloading/replacing a plugin in a slot
+   - Reducing channel count when a channel above the new count has a loaded plugin — **deferred to Increment 2**, since there's no channel-count resize UI yet to guard.
+   - Unloading/replacing a plugin in a slot — done: OK/Cancel confirmation via `AlertWindow::showAsync` in `ChannelComponent::showPluginSlotMenu`.
+
+Verified live in the running app (mute toggle → title shows `*`; Save As → title updates to the new name with `*` cleared; plugin load/remove confirmed by the user directly).
+
+**Bug found and fixed during verification (unrelated to dirty-tracking design, but surfaced by it):** `gainSlider`, `panSlider`, `masterVolumeSlider`, and `midiChannelBox` all called `setValue`/`setSelectedId` without `dontSendNotification` *before* their listener was attached at construction time. Since the default notification type is async, the listener callback still fired moments later (after being wired) — harmless before, but it falsely marked a brand-new session dirty once dirty-tracking existed. Fixed at all four sites to use `dontSendNotification`, matching the pattern already used correctly elsewhere (e.g. `midiDeviceBox`).
 
 *(Revert-to-Saved was considered and dropped — redundant with re-loading the current session file.)*
 
