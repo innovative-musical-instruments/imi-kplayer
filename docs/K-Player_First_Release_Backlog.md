@@ -47,7 +47,7 @@ Verified live in the running app (mute toggle → title shows `*`; Save As → t
    - Required requesting real input channels from the device (`Main.cpp`: `initialiseWithDefaultDevices(2, 2)`, was `(0, 2)`) and exposing input channel selection in Settings (`AudioDeviceSelectorComponent` max input channels 0→8), plus adding the missing `NSMicrophoneUsageDescription`/`MICROPHONE_PERMISSION_ENABLED` to `CMakeLists.txt` — without it macOS silently denied all audio input at the OS level (no crash, just silence, including in JUCE's own built-in input meter).
    - Verified live by the user, including instrument-vocoding via a real vocoder plugin (Waves Morphoder) — one false alarm during testing (raw+processed signal audible together) turned out to be the audio interface's own hardware direct-monitoring feature, not a K-Player bug.
 
-## Increment 4 — Plugin selection dialog usability — DONE
+## Increment 4 — Plugin selection dialog usability — DONE (`87ad64b`)
 
 Reviewed against the actual code before implementing (not just the backlog wording) — item 9 turned out to already be built; item 11's real gap was narrower than "consistency across slots" implied; items 12/13 from Increment 5 were pulled forward here at the user's request since they're higher-value and touch the same `PluginBrowserComponent` redesign.
 
