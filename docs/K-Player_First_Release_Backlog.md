@@ -30,10 +30,12 @@ Verified live in the running app (mute toggle → title shows `*`; Save As → t
 
 *(Revert-to-Saved was considered and dropped — redundant with re-loading the current session file.)*
 
-## Increment 2 — Channel count finish line
+## Increment 2 — Channel count finish line — DONE
 
-4. Fix hardcoded property blocking full range; cap raised to **18** channels
-5. Bulk resize via settings dialog: engine rebuild with brief interruption is acceptable; existing channels 1..N preserved on grow; confirm-then-truncate on shrink
+4. Fix hardcoded property blocking full range; cap raised to **24** channels — done: `MainComponent::maxChannels` (was `numChannels = 12`, a fixed construction-time constant with no resize path at all). `MainComponent::defaultChannelCount` (12) is the initial rack size on a blank session.
+5. Bulk resize via settings dialog — done: `MainComponent::setChannelCount()` rebuilds the channel vectors, briefly detaching the audio callback for the duration (per spec, acceptable); existing channels 1..N preserved on grow (new channels are prepared with the current sample rate/block size/tempo immediately, since the device won't fire `audioDeviceAboutToStart` again); confirm-then-truncate on shrink via the same OK/Cancel `AlertWindow::showAsync` pattern as Increment 1's plugin-slot guards, only when a channel above the new count has a loaded plugin. Also fixed a related latent bug surfaced by this work: `SessionIO::loadSession` used to silently truncate any saved session wider than the rack's *current* size instead of resizing to fit (clamped to `maxChannels`) — a loaded session now fully defines the channel count again, matching how tempo/master volume already behave.
+
+**Also done this round (user request, not originally scoped):** renamed the "Preferences" menu/dialog to **"Settings"** throughout — `PreferencesComponent` → `SettingsComponent` (`Source/SettingsComponent.{h,cpp}`), menu bar entry, dialog title, command info strings, and the MVP spec doc. Same functionality, no behavior change.
 
 ## Increment 3 — Audio/MIDI functional features
 

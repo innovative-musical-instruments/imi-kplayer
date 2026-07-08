@@ -15,7 +15,8 @@ class MainComponent : public juce::Component,
                       public juce::MidiInputCallback
 {
 public:
-    static constexpr int numChannels = 12;
+    static constexpr int maxChannels          = 24;
+    static constexpr int defaultChannelCount  = 12;
 
     MainComponent(juce::AudioDeviceManager& dm, PluginManager& pm);
     ~MainComponent() override;
@@ -48,6 +49,16 @@ public:
     int getNumChannels() const { return (int) channelProcessors.size(); }
     ChannelProcessor& getChannelProcessor(int index) { return *channelProcessors[(size_t) index]; }
     void refreshChannelUI(int index) { channelComponents[(size_t) index]->refresh(); }
+
+    // Bulk resize (Increment 2). Clamped to [1, maxChannels]; growing adds
+    // fresh empty channels, shrinking discards the truncated ones (and any
+    // plugins loaded in them) - callers are responsible for confirming that
+    // with the user first. Briefly detaches the audio callback while the
+    // channel vectors are rebuilt, since audioDeviceIOCallbackWithContext
+    // reads them directly on the audio thread with no lock.
+    void setChannelCount(int newCount);
+
+    bool channelHasLoadedPlugin(int index) const;
 
     float getMasterVolume() const { return masterVolume; }
     void  setMasterVolume(float linearGain);
@@ -108,6 +119,8 @@ private:
 
     juce::MidiDeviceListConnection midiDeviceListConnection;
     void enableAllMidiInputs();
+
+    void addChannel(int index);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MainComponent)
 };

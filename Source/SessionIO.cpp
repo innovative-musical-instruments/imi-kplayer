@@ -218,7 +218,12 @@ bool SessionIO::loadSession(const juce::File& file,
 
     if (auto* channelArray = parsed.getProperty("channels", juce::var()).getArray())
     {
-        int count = juce::jmin((int) channelArray->size(), mainComponent.getNumChannels());
+        // A loaded session fully defines the rack, including its channel
+        // count - resize to match (clamped to maxChannels) rather than
+        // silently dropping channels beyond whatever the rack happened to
+        // be sized at before this load.
+        int count = juce::jmin((int) channelArray->size(), MainComponent::maxChannels);
+        mainComponent.setChannelCount(count);
         for (int i = 0; i < count; ++i)
         {
             applyChannelVar(mainComponent.getChannelProcessor(i), channelArray->getReference(i),

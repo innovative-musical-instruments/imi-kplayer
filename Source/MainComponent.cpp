@@ -4,20 +4,8 @@
 MainComponent::MainComponent(juce::AudioDeviceManager& dm, PluginManager& pm)
     : deviceManager(dm), pluginManager(pm)
 {
-    for (int i = 0; i < numChannels; ++i)
-    {
-        auto processor = std::make_unique<ChannelProcessor>();
-        processor->setName("Channel " + juce::String(i + 1));
-
-        auto component = std::make_unique<ChannelComponent>(*processor);
-        component->onLoadPlugin    = [this, i](int slot) { showPluginBrowser(i, slot, false); };
-        component->onReplacePlugin = [this, i](int slot) { showPluginBrowser(i, slot, true);  };
-        component->onDirty         = [this] { notifyDirty(); };
-        channelRackContent.addAndMakeVisible(component.get());
-
-        channelProcessors.push_back(std::move(processor));
-        channelComponents.push_back(std::move(component));
-    }
+    for (int i = 0; i < defaultChannelCount; ++i)
+        addChannel(i);
 
     channelViewport.setViewedComponent(&channelRackContent, false);
     channelViewport.setScrollBarsShown(false, true);
@@ -54,6 +42,61 @@ MainComponent::MainComponent(juce::AudioDeviceManager& dm, PluginManager& pm)
     addAndMakeVisible(loadingOverlay.get());
 
     setSize(900, 800);
+}
+
+void MainComponent::addChannel(int index)
+{
+    auto processor = std::make_unique<ChannelProcessor>();
+    processor->setName("Channel " + juce::String(index + 1));
+    processor->setTempo(currentTempo);
+    processor->prepareToPlay(currentSampleRate, currentBlockSize);
+
+    auto component = std::make_unique<ChannelComponent>(*processor);
+    component->onLoadPlugin    = [this, index](int slot) { showPluginBrowser(index, slot, false); };
+    component->onReplacePlugin = [this, index](int slot) { showPluginBrowser(index, slot, true);  };
+    component->onDirty         = [this] { notifyDirty(); };
+    channelRackContent.addAndMakeVisible(component.get());
+
+    channelProcessors.push_back(std::move(processor));
+    channelComponents.push_back(std::move(component));
+}
+
+void MainComponent::setChannelCount(int newCount)
+{
+    newCount = juce::jlimit(1, maxChannels, newCount);
+    int oldCount = (int) channelProcessors.size();
+    if (newCount == oldCount)
+        return;
+
+    // audioDeviceIOCallbackWithContext walks channelProcessors directly on
+    // the audio thread with no lock, so the vectors can't be resized while
+    // callbacks are still arriving - detach for the (brief) rebuild.
+    deviceManager.removeAudioCallback(this);
+
+    if (newCount > oldCount)
+    {
+        for (int i = oldCount; i < newCount; ++i)
+            addChannel(i);
+    }
+    else
+    {
+        // Shrinking unique_ptrs destroys the dropped ChannelComponents,
+        // which removes them from channelRackContent automatically.
+        channelComponents.resize((size_t) newCount);
+        channelProcessors.resize((size_t) newCount);
+    }
+
+    deviceManager.addAudioCallback(this);
+    resized();
+}
+
+bool MainComponent::channelHasLoadedPlugin(int index) const
+{
+    auto& proc = *channelProcessors[(size_t) index];
+    for (int slot = 0; slot < ChannelProcessor::totalSlotCount; ++slot)
+        if (proc.hasPlugin(slot))
+            return true;
+    return false;
 }
 
 void MainComponent::enableAllMidiInputs()
@@ -233,7 +276,7 @@ void MainComponent::resized()
     channelViewport.setBounds(area);
 
     const int channelWidth = 80;
-    channelRackContent.setSize(channelWidth * numChannels, area.getHeight());
+    channelRackContent.setSize(channelWidth * (int) channelComponents.size(), area.getHeight());
     for (int i = 0; i < (int) channelComponents.size(); ++i)
         channelComponents[(size_t) i]->setBounds(i * channelWidth, 0, channelWidth, area.getHeight());
 

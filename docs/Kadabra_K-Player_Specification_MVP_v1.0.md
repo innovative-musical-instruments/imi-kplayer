@@ -67,7 +67,7 @@ The application is built entirely on JUCE (C++17 minimum). JUCE is chosen for:
 
 - Audio I/O via JUCE `AudioDeviceManager`
 - CoreAudio on macOS; WASAPI and ASIO on Windows
-- Configurable sample rate and buffer size via a Preferences panel
+- Configurable sample rate and buffer size via a Settings panel
 - All channel processing occurs in a single audio callback on the audio thread
 - Each channel's instrument and inserts are processed in series: Instrument/Effect (Slot 0) → Insert 1 → … → Insert 5 → Master Mix
 - Final stereo mix is sent to the selected output device
@@ -78,7 +78,7 @@ The application is built entirely on JUCE (C++17 minimum). JUCE is chosen for:
 - Each channel is assigned one MIDI device + one MIDI channel (1–16)
 - Incoming MIDI is filtered per channel by device and channel number, then forwarded to the channel's slot-0 plugin
 - Multiple channels may share the same MIDI device, listening on different MIDI channel numbers
-- MIDI devices are enumerated at launch; a rescan is available from the Preferences panel
+- MIDI devices are enumerated at launch; a rescan is available from the Settings panel
 
 ### 2.5 Session Persistence
 
@@ -159,7 +159,7 @@ Slot 0 is flexible so a channel can, for example, host a pure audio-effect chain
 
 - On first launch, K-Player performs an automatic scan of all known VST3 and AU folder locations
 - Scan results are cached to disk; subsequent launches load from cache
-- A manual rescan is available from Preferences > Plugins > Rescan
+- A manual rescan is available from Settings > Plugins > Rescan
 - Failed plugins (crash during scan) are blacklisted and listed in a separate panel with the option to retry
 
 ### 4.2 Default Scan Locations
@@ -234,7 +234,7 @@ Right-clicking a loaded plugin slot shows:
 - Replace Plugin… (opens browser)
 - Remove Plugin
 
-### 5.5 Preferences Panel
+### 5.5 Settings Panel
 
 Accessible via the application menu or keyboard shortcut. Contains:
 
@@ -330,7 +330,7 @@ All 16 channels are summed into a single stereo mix bus. Summing is additive (no
 
 - Master Volume fader: applies a final gain stage before output (range: -inf to +6 dB)
 - Master Level Meter: peak + RMS stereo meter with clip indicator and peak hold
-- Output Device Selector: quick-access dropdown in the toolbar (mirrors Preferences > Audio)
+- Output Device Selector: quick-access dropdown in the toolbar (mirrors Settings > Audio)
 
 ### 8.3 Master Inserts (Post-MVP Placeholder)
 
@@ -361,7 +361,7 @@ The architecture should reserve slot space for future master insert effects (lim
 - Main window layout with toolbar, channel strips, master section
 - Channel strip component (all controls)
 - Plugin browser panel
-- Preferences panel
+- Settings panel
 - Plugin editor window management
 
 **Phase 5 — Polish & Release Prep**

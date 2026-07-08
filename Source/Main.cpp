@@ -2,7 +2,7 @@
 #include <juce_audio_utils/juce_audio_utils.h>
 #include <juce_audio_devices/juce_audio_devices.h>
 #include "MainComponent.h"
-#include "PreferencesComponent.h"
+#include "SettingsComponent.h"
 #include "PluginManager.h"
 #include "PluginBrowserComponent.h"
 #include "SessionIO.h"
@@ -37,7 +37,7 @@ public:
         cmdOpenSession = 1,
         cmdSaveSession,
         cmdSaveSessionAs,
-        cmdPreferences,
+        cmdSettings,
         cmdQuit
     };
 
@@ -52,6 +52,7 @@ public:
         juce::File currentSessionFile;
         bool sessionDirty = false;
         juce::ApplicationCommandManager commandManager;
+        juce::Component::SafePointer<SettingsComponent> activeSettings;
 
         MainWindow(juce::String name,
                    juce::AudioDeviceManager& dm,
@@ -83,7 +84,7 @@ public:
 
         juce::StringArray getMenuBarNames() override
         {
-            return { "File", "Preferences" };
+            return { "File", "Settings" };
         }
 
         juce::PopupMenu getMenuForIndex(int index, const juce::String&) override
@@ -99,7 +100,7 @@ public:
             }
             else if (index == 1)
             {
-                menu.addCommandItem(&commandManager, cmdPreferences);
+                menu.addCommandItem(&commandManager, cmdSettings);
             }
             return menu;
         }
@@ -111,7 +112,7 @@ public:
 
         void getAllCommands(juce::Array<juce::CommandID>& commands) override
         {
-            commands.addArray({ cmdOpenSession, cmdSaveSession, cmdSaveSessionAs, cmdPreferences, cmdQuit });
+            commands.addArray({ cmdOpenSession, cmdSaveSession, cmdSaveSessionAs, cmdSettings, cmdQuit });
         }
 
         void getCommandInfo(juce::CommandID commandID, juce::ApplicationCommandInfo& result) override
@@ -130,8 +131,8 @@ public:
                     result.setInfo("Save Session As...", "Save the current session to a new file", "File", 0);
                     result.addDefaultKeypress('s', juce::ModifierKeys::commandModifier | juce::ModifierKeys::shiftModifier);
                     break;
-                case cmdPreferences:
-                    result.setInfo("Audio & MIDI...", "Open audio/MIDI preferences", "Preferences", 0);
+                case cmdSettings:
+                    result.setInfo("Audio & MIDI...", "Open audio/MIDI settings", "Settings", 0);
                     break;
                 case cmdQuit:
                     result.setInfo("Quit", "Quit the application", "File", 0);
@@ -149,7 +150,7 @@ public:
                 case cmdOpenSession:   openSession();      return true;
                 case cmdSaveSession:   saveSession();       return true;
                 case cmdSaveSessionAs: saveSessionAs();      return true;
-                case cmdPreferences:   showPreferences();    return true;
+                case cmdSettings:      showSettings();       return true;
                 case cmdQuit:          juce::JUCEApplication::getInstance()->systemRequestedQuit(); return true;
                 default: return false;
             }
@@ -230,19 +231,78 @@ public:
                 });
         }
 
-        void showPreferences()
+        void showSettings()
         {
-            auto* prefs = new PreferencesComponent(deviceManager, mainComponent->getGlobalTempo(),
-                                                    [this](double bpm) { mainComponent->setGlobalTempo(bpm); markDirty(); });
+            auto* settings = new SettingsComponent(deviceManager, mainComponent->getGlobalTempo(),
+                                                    [this](double bpm) { mainComponent->setGlobalTempo(bpm); markDirty(); },
+                                                    mainComponent->getNumChannels(),
+                                                    MainComponent::maxChannels,
+                                                    [this](int newCount) { requestChannelCountChange(newCount); });
+            activeSettings = settings;
+
             juce::DialogWindow::LaunchOptions opts;
-            opts.content.setOwned(prefs);
-            opts.dialogTitle = "Preferences";
+            opts.content.setOwned(settings);
+            opts.dialogTitle = "Settings";
             opts.dialogBackgroundColour =
                 getLookAndFeel().findColour(juce::ResizableWindow::backgroundColourId);
             opts.escapeKeyTriggersCloseButton = true;
             opts.useNativeTitleBar = true;
             opts.resizable = false;
             opts.launchAsync();
+        }
+
+        // Grow applies immediately (adding empty channels is never
+        // destructive). Shrink first checks whether any channel above the
+        // new count has a loaded plugin and, if so, confirms before
+        // truncating - same OK/Cancel pattern as ChannelComponent's
+        // replace/remove-plugin guards (Increment 1).
+        void requestChannelCountChange(int newCount)
+        {
+            int oldCount = mainComponent->getNumChannels();
+            if (newCount == oldCount)
+                return;
+
+            if (newCount > oldCount)
+            {
+                mainComponent->setChannelCount(newCount);
+                markDirty();
+                return;
+            }
+
+            bool anyLoaded = false;
+            for (int i = newCount; i < oldCount; ++i)
+                if (mainComponent->channelHasLoadedPlugin(i))
+                {
+                    anyLoaded = true;
+                    break;
+                }
+
+            if (! anyLoaded)
+            {
+                mainComponent->setChannelCount(newCount);
+                markDirty();
+                return;
+            }
+
+            juce::AlertWindow::showAsync(
+                juce::MessageBoxOptions::makeOptionsOkCancel(
+                    juce::MessageBoxIconType::WarningIcon,
+                    "Reduce Channel Count",
+                    "Channels " + juce::String(newCount + 1) + "-" + juce::String(oldCount)
+                        + " have loaded plugins that will be removed. Continue?",
+                    "Reduce", "Cancel", this),
+                [this, newCount, oldCount](int confirmResult)
+                {
+                    if (confirmResult == 1)
+                    {
+                        mainComponent->setChannelCount(newCount);
+                        markDirty();
+                    }
+                    else if (activeSettings != nullptr)
+                    {
+                        activeSettings->setDisplayedChannelCount(oldCount);
+                    }
+                });
         }
 
         void closeButtonPressed() override

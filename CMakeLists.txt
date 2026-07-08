@@ -21,8 +21,8 @@ target_sources(IMI_KPlayer PRIVATE
     Source/Main.cpp
     Source/MainComponent.cpp
     Source/MainComponent.h
-    Source/PreferencesComponent.cpp
-    Source/PreferencesComponent.h
+    Source/SettingsComponent.cpp
+    Source/SettingsComponent.h
     Source/PluginManager.cpp
     Source/PluginManager.h
     Source/PluginBrowserComponent.cpp
