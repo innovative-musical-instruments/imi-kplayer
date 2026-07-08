@@ -1,6 +1,7 @@
 #include "SessionIO.h"
 #include "MainComponent.h"
 #include "ChannelProcessor.h"
+#include "MasterChainProcessor.h"
 #include "SessionMigrator.h"
 #include "SessionFormat.h"
 
@@ -25,7 +26,11 @@ namespace
         return {};
     }
 
-    juce::var pluginSlotToVar(ChannelProcessor& processor, int slotIndex)
+    // Templated so it works for any slot host with this method shape -
+    // ChannelProcessor and MasterChainProcessor both qualify, and the
+    // master chain (Increment 3) reuses this rather than duplicating it.
+    template <typename SlotHost>
+    juce::var pluginSlotToVar(SlotHost& processor, int slotIndex)
     {
         if (! processor.hasPlugin(slotIndex))
             return {};
@@ -43,7 +48,8 @@ namespace
         return juce::var(obj);
     }
 
-    void applyPluginSlotVar(ChannelProcessor& processor, int slotIndex, const juce::var& v,
+    template <typename SlotHost>
+    void applyPluginSlotVar(SlotHost& processor, int slotIndex, const juce::var& v,
                             juce::AudioPluginFormatManager& formatManager,
                             double sampleRate, int blockSize)
     {
@@ -84,6 +90,13 @@ namespace
         obj->setProperty("midiDeviceName", resolveMidiDeviceName(deviceId));
         obj->setProperty("midiChannel", processor.getMidiChannel());
 
+        // Index into the audio device's active input channels, or -1 for
+        // none (Increment 3 item 8) - matches the MVP spec's per-channel
+        // `audioInput` field, not the top-level `audioInputs` array the
+        // v1->v2 migration reserved as a placeholder (that array shape
+        // turned out not to fit; it's left in the schema inert/unused).
+        obj->setProperty("audioInputChannel", processor.getAudioInputChannelIndex());
+
         obj->setProperty("slot0Plugin", pluginSlotToVar(processor, ChannelProcessor::slot0Index));
 
         juce::Array<juce::var> inserts;
@@ -112,6 +125,7 @@ namespace
         processor.setPan((float) (double) v.getProperty("pan", 0.0));
         processor.setMidiChannel((int) v.getProperty("midiChannel", 0));
         processor.setMidiDeviceIdentifier(v.getProperty("midiDeviceIdentifier", juce::String()).toString());
+        processor.setAudioInputChannelIndex((int) v.getProperty("audioInputChannel", -1));
 
         // Loading a session onto an already-populated channel replaces
         // whatever was there.
@@ -127,6 +141,30 @@ namespace
             int count = juce::jmin((int) insertsArray->size(), ChannelProcessor::numInsertSlots);
             for (int i = 0; i < count; ++i)
                 applyPluginSlotVar(processor, i + 1, insertsArray->getReference(i),
+                                  formatManager, sampleRate, blockSize);
+        }
+    }
+
+    juce::var masterChainToVar(MasterChainProcessor& processor)
+    {
+        juce::Array<juce::var> slots;
+        for (int i = 0; i < MasterChainProcessor::numSlots; ++i)
+            slots.add(pluginSlotToVar(processor, i));
+        return slots;
+    }
+
+    void applyMasterChainVar(MasterChainProcessor& processor, const juce::var& v,
+                             juce::AudioPluginFormatManager& formatManager,
+                             double sampleRate, int blockSize)
+    {
+        for (int slot = 0; slot < MasterChainProcessor::numSlots; ++slot)
+            processor.unloadPlugin(slot);
+
+        if (auto* array = v.getArray())
+        {
+            int count = juce::jmin((int) array->size(), MasterChainProcessor::numSlots);
+            for (int i = 0; i < count; ++i)
+                applyPluginSlotVar(processor, i, array->getReference(i),
                                   formatManager, sampleRate, blockSize);
         }
     }
@@ -162,6 +200,8 @@ bool SessionIO::saveSession(const juce::File& file,
     for (int i = 0; i < mainComponent.getNumChannels(); ++i)
         channelArray.add(channelToVar(mainComponent.getChannelProcessor(i)));
     root->setProperty("channels", channelArray);
+
+    root->setProperty("masterChain", masterChainToVar(mainComponent.getMasterChainProcessor()));
 
     // Round-trip any fields this app version doesn't recognize (spec §4.4);
     // known fields set above always take precedence over a stale extra.
@@ -231,6 +271,11 @@ bool SessionIO::loadSession(const juce::File& file,
             mainComponent.refreshChannelUI(i);
         }
     }
+
+    applyMasterChainVar(mainComponent.getMasterChainProcessor(),
+                        parsed.getProperty("masterChain", juce::var()),
+                        pluginManager.getFormatManager(), sampleRate, blockSize);
+    mainComponent.refreshMasterChainUI();
 
     return true;
 }

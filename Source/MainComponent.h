@@ -1,4 +1,5 @@
 #pragma once
+#include <atomic>
 #include <map>
 #include <vector>
 #include <juce_gui_basics/juce_gui_basics.h>
@@ -6,6 +7,8 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "ChannelProcessor.h"
 #include "ChannelComponent.h"
+#include "MasterChainProcessor.h"
+#include "MasterChainComponent.h"
 #include "PluginManager.h"
 #include "LoadingOverlayComponent.h"
 #include "SessionMigrator.h"
@@ -36,6 +39,7 @@ public:
     void handleIncomingMidiMessage(juce::MidiInput*, const juce::MidiMessage& msg) override;
 
     void showPluginBrowser(int channelIndex, int slotIndex, bool isReplace);
+    void showMasterChainPluginBrowser(int slotIndex, bool isReplace);
 
     // Called on the message thread once PluginManager's background scan finishes.
     void onScanComplete();
@@ -49,6 +53,9 @@ public:
     int getNumChannels() const { return (int) channelProcessors.size(); }
     ChannelProcessor& getChannelProcessor(int index) { return *channelProcessors[(size_t) index]; }
     void refreshChannelUI(int index) { channelComponents[(size_t) index]->refresh(); }
+
+    MasterChainProcessor& getMasterChainProcessor() { return masterChainProcessor; }
+    void refreshMasterChainUI() { masterChainComponent.refresh(); }
 
     // Bulk resize (Increment 2). Clamped to [1, maxChannels]; growing adds
     // fresh empty channels, shrinking discards the truncated ones (and any
@@ -91,14 +98,36 @@ private:
     juce::Component channelRackContent;
     juce::Viewport  channelViewport;
 
+    // Master bus insert chain (Increment 3) - applied once to the post-sum
+    // stereo signal, after every channel but before the master volume
+    // stage. masterChainComponent must be declared after masterChainProcessor
+    // (member init order follows declaration order, and its constructor
+    // takes a reference to it).
+    MasterChainProcessor masterChainProcessor;
+    MasterChainComponent masterChainComponent { masterChainProcessor };
+
     // Nothing renders a SettableTooltipClient's tooltip text without one of
     // these existing somewhere in the app - it watches the whole desktop
     // for hover, not just its own bounds.
     juce::TooltipWindow tooltipWindow;
 
-    juce::Label  masterVolumeLabel;
-    juce::Slider masterVolumeSlider;
+    // Displayed by masterChainComponent's own fader/label, integrated
+    // below its insert slots - MainComponent still owns the underlying
+    // gain value and atomics, since that's what the audio callback reads.
     float        masterVolume = 1.0f;
+
+    // Post-sum master bus peak metering (Increment 3) - same pattern as
+    // ChannelProcessor's per-channel metering: audio thread only writes,
+    // PeakMeterComponent's Timer is the only reader. Separate left/right
+    // clip flags (rather than one combined flag) since the master strip
+    // now shows two independent single-channel meters flanking the fader,
+    // each consuming its own flag via exchange() - sharing one flag between
+    // two independent readers would let only one of them ever observe a
+    // given clip.
+    std::atomic<float> masterPeakLeft      { 0.0f };
+    std::atomic<float> masterPeakRight     { 0.0f };
+    std::atomic<bool>  masterClipFlagLeft  { false };
+    std::atomic<bool>  masterClipFlagRight { false };
 
     int       lastLoadedFormatVersion = SessionMigrator::kCurrentFormatVersion;
     juce::var lastLoadedExtraFields;

@@ -15,6 +15,8 @@ juce_add_gui_app(IMI_KPlayer
     PRODUCT_NAME "Kadabra K-Player"
     COMPANY_NAME "IMI"
     BUNDLE_ID "com.imi.kplayer"
+    MICROPHONE_PERMISSION_ENABLED TRUE
+    MICROPHONE_PERMISSION_TEXT "Kadabra K-Player needs microphone/audio input access to route live audio input into channels."
 )
 
 target_sources(IMI_KPlayer PRIVATE
@@ -31,6 +33,15 @@ target_sources(IMI_KPlayer PRIVATE
     Source/ChannelProcessor.h
     Source/ChannelComponent.cpp
     Source/ChannelComponent.h
+    Source/MasterChainProcessor.cpp
+    Source/MasterChainProcessor.h
+    Source/MasterChainComponent.cpp
+    Source/MasterChainComponent.h
+    Source/PeakMeterComponent.cpp
+    Source/PeakMeterComponent.h
+    Source/PluginEditorWindow.h
+    Source/KPlayerAudioPlayHead.h
+    Source/ConsoleFaderLookAndFeel.h
     Source/LoadingOverlayComponent.h
     Source/SessionIO.cpp
     Source/SessionIO.h

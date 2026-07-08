@@ -11,23 +11,13 @@ MainComponent::MainComponent(juce::AudioDeviceManager& dm, PluginManager& pm)
     channelViewport.setScrollBarsShown(false, true);
     addAndMakeVisible(channelViewport);
 
-    masterVolumeLabel.setText("Master", juce::dontSendNotification);
-    masterVolumeLabel.setFont(juce::Font(11.0f));
-    masterVolumeLabel.setJustificationType(juce::Justification::centred);
-    masterVolumeLabel.setColour(juce::Label::textColourId, juce::Colour(0xffaaaaaa));
-    addAndMakeVisible(masterVolumeLabel);
-
-    masterVolumeSlider.setSliderStyle(juce::Slider::LinearVertical);
-    masterVolumeSlider.setRange(-60.0, 6.0, 0.1);
-    masterVolumeSlider.setValue(0.0, juce::dontSendNotification);
-    masterVolumeSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 16);
-    masterVolumeSlider.setTextValueSuffix(" dB");
-    masterVolumeSlider.onValueChange = [this]
-    {
-        masterVolume = juce::Decibels::decibelsToGain((float) masterVolumeSlider.getValue(), -60.0f);
-        notifyDirty();
-    };
-    addAndMakeVisible(masterVolumeSlider);
+    masterChainComponent.onLoadPlugin    = [this](int slot) { showMasterChainPluginBrowser(slot, false); };
+    masterChainComponent.onReplacePlugin = [this](int slot) { showMasterChainPluginBrowser(slot, true);  };
+    masterChainComponent.onDirty         = [this] { notifyDirty(); };
+    masterChainComponent.onVolumeChanged = [this](float linearGain) { masterVolume = linearGain; notifyDirty(); };
+    masterChainComponent.setLevelMeterSources(&masterPeakLeft, &masterPeakRight,
+                                              &masterClipFlagLeft, &masterClipFlagRight);
+    addAndMakeVisible(masterChainComponent);
 
     deviceManager.addAudioCallback(this);
 
@@ -51,7 +41,7 @@ void MainComponent::addChannel(int index)
     processor->setTempo(currentTempo);
     processor->prepareToPlay(currentSampleRate, currentBlockSize);
 
-    auto component = std::make_unique<ChannelComponent>(*processor);
+    auto component = std::make_unique<ChannelComponent>(*processor, deviceManager);
     component->onLoadPlugin    = [this, index](int slot) { showPluginBrowser(index, slot, false); };
     component->onReplacePlugin = [this, index](int slot) { showPluginBrowser(index, slot, true);  };
     component->onDirty         = [this] { notifyDirty(); };
@@ -131,13 +121,13 @@ void MainComponent::setGlobalTempo(double bpm)
     currentTempo = bpm;
     for (auto& channel : channelProcessors)
         channel->setTempo(bpm);
+    masterChainProcessor.setTempo(bpm);
 }
 
 void MainComponent::setMasterVolume(float linearGain)
 {
     masterVolume = linearGain;
-    masterVolumeSlider.setValue(juce::Decibels::gainToDecibels(linearGain, -60.0f),
-                                juce::dontSendNotification);
+    masterChainComponent.setVolume(linearGain);
 }
 
 void MainComponent::showPluginBrowser(int channelIndex, int slotIndex, bool isReplace)
@@ -183,6 +173,43 @@ void MainComponent::showPluginBrowser(int channelIndex, int slotIndex, bool isRe
     );
 }
 
+void MainComponent::showMasterChainPluginBrowser(int slotIndex, bool isReplace)
+{
+    if (!pluginsReady)
+        return;
+
+    // Master chain slots are audio-effect-only, unlike a channel's slot 0.
+    PluginBrowserComponent::showAsCallOut(
+        pluginManager.getPluginList(),
+        [this, slotIndex, isReplace](const juce::PluginDescription& desc)
+        {
+            auto* device      = deviceManager.getCurrentAudioDevice();
+            double sampleRate = device ? device->getCurrentSampleRate()        : 44100.0;
+            int    blockSize  = device ? device->getCurrentBufferSizeSamples() : 512;
+
+            if (isReplace)
+                masterChainProcessor.unloadPlugin(slotIndex);
+
+            bool loaded = masterChainProcessor.loadPlugin(
+                slotIndex, desc, pluginManager.getFormatManager(), sampleRate, blockSize);
+
+            if (isReplace || loaded)
+                notifyDirty();
+
+            if (loaded)
+            {
+                juce::Timer::callAfterDelay(100, [this, slotIndex]
+                {
+                    masterChainComponent.refresh();
+                    masterChainProcessor.showEditor(slotIndex);
+                });
+            }
+        },
+        masterChainComponent,
+        false
+    );
+}
+
 void MainComponent::handleIncomingMidiMessage(juce::MidiInput* source,
                                                const juce::MidiMessage& msg)
 {
@@ -198,16 +225,18 @@ void MainComponent::audioDeviceAboutToStart(juce::AudioIODevice* device)
 
     for (auto& channel : channelProcessors)
         channel->prepareToPlay(currentSampleRate, currentBlockSize);
+    masterChainProcessor.prepareToPlay(currentSampleRate, currentBlockSize);
 }
 
 void MainComponent::audioDeviceStopped()
 {
     for (auto& channel : channelProcessors)
         channel->prepareToPlay(44100.0, 512);
+    masterChainProcessor.prepareToPlay(44100.0, 512);
 }
 
 void MainComponent::audioDeviceIOCallbackWithContext(
-    const float* const*, int,
+    const float* const* inputChannelData, int numInputChannels,
     float* const* outputChannelData, int numOutputChannels,
     int numSamples, const juce::AudioIODeviceCallbackContext&)
 {
@@ -234,6 +263,17 @@ void MainComponent::audioDeviceIOCallbackWithContext(
     {
         channelScratch.clear();
 
+        // Audio input routing (Increment 3 item 8): feed the selected
+        // hardware input channel into both scratch channels before the
+        // plugin chain runs, alongside MIDI - a plugin that doesn't care
+        // about audio input just sees silence (same as before this
+        // feature), and slot 0's input bus is now always enabled to
+        // receive it (see ChannelProcessor::loadPlugin).
+        int inputIndex = channel->getAudioInputChannelIndex();
+        if (inputIndex >= 0 && inputIndex < numInputChannels && inputChannelData[inputIndex] != nullptr)
+            for (int ch = 0; ch < channelScratch.getNumChannels(); ++ch)
+                channelScratch.copyFrom(ch, 0, inputChannelData[inputIndex], numSamples);
+
         // Each channel gets its own *copy* of its device's MIDI buffer -
         // JUCE plugins can mutate the buffer they're given, and per spec
         // 7.1 multiple channels may share one device on different channel
@@ -255,7 +295,19 @@ void MainComponent::audioDeviceIOCallbackWithContext(
                 masterBuffer.addFrom(ch, 0, channelScratch, ch, 0, numSamples);
     }
 
+    masterChainProcessor.processBlock(masterBuffer);
     masterBuffer.applyGain(masterVolume);
+
+    float peakL = masterBuffer.getMagnitude(0, 0, numSamples);
+    float peakR = numOutputChannels > 1
+                    ? masterBuffer.getMagnitude(1, 0, numSamples)
+                    : peakL;
+    masterPeakLeft.store(peakL, std::memory_order_relaxed);
+    masterPeakRight.store(peakR, std::memory_order_relaxed);
+    if (peakL >= 1.0f)
+        masterClipFlagLeft.store(true, std::memory_order_relaxed);
+    if (peakR >= 1.0f)
+        masterClipFlagRight.store(true, std::memory_order_relaxed);
 }
 
 void MainComponent::paint(juce::Graphics& g)
@@ -267,9 +319,8 @@ void MainComponent::resized()
 {
     auto area = getLocalBounds().reduced(20);
 
-    auto masterArea = area.removeFromRight(90);
-    masterVolumeLabel.setBounds(masterArea.removeFromTop(16));
-    masterVolumeSlider.setBounds(masterArea);
+    auto masterChainArea = area.removeFromRight(130);
+    masterChainComponent.setBounds(masterChainArea);
 
     area.removeFromRight(20);
 

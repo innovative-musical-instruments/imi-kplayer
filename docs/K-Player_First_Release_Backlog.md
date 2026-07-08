@@ -30,23 +30,22 @@ Verified live in the running app (mute toggle → title shows `*`; Save As → t
 
 *(Revert-to-Saved was considered and dropped — redundant with re-loading the current session file.)*
 
-## Increment 2 — Channel count finish line — DONE
+## Increment 2 — Channel count finish line — DONE (`850d2da`)
 
 4. Fix hardcoded property blocking full range; cap raised to **24** channels — done: `MainComponent::maxChannels` (was `numChannels = 12`, a fixed construction-time constant with no resize path at all). `MainComponent::defaultChannelCount` (12) is the initial rack size on a blank session.
 5. Bulk resize via settings dialog — done: `MainComponent::setChannelCount()` rebuilds the channel vectors, briefly detaching the audio callback for the duration (per spec, acceptable); existing channels 1..N preserved on grow (new channels are prepared with the current sample rate/block size/tempo immediately, since the device won't fire `audioDeviceAboutToStart` again); confirm-then-truncate on shrink via the same OK/Cancel `AlertWindow::showAsync` pattern as Increment 1's plugin-slot guards, only when a channel above the new count has a loaded plugin. Also fixed a related latent bug surfaced by this work: `SessionIO::loadSession` used to silently truncate any saved session wider than the rack's *current* size instead of resizing to fit (clamped to `maxChannels`) — a loaded session now fully defines the channel count again, matching how tempo/master volume already behave.
 
 **Also done this round (user request, not originally scoped):** renamed the "Preferences" menu/dialog to **"Settings"** throughout — `PreferencesComponent` → `SettingsComponent` (`Source/SettingsComponent.{h,cpp}`), menu bar entry, dialog title, command info strings, and the MVP spec doc. Same functionality, no behavior change.
 
-## Increment 3 — Audio/MIDI functional features
+## Increment 3 — Audio/MIDI functional features — DONE
 
-6. Peak meters per channel + master bus, with clip indicators
-   - Post-insert-chain metering, lock-free atomic reporting from audio thread to UI
-   - Standard ballistics: instant attack, decaying release; clip latch with manual or timed auto-clear
-7. Master bus insert chain — reuse the existing channel insert-slot component, applied once to the stereo sum; needs `masterChain` in session schema (first real use of Increment 0's migration system) and the same transport context (`KPlayerAudioPlayHead`) channels already get
-8. Audio input selector per channel, slot-0-adjacent, matching the visual language of a plugin slot
-   - Selected hardware input feeds into the channel's signal path as a normal audio input, alongside existing MIDI input
-   - Covers both live vocals/mixing (no instrument loaded) and vocoding (instrument loaded, e.g. Surge XT) with one implementation — no sidechain routing or bus-layout detection needed, since target plugins take audio-in directly and MIDI drives the carrier internally
-   - Needs `audioInputs` in session schema
+6. Peak meters per channel + master bus, with clip indicators — done: `Source/PeakMeterComponent.h/.cpp`, wired into `ChannelComponent`/`MasterChainComponent` via lock-free atomics owned by `ChannelProcessor`/`MainComponent`, read on a message-thread `Timer`.
+   - Post-fader metering, instant attack / ~20dB-per-second decaying release; clip LED latches red on 0dBFS overshoot, clears on click or after ~1.5s with no further clips.
+7. Master bus insert chain — done: `Source/MasterChainProcessor.h/.cpp` + `Source/MasterChainComponent.h/.cpp`, applied once to the post-sum stereo signal (channels → master chain → master volume → meter). `masterChain` added to the session schema via `formatVersion` 2 (`migrate_v1_to_v2`, first real migration since Increment 0). Shares the `KPlayerAudioPlayHead` concept channels already use, extracted to `Source/KPlayerAudioPlayHead.h` for reuse (along with `Source/PluginEditorWindow.h`).
+   - **User-requested follow-up polish (same round):** master output fader integrated directly below the master insert slots rather than in a separate column, flanked by independent left/right peak meters (own clip flags each, to avoid a shared-atomic race); fader cap graphics reworked (`Source/ConsoleFaderLookAndFeel.h`, extracted from `ChannelComponent`) — gain caps 2x taller, pan caps 2x narrower, master cap 1.5x the channel gain cap, 50%-transparent fill with a solid outline; fixed cap clipping/text-box overlap at slider extremes by insetting `getSliderLayout()`'s bounds (affects both drawing and mouse-to-value mapping).
+8. Audio input selector per channel — done: `ChannelComponent` gained an "Audio In" dropdown directly below slot 0, keyed by index into the device's *active* input channels (via a new `AudioDeviceManager&` reference + `ChangeListener`). `ChannelProcessor::processBlock` no longer clears the buffer when slot 0 is empty *and* an audio input is assigned, so live-audio-no-instrument passthrough works, not just vocoding-through-an-instrument. `ChannelProcessor::loadPlugin` now always enables slot 0's stereo input bus (was disabled for instruments) — safe for zero-input-bus plugins like K-Sampler (the `if (layout.inputBuses.size() > 0)` guard already skips them). Per-channel `audioInputChannel` field added to the session schema (settled as a per-channel int, not the top-level `audioInputs` array the v1→v2 migration reserved as a placeholder — that array is left inert/unused in the schema).
+   - Required requesting real input channels from the device (`Main.cpp`: `initialiseWithDefaultDevices(2, 2)`, was `(0, 2)`) and exposing input channel selection in Settings (`AudioDeviceSelectorComponent` max input channels 0→8), plus adding the missing `NSMicrophoneUsageDescription`/`MICROPHONE_PERMISSION_ENABLED` to `CMakeLists.txt` — without it macOS silently denied all audio input at the OS level (no crash, just silence, including in JUCE's own built-in input meter).
+   - Verified live by the user, including instrument-vocoding via a real vocoder plugin (Waves Morphoder) — one false alarm during testing (raw+processed signal audible together) turned out to be the audio interface's own hardware direct-monitoring feature, not a K-Player bug.
 
 ## Increment 4 — Plugin selection dialog usability
 

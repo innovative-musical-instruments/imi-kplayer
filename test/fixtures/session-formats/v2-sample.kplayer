@@ -1,0 +1,28 @@
+{
+  "formatVersion": 2,
+  "appVersion": "0.9.3",
+  "createdAt": "2026-07-08T00:00:00.000Z",
+  "sessionName": "v2-sample",
+  "masterVolume": 0.8,
+  "tempo": 128.0,
+  "channels": [
+    {
+      "id": "11111111-2222-3333-4444-555555555555",
+      "type": "INSTRUMENT",
+      "name": "Channel 1",
+      "color": "#3D5A80",
+      "enabled": true,
+      "mute": false,
+      "solo": false,
+      "volume": 1.0,
+      "pan": 0.0,
+      "midiDeviceIdentifier": "",
+      "midiDeviceName": "",
+      "midiChannel": 0,
+      "slot0Plugin": null,
+      "insertPlugins": [null, null, null, null, null]
+    }
+  ],
+  "masterChain": [null, null, null, null, null],
+  "audioInputs": []
+}

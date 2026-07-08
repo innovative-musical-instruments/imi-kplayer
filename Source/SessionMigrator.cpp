@@ -18,6 +18,7 @@ const std::vector<SessionMigrator::MigrationStep>& SessionMigrator::getMigration
 {
     static const std::vector<MigrationStep> chain {
         migrate_v0_to_v1,
+        migrate_v1_to_v2,
     };
     return chain;
 }
@@ -34,5 +35,24 @@ juce::var SessionMigrator::migrate_v0_to_v1(const juce::var& v0Json)
 
     obj->removeProperty("version");
     obj->setProperty("formatVersion", 1);
+    return upgraded;
+}
+
+// Increment 3 adds the master bus insert chain and (later) per-channel
+// audio input routing - both default to an empty array when absent from
+// an older file, so nothing else about the shape changes.
+juce::var SessionMigrator::migrate_v1_to_v2(const juce::var& v1Json)
+{
+    auto upgraded = v1Json.clone();
+    auto* obj = upgraded.getDynamicObject();
+    jassert(obj != nullptr);
+
+    if (! upgraded.hasProperty("masterChain"))
+        obj->setProperty("masterChain", juce::var(juce::Array<juce::var>()));
+
+    if (! upgraded.hasProperty("audioInputs"))
+        obj->setProperty("audioInputs", juce::var(juce::Array<juce::var>()));
+
+    obj->setProperty("formatVersion", 2);
     return upgraded;
 }

@@ -17,7 +17,10 @@ public:
 
     void initialise(const juce::String&) override
     {
-        deviceManager.initialiseWithDefaultDevices(0, 2);
+        // Requests 2 input channels too (was 0) so per-channel audio input
+        // routing (Increment 3 item 8) has something live to select by
+        // default; the user can add more via Settings > Audio & MIDI.
+        deviceManager.initialiseWithDefaultDevices(2, 2);
         mainWindow.reset(new MainWindow(getApplicationName(),
                                         deviceManager,
                                         pluginManager));

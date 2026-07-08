@@ -4,7 +4,8 @@ const juce::StringArray& SessionFormat::getKnownTopLevelFields()
 {
     static const juce::StringArray fields {
         "formatVersion", "appVersion", "createdAt", "sessionName",
-        "audioDeviceStateXml", "masterVolume", "tempo", "channels"
+        "audioDeviceStateXml", "masterVolume", "tempo", "channels",
+        "masterChain", "audioInputs"
     };
     return fields;
 }

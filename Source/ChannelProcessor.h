@@ -4,30 +4,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_audio_devices/juce_audio_devices.h>
 #include <juce_gui_basics/juce_gui_basics.h>
-
-class KPlayerAudioPlayHead : public juce::AudioPlayHead
-{
-public:
-    void setBpm(double newBpm) { bpm.store(newBpm, std::memory_order_relaxed); }
-    double getBpm() const      { return bpm.load(std::memory_order_relaxed); }
-
-    juce::Optional<juce::AudioPlayHead::PositionInfo> getPosition() const override
-    {
-        juce::AudioPlayHead::PositionInfo info;
-        info.setBpm(bpm.load(std::memory_order_relaxed));
-        info.setTimeSignature(juce::AudioPlayHead::TimeSignature{ 4, 4 });
-        info.setIsPlaying(true);
-        info.setIsRecording(false);
-        info.setIsLooping(false);
-        info.setPpqPosition(0.0);
-        info.setTimeInSeconds(0.0);
-        info.setFrameRate(juce::AudioPlayHead::FrameRate{});
-        return info;
-    }
-
-private:
-    std::atomic<double> bpm { 120.0 };
-};
+#include "KPlayerAudioPlayHead.h"
 
 // A channel's plugin chain is slot 0 (instrument OR audio-effect plugin,
 // per the MVP spec) followed by 5 insert slots (audio-effect plugins only).
@@ -79,6 +56,15 @@ public:
     void setMidiChannel(int ch) { midiChannel = ch; }
     int  getMidiChannel() const { return midiChannel; }
 
+    // Index into the audio device's *active* input channels (matching the
+    // order of audioDeviceIOCallbackWithContext's inputChannelData array),
+    // or -1 for "no audio input assigned". Read directly by the audio
+    // thread each block (MainComponent decides what to copy into this
+    // channel's scratch buffer before processBlock runs) - same plain-int,
+    // no-lock convention as midiChannel above.
+    void setAudioInputChannelIndex(int index) { audioInputChannelIndex = index; }
+    int  getAudioInputChannelIndex() const    { return audioInputChannelIndex; }
+
     void   setTempo(double bpm) { playHead.setBpm(bpm); }
     double getTempo() const     { return playHead.getBpm(); }
 
@@ -96,6 +82,16 @@ public:
 
     void setSolo(bool shouldBeSolo)   { solo.store(shouldBeSolo, std::memory_order_relaxed); }
     bool isSolo() const               { return solo.load(std::memory_order_relaxed); }
+
+    // Post-fader peak metering (Increment 3): the audio thread stores the
+    // current block's peak magnitude and ORs into the clip flag every
+    // processBlock() call. PeakMeterComponent's own message-thread Timer
+    // reads these to drive ballistics/decay and to latch/clear the clip
+    // LED - nothing here needs ordering with other data, so relaxed
+    // atomics are enough, same as mute/solo above.
+    const std::atomic<float>* getPeakLevelLeftPtr()  const { return &peakLevelLeft;  }
+    const std::atomic<float>* getPeakLevelRightPtr() const { return &peakLevelRight; }
+    std::atomic<bool>*        getClipFlagPtr()             { return &clipFlag;       }
 
     // Read on the audio thread once per block to decide which device's MIDI
     // buffer to feed this channel, so it's guarded by its own lock rather
@@ -129,11 +125,17 @@ private:
     float gain        = 1.0f;
     float pan         = 0.0f;
     int   midiChannel = 0;
+    int   audioInputChannelIndex = -1;
 
     juce::Uuid id;
     juce::String name;
     std::atomic<bool> mute { false };
     std::atomic<bool> solo { false };
+
+    std::atomic<float> peakLevelLeft  { 0.0f };
+    std::atomic<float> peakLevelRight { 0.0f };
+    std::atomic<bool>  clipFlag       { false };
+    void updateMetering(const juce::AudioBuffer<float>& buffer);
 
     mutable juce::CriticalSection midiDeviceLock;
     juce::String midiDeviceIdentifier;

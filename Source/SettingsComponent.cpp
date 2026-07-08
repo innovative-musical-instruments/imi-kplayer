@@ -12,7 +12,7 @@ SettingsComponent::SettingsComponent(juce::AudioDeviceManager& dm,
     selector = std::make_unique<juce::AudioDeviceSelectorComponent>(
         deviceManager,
         0,    // min input channels
-        0,    // max input channels
+        8,    // max input channels - lets users enable inputs for per-channel audio routing
         2,    // min output channels
         2,    // max output channels
         true, // show MIDI input

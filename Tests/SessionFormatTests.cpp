@@ -14,7 +14,7 @@ public:
                 "formatVersion": 1,
                 "sessionName": "known",
                 "masterChain": [1, 2, 3],
-                "audioInputs": "future field"
+                "futureField": "not yet part of the schema"
             })");
 
             auto extras = SessionFormat::extractExtraFields(parsed);
@@ -23,9 +23,9 @@ public:
 
             expect(! extras.hasProperty("formatVersion"));
             expect(! extras.hasProperty("sessionName"));
-            expect(extras.hasProperty("masterChain"));
-            expect(extras.hasProperty("audioInputs"));
-            expectEquals((int) obj->getProperties().size(), 2);
+            expect(! extras.hasProperty("masterChain")); // known as of v2
+            expect(extras.hasProperty("futureField"));
+            expectEquals((int) obj->getProperties().size(), 1);
         });
 
         testCase("mergeExtraFields adds unknown fields but never overwrites a known one", [&]
@@ -36,13 +36,13 @@ public:
 
             auto* extraObj = new juce::DynamicObject();
             extraObj->setProperty("formatVersion", 999);   // stale - must not win
-            extraObj->setProperty("masterChain", juce::Array<juce::var>());
+            extraObj->setProperty("futureField", juce::Array<juce::var>());
             juce::var extras(extraObj);
 
             SessionFormat::mergeExtraFields(*root, extras);
 
             expectEquals((int) root->getProperty("formatVersion"), 1);
-            expect(root->hasProperty("masterChain"));
+            expect(root->hasProperty("futureField"));
         });
 
         testCase("resolveLoadedFormatVersion clamps to current unless the file is newer", [&]

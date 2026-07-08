@@ -3,78 +3,32 @@
 
 namespace
 {
-    // Draws gain/pan as a console-mixer-style fader: a fully-highlighted
-    // groove (the highlight only ever indicated the *filled* portion in
-    // the default LookAndFeel, which reads as a level meter rather than a
-    // fader position) plus a bigger rectangular cap with a centre grip line.
-    class ConsoleFaderLookAndFeel : public juce::LookAndFeel_V4
+    // Names of the device's *active* input channels, in the same order as
+    // audioDeviceIOCallbackWithContext's inputChannelData array - i.e. the
+    // Nth active channel in ascending order, not the device's full channel
+    // list (which includes channels the user hasn't enabled).
+    juce::StringArray getActiveAudioInputChannelNames(juce::AudioDeviceManager& deviceManager)
     {
-    public:
-        void drawLinearSlider(juce::Graphics& g, int x, int y, int width, int height,
-                              float sliderPos, float /*minSliderPos*/, float /*maxSliderPos*/,
-                              const juce::Slider::SliderStyle style, juce::Slider& slider) override
+        juce::StringArray names;
+        if (auto* device = deviceManager.getCurrentAudioDevice())
         {
-            auto trackColour = juce::Colour(0xff3d5a80);
-            auto capColour   = juce::Colours::white;
-            auto capBorder   = juce::Colours::black.withAlpha(0.6f);
-
-            // Shared cross-axis size so the gain cap's width matches the
-            // pan cap's height, rather than each stretching to fill its
-            // own (very differently proportioned) slider bounds. Capped
-            // to fit within the pan slider's actual drawable height (its
-            // bounds minus the text box below it), since a cap taller
-            // than that overflows/clips.
-            const float crossAxisSize = 26.0f;
-
-            if (style == juce::Slider::LinearVertical)
-            {
-                const float trackWidth = 6.0f;
-                juce::Rectangle<float> track(x + width * 0.5f - trackWidth * 0.5f,
-                                             (float) y, trackWidth, (float) height);
-                g.setColour(trackColour);
-                g.fillRoundedRectangle(track, trackWidth * 0.5f);
-
-                const float capHeight = 20.0f;
-                const float capWidth  = crossAxisSize;
-                juce::Rectangle<float> cap(x + ((float) width - capWidth) * 0.5f,
-                                          sliderPos - capHeight * 0.5f, capWidth, capHeight);
-                g.setColour(capColour);
-                g.fillRoundedRectangle(cap, 3.0f);
-                g.setColour(capBorder);
-                g.drawRoundedRectangle(cap, 3.0f, 1.0f);
-                g.drawLine(cap.getX() + 4, cap.getCentreY(), cap.getRight() - 4, cap.getCentreY(), 2.0f);
-            }
-            else if (style == juce::Slider::LinearHorizontal)
-            {
-                const float trackHeight = 6.0f;
-                juce::Rectangle<float> track((float) x, y + height * 0.5f - trackHeight * 0.5f,
-                                             (float) width, trackHeight);
-                g.setColour(trackColour);
-                g.fillRoundedRectangle(track, trackHeight * 0.5f);
-
-                const float capWidth  = 20.0f;
-                const float capHeight = crossAxisSize;
-                juce::Rectangle<float> cap(sliderPos - capWidth * 0.5f,
-                                          y + ((float) height - capHeight) * 0.5f, capWidth, capHeight);
-                g.setColour(capColour);
-                g.fillRoundedRectangle(cap, 3.0f);
-                g.setColour(capBorder);
-                g.drawRoundedRectangle(cap, 3.0f, 1.0f);
-                g.drawLine(cap.getCentreX(), cap.getY() + 4, cap.getCentreX(), cap.getBottom() - 4, 2.0f);
-            }
-            else
-            {
-                LookAndFeel_V4::drawLinearSlider(g, x, y, width, height, sliderPos,
-                                                 0.0f, 0.0f, style, slider);
-            }
+            auto allNames = device->getInputChannelNames();
+            auto active   = device->getActiveInputChannels();
+            for (int i = 0; i < allNames.size(); ++i)
+                if (active[i])
+                    names.add(allNames[i]);
         }
-    };
+        return names;
+    }
 }
 
-ChannelComponent::ChannelComponent(ChannelProcessor& p)
-    : processor(p)
+ChannelComponent::ChannelComponent(ChannelProcessor& p, juce::AudioDeviceManager& dm)
+    : processor(p), deviceManager(dm)
 {
-    faderLookAndFeel = std::make_unique<ConsoleFaderLookAndFeel>();
+    // Gain caps are twice as tall as the base size; pan caps are half as
+    // wide - both cosmetic-only, per user request, not a track-length change.
+    gainFaderLookAndFeel = std::make_unique<ConsoleFaderLookAndFeel>(2.0f, 1.0f);
+    panFaderLookAndFeel  = std::make_unique<ConsoleFaderLookAndFeel>(0.5f, 1.0f);
 
     channelNameLabel.setText(processor.getName(), juce::dontSendNotification);
     channelNameLabel.setFont(juce::Font(13.0f, juce::Font::bold));
@@ -101,6 +55,22 @@ ChannelComponent::ChannelComponent(ChannelProcessor& p)
         addAndMakeVisible(button);
         updateSlotButton(i);
     }
+
+    audioInLabel.setText("Audio In", juce::dontSendNotification);
+    audioInLabel.setFont(juce::Font(11.0f));
+    audioInLabel.setJustificationType(juce::Justification::centredLeft);
+    audioInLabel.setColour(juce::Label::textColourId, juce::Colour(0xffaaaaaa));
+    addAndMakeVisible(audioInLabel);
+
+    availableAudioInputNames = getActiveAudioInputChannelNames(deviceManager);
+    audioInputBox.addItem("None", 1);
+    for (int i = 0; i < availableAudioInputNames.size(); ++i)
+        audioInputBox.addItem(availableAudioInputNames[i], i + 2);
+    audioInputBox.setSelectedId(1, juce::dontSendNotification);
+    audioInputBox.addListener(this);
+    addAndMakeVisible(audioInputBox);
+
+    deviceManager.addChangeListener(this);
 
     midiInLabel.setText("MIDI In", juce::dontSendNotification);
     midiInLabel.setFont(juce::Font(11.0f));
@@ -162,7 +132,7 @@ ChannelComponent::ChannelComponent(ChannelProcessor& p)
     gainSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 16);
     gainSlider.setTextValueSuffix(" dB");
     gainSlider.addListener(this);
-    gainSlider.setLookAndFeel(faderLookAndFeel.get());
+    gainSlider.setLookAndFeel(gainFaderLookAndFeel.get());
     addAndMakeVisible(gainSlider);
 
     panLabel.setText("Pan", juce::dontSendNotification);
@@ -176,8 +146,13 @@ ChannelComponent::ChannelComponent(ChannelProcessor& p)
     panSlider.setValue(0.0, juce::dontSendNotification);
     panSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 16);
     panSlider.addListener(this);
-    panSlider.setLookAndFeel(faderLookAndFeel.get());
+    panSlider.setLookAndFeel(panFaderLookAndFeel.get());
     addAndMakeVisible(panSlider);
+
+    levelMeter.setSources(processor.getPeakLevelLeftPtr(),
+                           processor.getPeakLevelRightPtr(),
+                           processor.getClipFlagPtr());
+    addAndMakeVisible(levelMeter);
 
     muteButton.setButtonText("M");
     muteButton.setClickingTogglesState(true);
@@ -202,10 +177,12 @@ ChannelComponent::ChannelComponent(ChannelProcessor& p)
     setSize(80, 700);
 
     updateMidiDeviceWarning();
+    updateAudioInputWarning();
 }
 
 ChannelComponent::~ChannelComponent()
 {
+    deviceManager.removeChangeListener(this);
     gainSlider.setLookAndFeel(nullptr);
     panSlider.setLookAndFeel(nullptr);
 }
@@ -335,10 +312,16 @@ void ChannelComponent::refresh()
     }
     midiDeviceBox.setSelectedId(deviceItemId, juce::dontSendNotification);
 
+    int audioInputIndex = processor.getAudioInputChannelIndex();
+    audioInputBox.setSelectedId(
+        (audioInputIndex >= 0 && audioInputIndex < availableAudioInputNames.size()) ? audioInputIndex + 2 : 1,
+        juce::dontSendNotification);
+
     muteButton.setToggleState(processor.isMuted(), juce::dontSendNotification);
     soloButton.setToggleState(processor.isSolo(), juce::dontSendNotification);
 
     updateMidiDeviceWarning();
+    updateAudioInputWarning();
 }
 
 void ChannelComponent::sliderValueChanged(juce::Slider* slider)
@@ -378,6 +361,12 @@ void ChannelComponent::comboBoxChanged(juce::ComboBox* combo)
                 processor.setMidiDeviceIdentifier(availableMidiInputs[index].identifier);
         }
         updateMidiDeviceWarning();
+    }
+    else if (combo == &audioInputBox)
+    {
+        int selected = audioInputBox.getSelectedId();
+        processor.setAudioInputChannelIndex(selected <= 1 ? -1 : selected - 2);
+        updateAudioInputWarning();
     }
 
     if (onDirty) onDirty();
@@ -427,6 +416,47 @@ void ChannelComponent::updateMidiDeviceWarning()
                                      : juce::String());
 }
 
+void ChannelComponent::changeListenerCallback(juce::ChangeBroadcaster*)
+{
+    refreshAudioInputList();
+    updateAudioInputWarning();
+}
+
+void ChannelComponent::refreshAudioInputList()
+{
+    auto freshNames = getActiveAudioInputChannelNames(deviceManager);
+    if (freshNames == availableAudioInputNames)
+        return;
+
+    availableAudioInputNames = freshNames;
+
+    audioInputBox.clear(juce::dontSendNotification);
+    audioInputBox.addItem("None", 1);
+    for (int i = 0; i < availableAudioInputNames.size(); ++i)
+        audioInputBox.addItem(availableAudioInputNames[i], i + 2);
+
+    // The stored value is a plain index into the active-channel list, not
+    // a stable identifier (individual audio channels don't have one, unlike
+    // MIDI devices) - just reflect whatever it now points at, or "None" if
+    // out of range; updateAudioInputWarning() flags the mismatch visually
+    // rather than silently reassigning it.
+    int index = processor.getAudioInputChannelIndex();
+    audioInputBox.setSelectedId(
+        (index >= 0 && index < availableAudioInputNames.size()) ? index + 2 : 1,
+        juce::dontSendNotification);
+}
+
+void ChannelComponent::updateAudioInputWarning()
+{
+    int index = processor.getAudioInputChannelIndex();
+    bool missing = index >= 0 && index >= availableAudioInputNames.size();
+
+    audioInputBox.setColour(juce::ComboBox::textColourId,
+                            missing ? juce::Colours::orange : juce::Colours::white);
+    audioInputBox.setTooltip(missing ? "This channel's audio input is not currently active"
+                                     : juce::String());
+}
+
 void ChannelComponent::paint(juce::Graphics& g)
 {
     g.fillAll(juce::Colour(0xff1e1e2e));
@@ -443,6 +473,10 @@ void ChannelComponent::resized()
 
     pluginLabel.setBounds(area.removeFromTop(16));
     slotButtons[0].setBounds(area.removeFromTop(26));
+    area.removeFromTop(10);
+
+    audioInLabel.setBounds(area.removeFromTop(16));
+    audioInputBox.setBounds(area.removeFromTop(24));
     area.removeFromTop(10);
 
     insertsLabel.setBounds(area.removeFromTop(16));
@@ -463,6 +497,10 @@ void ChannelComponent::resized()
     area.removeFromTop(16);
 
     auto bottomArea = area.removeFromBottom(140);
+
+    auto meterArea = area.removeFromRight(16);
+    area.removeFromRight(4);
+    levelMeter.setBounds(meterArea);
 
     gainLabel.setBounds(area.removeFromTop(16));
     gainSlider.setBounds(area);

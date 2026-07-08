@@ -1,24 +1,5 @@
 #include "ChannelProcessor.h"
-
-namespace
-{
-    // Plain juce::DocumentWindow::closeButtonPressed() is a no-op by default,
-    // so the titlebar X does nothing unless something overrides it.
-    class PluginEditorWindow : public juce::DocumentWindow
-    {
-    public:
-        PluginEditorWindow(const juce::String& name, std::function<void()> onCloseIn)
-            : DocumentWindow(name, juce::Colours::darkgrey, juce::DocumentWindow::closeButton),
-              onClose(std::move(onCloseIn))
-        {
-        }
-
-        void closeButtonPressed() override { if (onClose) onClose(); }
-
-    private:
-        std::function<void()> onClose;
-    };
-}
+#include "PluginEditorWindow.h"
 
 ChannelProcessor::ChannelProcessor() {}
 ChannelProcessor::~ChannelProcessor()
@@ -83,15 +64,18 @@ bool ChannelProcessor::loadPlugin(int slotIndex,
     // counts already match what it actually has - an instrument may report
     // zero input busses, and building a BusesLayout with an assumed
     // 1-in/1-out shape mismatches that and crashes inside syncBusLayouts()
-    // when it walks a bus that doesn't exist. Instruments get a disabled
-    // input bus (they're driven by MIDI only); insert-slot audio effects
-    // need a real stereo input bus so they actually receive the signal.
+    // when it walks a bus that doesn't exist.
     auto layout = newPlugin->getBusesLayout();
 
+    // Every slot that actually has an input bus gets it enabled as stereo,
+    // instruments included - Increment 3's per-channel audio input selector
+    // can feed a live hardware signal into slot 0 alongside MIDI (e.g.
+    // vocoding through an instrument like Surge XT), and a plugin that
+    // doesn't care about audio input just sees silence, same as before.
+    // Plugins with zero input busses (e.g. K-Sampler/HISE) are unaffected
+    // either way - there's nothing here to enable.
     if (layout.inputBuses.size() > 0)
-        layout.inputBuses.getReference(0) = desc.isInstrument
-            ? juce::AudioChannelSet::disabled()
-            : juce::AudioChannelSet::stereo();
+        layout.inputBuses.getReference(0) = juce::AudioChannelSet::stereo();
 
     if (layout.outputBuses.size() > 0)
         layout.outputBuses.getReference(0) = juce::AudioChannelSet::stereo();
@@ -209,7 +193,15 @@ void ChannelProcessor::processBlock(juce::AudioBuffer<float>& buffer,
 
     if (! first.ready.load(std::memory_order_acquire) || first.plugin == nullptr || first.bypassed)
     {
-        buffer.clear();
+        // Normally nothing loaded in slot 0 means silence - there's no
+        // instrument to generate audio. But if this channel has a live
+        // audio input assigned, let it pass straight through to the insert
+        // chain/fader instead of wiping it here, covering the "live
+        // vocals/mixing, no instrument loaded" case from the audio-input
+        // spec (Increment 3 item 8) - vocoding through a loaded instrument
+        // already works via the branches below since they never clear.
+        if (audioInputChannelIndex < 0)
+            buffer.clear();
     }
     else if (midiChannel > 0)
     {
@@ -236,6 +228,27 @@ void ChannelProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     }
 
     applyGainAndPan(buffer);
+    updateMetering(buffer);
+}
+
+void ChannelProcessor::updateMetering(const juce::AudioBuffer<float>& buffer)
+{
+    if (buffer.getNumChannels() < 1)
+        return;
+
+    float peakL = buffer.getMagnitude(0, 0, buffer.getNumSamples());
+    float peakR = buffer.getNumChannels() > 1
+                    ? buffer.getMagnitude(1, 0, buffer.getNumSamples())
+                    : peakL;
+
+    peakLevelLeft.store(peakL, std::memory_order_relaxed);
+    peakLevelRight.store(peakR, std::memory_order_relaxed);
+
+    // 0dBFS overshoot - a one-shot flag the UI timer consumes and latches;
+    // never cleared here, only ever set, so it can't miss a clip that
+    // happens between UI reads.
+    if (peakL >= 1.0f || peakR >= 1.0f)
+        clipFlag.store(true, std::memory_order_relaxed);
 }
 
 void ChannelProcessor::applyGainAndPan(juce::AudioBuffer<float>& buffer)
