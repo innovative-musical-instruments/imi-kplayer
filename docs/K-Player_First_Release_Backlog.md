@@ -37,7 +37,7 @@ Verified live in the running app (mute toggle → title shows `*`; Save As → t
 
 **Also done this round (user request, not originally scoped):** renamed the "Preferences" menu/dialog to **"Settings"** throughout — `PreferencesComponent` → `SettingsComponent` (`Source/SettingsComponent.{h,cpp}`), menu bar entry, dialog title, command info strings, and the MVP spec doc. Same functionality, no behavior change.
 
-## Increment 3 — Audio/MIDI functional features — DONE
+## Increment 3 — Audio/MIDI functional features — DONE (`7213d2a`)
 
 6. Peak meters per channel + master bus, with clip indicators — done: `Source/PeakMeterComponent.h/.cpp`, wired into `ChannelComponent`/`MasterChainComponent` via lock-free atomics owned by `ChannelProcessor`/`MainComponent`, read on a message-thread `Timer`.
    - Post-fader metering, instant attack / ~20dB-per-second decaying release; clip LED latches red on 0dBFS overshoot, clears on click or after ~1.5s with no further clips.
@@ -47,16 +47,19 @@ Verified live in the running app (mute toggle → title shows `*`; Save As → t
    - Required requesting real input channels from the device (`Main.cpp`: `initialiseWithDefaultDevices(2, 2)`, was `(0, 2)`) and exposing input channel selection in Settings (`AudioDeviceSelectorComponent` max input channels 0→8), plus adding the missing `NSMicrophoneUsageDescription`/`MICROPHONE_PERMISSION_ENABLED` to `CMakeLists.txt` — without it macOS silently denied all audio input at the OS level (no crash, just silence, including in JUCE's own built-in input meter).
    - Verified live by the user, including instrument-vocoding via a real vocoder plugin (Waves Morphoder) — one false alarm during testing (raw+processed signal audible together) turned out to be the audio interface's own hardware direct-monitoring feature, not a K-Player bug.
 
-## Increment 4 — Plugin selection dialog usability
+## Increment 4 — Plugin selection dialog usability — DONE
 
-9. Search/type-ahead filter in the plugin browser
-10. Failed-to-load / blacklisted plugin handling — visible state in the dialog, not silent disappearance
-11. Replace-in-place behavior clarified and made consistent across slots
+Reviewed against the actual code before implementing (not just the backlog wording) — item 9 turned out to already be built; item 11's real gap was narrower than "consistency across slots" implied; items 12/13 from Increment 5 were pulled forward here at the user's request since they're higher-value and touch the same `PluginBrowserComponent` redesign.
+
+9. Search/type-ahead filter — **already existed**, no work needed (`PluginBrowserComponent`'s `searchBox`, live-filters by name/manufacturer).
+10. Failed-to-load / blacklisted plugin handling — done: `juce::KnownPluginList` already tracks this (`getBlacklistedFiles()`/`scanAndAddFile()`, populated automatically by `PluginDirectoryScanner`'s crash recovery) — just wasn't surfaced. Now shown as a "Failed to Load" section in the browser; double-click/Enter retries via `scanAndAddFile()` after a confirm dialog warning it may crash the app (since that's typically why it was blacklisted).
+11. Replace-in-place — turned out to already be identical between channel and master-chain slots (same unload-then-load order, same confirm dialog). The real gap: if the *replacement* plugin failed to load, the old one was already unloaded by then, silently leaving the slot empty with no indication. Fixed with a "Replace Failed" alert in both `MainComponent::showPluginBrowser`/`showMasterChainPluginBrowser`.
+- **Pulled forward from Increment 5 (user request, higher priority than blacklist visibility):** favorites (persistent, `PluginManager::isFavorite/setFavorite`, toggled via a star glyph on each row) and recently-used (last 10, `PluginManager::noteRecentlyUsed`, recorded only on successful load not mere selection) each get their own section at the top of the browser; a sort-mode button toggles the "All Plugins" section between A-Z and grouped-by-manufacturer. All backed by a single unified row list (`PluginBrowserComponent::Row`, mixing section headers/plugin rows/blacklisted rows) rather than several fixed sub-lists. Favorites/recently-used persist to small text files alongside the existing plugin cache (`plugin_favorites.txt`/`plugin_recent.txt`).
 
 ## Increment 5 — Polish / deferred
 
-12. Manufacturer/category grouping in plugin browser
-13. Favorites / recently-used
+12. ~~Manufacturer/category grouping in plugin browser~~ — done, pulled into Increment 4 above.
+13. ~~Favorites / recently-used~~ — done, pulled into Increment 4 above.
 14. Incremental hot channel add/remove (menu item + keyboard shortcut) — deferred pending audio-graph work to support live topology changes without disturbing other channels
 15. Audio-to-MIDI conversion — deferred, explicitly out of scope for this release; likely a future plugin rather than a host feature
 16. Full structural undo/redo — deferred; confirmation guards (Increment 1) plus this backlog's existing safety nets may be sufficient, revisit if beta feedback asks for it specifically

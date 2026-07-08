@@ -140,7 +140,7 @@ void MainComponent::showPluginBrowser(int channelIndex, int slotIndex, bool isRe
     bool allowInstruments = (slotIndex == ChannelProcessor::slot0Index);
 
     PluginBrowserComponent::showAsCallOut(
-        pluginManager.getPluginList(),
+        pluginManager,
         [this, channelIndex, slotIndex, isReplace](const juce::PluginDescription& desc)
         {
             auto& proc = *channelProcessors[(size_t) channelIndex];
@@ -160,12 +160,25 @@ void MainComponent::showPluginBrowser(int channelIndex, int slotIndex, bool isRe
 
             if (loaded)
             {
+                pluginManager.noteRecentlyUsed(desc.createIdentifierString());
+
                 // Wait for CallOutBox to fully dismiss before opening editor
                 juce::Timer::callAfterDelay(100, [this, channelIndex, slotIndex]
                 {
                     channelComponents[(size_t) channelIndex]->refresh();
                     channelProcessors[(size_t) channelIndex]->showEditor(slotIndex);
                 });
+            }
+            else if (isReplace)
+            {
+                // The old plugin is already unloaded by this point (see
+                // above) - warn rather than leaving the slot silently empty
+                // with no indication the replace failed.
+                channelComponents[(size_t) channelIndex]->refresh();
+                juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon,
+                    "Replace Failed",
+                    "\"" + desc.name + "\" could not be loaded. The previous plugin in this slot has "
+                    "been removed and the slot is now empty.");
             }
         },
         *channelComponents[(size_t) channelIndex],
@@ -180,7 +193,7 @@ void MainComponent::showMasterChainPluginBrowser(int slotIndex, bool isReplace)
 
     // Master chain slots are audio-effect-only, unlike a channel's slot 0.
     PluginBrowserComponent::showAsCallOut(
-        pluginManager.getPluginList(),
+        pluginManager,
         [this, slotIndex, isReplace](const juce::PluginDescription& desc)
         {
             auto* device      = deviceManager.getCurrentAudioDevice();
@@ -198,11 +211,21 @@ void MainComponent::showMasterChainPluginBrowser(int slotIndex, bool isReplace)
 
             if (loaded)
             {
+                pluginManager.noteRecentlyUsed(desc.createIdentifierString());
+
                 juce::Timer::callAfterDelay(100, [this, slotIndex]
                 {
                     masterChainComponent.refresh();
                     masterChainProcessor.showEditor(slotIndex);
                 });
+            }
+            else if (isReplace)
+            {
+                masterChainComponent.refresh();
+                juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon,
+                    "Replace Failed",
+                    "\"" + desc.name + "\" could not be loaded. The previous plugin in this slot has "
+                    "been removed and the slot is now empty.");
             }
         },
         masterChainComponent,

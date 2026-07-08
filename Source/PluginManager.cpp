@@ -7,6 +7,8 @@ PluginManager::PluginManager()
    #if JUCE_MAC
     formatManager.addFormat(new juce::AudioUnitPluginFormat());
    #endif
+
+    loadFavoritesAndRecent();
 }
 
 PluginManager::~PluginManager()
@@ -23,6 +25,72 @@ juce::File PluginManager::getPluginCacheFile()
                .getChildFile("IMI")
                .getChildFile("KPlayer")
                .getChildFile("plugin_cache.xml");
+}
+
+juce::File PluginManager::getFavoritesFile()
+{
+    return getPluginCacheFile().getSiblingFile("plugin_favorites.txt");
+}
+
+juce::File PluginManager::getRecentlyUsedFile()
+{
+    return getPluginCacheFile().getSiblingFile("plugin_recent.txt");
+}
+
+void PluginManager::loadFavoritesAndRecent()
+{
+    auto favFile = getFavoritesFile();
+    if (favFile.existsAsFile())
+        favorites.addLines(favFile.loadFileAsString());
+    favorites.removeEmptyStrings();
+
+    auto recentFile = getRecentlyUsedFile();
+    if (recentFile.existsAsFile())
+        recentlyUsed.addLines(recentFile.loadFileAsString());
+    recentlyUsed.removeEmptyStrings();
+}
+
+void PluginManager::saveFavorites()
+{
+    getFavoritesFile().getParentDirectory().createDirectory();
+    getFavoritesFile().replaceWithText(favorites.joinIntoString("\n"));
+}
+
+void PluginManager::saveRecentlyUsed()
+{
+    getRecentlyUsedFile().getParentDirectory().createDirectory();
+    getRecentlyUsedFile().replaceWithText(recentlyUsed.joinIntoString("\n"));
+}
+
+bool PluginManager::isFavorite(const juce::String& identifierString) const
+{
+    return favorites.contains(identifierString);
+}
+
+void PluginManager::setFavorite(const juce::String& identifierString, bool shouldBeFavorite)
+{
+    bool changed;
+    if (shouldBeFavorite)
+    {
+        changed = favorites.addIfNotAlreadyThere(identifierString);
+    }
+    else
+    {
+        changed = favorites.contains(identifierString);
+        favorites.removeString(identifierString);
+    }
+
+    if (changed)
+        saveFavorites();
+}
+
+void PluginManager::noteRecentlyUsed(const juce::String& identifierString)
+{
+    recentlyUsed.removeString(identifierString);
+    recentlyUsed.insert(0, identifierString);
+    while (recentlyUsed.size() > maxRecentlyUsed)
+        recentlyUsed.remove(recentlyUsed.size() - 1);
+    saveRecentlyUsed();
 }
 
 void PluginManager::scanPlugins()
