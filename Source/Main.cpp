@@ -59,7 +59,26 @@ public:
     }
 
     void shutdown() override { mainWindow = nullptr; splashScreen = nullptr; }
-    void systemRequestedQuit() override { quit(); }
+    // Central choke point for every quit path (Cmd+Q, Dock quit, File >
+    // Quit's cmdQuit command, and the window's close button all route here)
+    // - guarding it once here covers all of them, rather than duplicating
+    // the dirty check at each call site.
+    void systemRequestedQuit() override
+    {
+        // onProceed can fire from deep inside the AlertWindow's own
+        // callback/modal-dismissal call stack (immediately on Discard, or
+        // after saveSession()'s completion callback on Save) - calling
+        // quit() synchronously from there hung/crashed the app. Deferring
+        // it to a fresh message-loop tick avoids tearing down the app
+        // while JUCE is still unwinding that stack.
+        if (mainWindow != nullptr)
+            mainWindow->confirmDiscardUnsavedChanges([this]
+            {
+                juce::MessageManager::callAsync([this] { quit(); });
+            });
+        else
+            quit();
+    }
 
     enum CommandIDs
     {
@@ -101,7 +120,7 @@ public:
             mainComponent->onDirty = [this] { markDirty(); };
             setContentOwned(mainComponent, true);
             setResizable(true, true);
-            centreWithSize(900, 800);
+            centreWithSize(1152, 800);
             updateWindowTitle();
 
             commandManager.registerAllCommandsForTarget(this);
@@ -220,59 +239,103 @@ public:
             setName(name + (sessionDirty ? " *" : ""));
         }
 
+        // Gates any action that would discard the current session (opening
+        // another one, quitting) behind a Save/Discard/Cancel prompt when
+        // there are unsaved changes. Runs onProceed immediately if the
+        // session isn't dirty, after a successful save if the user chose
+        // Save, or not at all if they cancelled.
+        void confirmDiscardUnsavedChanges(std::function<void()> onProceed)
+        {
+            if (! sessionDirty)
+            {
+                onProceed();
+                return;
+            }
+
+            juce::AlertWindow::showAsync(
+                juce::MessageBoxOptions::makeOptionsYesNoCancel(
+                    juce::MessageBoxIconType::WarningIcon,
+                    "Unsaved Changes",
+                    "You have unsaved changes in your current session.",
+                    "Save", "Discard and Continue", "Cancel", this),
+                [this, onProceed](int result)
+                {
+                    if (result == 1)
+                        saveSession([onProceed](bool saved) { if (saved) onProceed(); });
+                    else if (result == 2)
+                        onProceed();
+                    // result == 0 (Cancel): do nothing.
+                });
+        }
+
         void openSession()
         {
-            fileChooser = std::make_unique<juce::FileChooser>(
-                "Open Session", juce::File(), "*.kplayer");
+            confirmDiscardUnsavedChanges([this]
+            {
+                fileChooser = std::make_unique<juce::FileChooser>(
+                    "Open Session", juce::File(), "*.kplayer");
 
-            fileChooser->launchAsync(
-                juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
-                [this](const juce::FileChooser& fc)
-                {
-                    auto file = fc.getResult();
-                    if (file.existsAsFile() &&
-                        SessionIO::loadSession(file, *mainComponent, pluginManager, deviceManager))
+                fileChooser->launchAsync(
+                    juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                    [this](const juce::FileChooser& fc)
                     {
-                        currentSessionFile = file;
-                        clearDirty();
-                    }
-                });
+                        auto file = fc.getResult();
+                        if (file.existsAsFile() &&
+                            SessionIO::loadSession(file, *mainComponent, pluginManager, deviceManager))
+                        {
+                            currentSessionFile = file;
+                            clearDirty();
+                        }
+                    });
+            });
         }
 
         // Saves over currentSessionFile if one is already known, otherwise
         // falls back to the same file-picker flow as "Save Session As...".
-        void saveSession()
+        // onComplete, if given, is called with whether the save actually
+        // happened (false if it fell through to a cancelled Save As).
+        void saveSession(std::function<void(bool)> onComplete = nullptr)
         {
             if (currentSessionFile != juce::File())
             {
-                if (SessionIO::saveSession(currentSessionFile, *mainComponent, deviceManager))
+                bool saved = SessionIO::saveSession(currentSessionFile, *mainComponent, deviceManager);
+                if (saved)
                     clearDirty();
+                if (onComplete)
+                    onComplete(saved);
             }
             else
-                saveSessionAs();
+                saveSessionAs(onComplete);
         }
 
-        void saveSessionAs()
+        void saveSessionAs(std::function<void(bool)> onComplete = nullptr)
         {
             fileChooser = std::make_unique<juce::FileChooser>(
                 "Save Session As", juce::File(), "*.kplayer");
 
             fileChooser->launchAsync(
                 juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles,
-                [this](const juce::FileChooser& fc)
+                [this, onComplete](const juce::FileChooser& fc)
                 {
                     auto file = fc.getResult();
                     if (file == juce::File())
+                    {
+                        if (onComplete)
+                            onComplete(false);
                         return;
+                    }
 
                     if (! file.hasFileExtension(".kplayer"))
                         file = file.withFileExtension(".kplayer");
 
-                    if (SessionIO::saveSession(file, *mainComponent, deviceManager))
+                    bool saved = SessionIO::saveSession(file, *mainComponent, deviceManager);
+                    if (saved)
                     {
                         currentSessionFile = file;
                         clearDirty();
                     }
+                    if (onComplete)
+                        onComplete(saved);
                 });
         }
 

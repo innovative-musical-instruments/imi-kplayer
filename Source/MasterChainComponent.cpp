@@ -4,9 +4,9 @@
 MasterChainComponent::MasterChainComponent(MasterChainProcessor& p)
     : processor(p)
 {
-    titleLabel.setText("Master FX", juce::dontSendNotification);
+    titleLabel.setText("Master Section", juce::dontSendNotification);
     titleLabel.setFont(juce::Font(11.0f));
-    titleLabel.setJustificationType(juce::Justification::centredLeft);
+    titleLabel.setJustificationType(juce::Justification::centred);
     titleLabel.setColour(juce::Label::textColourId, juce::Colour(0xffaaaaaa));
     addAndMakeVisible(titleLabel);
 

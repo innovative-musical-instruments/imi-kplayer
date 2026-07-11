@@ -32,7 +32,7 @@ MainComponent::MainComponent(juce::AudioDeviceManager& dm, PluginManager& pm)
     loadingOverlay = std::make_unique<LoadingOverlayComponent>();
     addAndMakeVisible(loadingOverlay.get());
 
-    setSize(900, 800);
+    setSize(1152, 800);
 }
 
 void MainComponent::addChannel(int index)
