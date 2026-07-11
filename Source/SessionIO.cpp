@@ -109,7 +109,7 @@ namespace
 
     void applyChannelVar(ChannelProcessor& processor, const juce::var& v,
                          juce::AudioPluginFormatManager& formatManager,
-                         double sampleRate, int blockSize)
+                         double sampleRate, int blockSize, int channelIndex)
     {
         if (! v.isObject())
             return;
@@ -118,7 +118,16 @@ namespace
         if (idString.isNotEmpty())
             processor.setId(juce::Uuid(idString));
 
-        processor.setName(v.getProperty("name", juce::String()).toString());
+        // Sessions saved before the rename feature (item 1.1) stamped
+        // "Channel N" into this field unconditionally - treat that exact
+        // pattern as "no custom name" on load rather than showing a
+        // redundant "1. Channel 1"-style label. No formatVersion bump
+        // needed: this is a display-layer reinterpretation of an existing
+        // field, not a schema shape change.
+        auto loadedName = v.getProperty("name", juce::String()).toString();
+        if (loadedName == ("Channel " + juce::String(channelIndex + 1)))
+            loadedName.clear();
+        processor.setName(loadedName);
         processor.setMuted((bool) v.getProperty("mute", false));
         processor.setSolo((bool) v.getProperty("solo", false));
         processor.setGain((float) (double) v.getProperty("volume", 1.0));
@@ -267,7 +276,7 @@ bool SessionIO::loadSession(const juce::File& file,
         for (int i = 0; i < count; ++i)
         {
             applyChannelVar(mainComponent.getChannelProcessor(i), channelArray->getReference(i),
-                            pluginManager.getFormatManager(), sampleRate, blockSize);
+                            pluginManager.getFormatManager(), sampleRate, blockSize, i);
             mainComponent.refreshChannelUI(i);
         }
     }

@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+
+<helmet>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    @font-face { font-family: 'Azonix'; src: url('assets/Azonix.otf') format('opentype'); font-weight: normal; font-style: normal; }
+    body { margin: 0; background: #0f1116; }
+    .swatch { display:flex; flex-direction:column; border-radius:4px; overflow:hidden; }
+    .swatch-fill { height:120px; }
+    .swatch-meta { padding:14px 16px; background:#171a21; color:#F5F6F7; }
+    .placeholder { background-image: repeating-linear-gradient(135deg, rgba(255,255,255,0.08) 0px, rgba(255,255,255,0.08) 2px, transparent 2px, transparent 14px); display:flex; align-items:center; justify-content:center; }
+    .tag { font-family:'JetBrains Mono',monospace; font-size:24px; letter-spacing:0.02em; text-transform:uppercase; }
+  </style>
+</helmet>
+<x-import component-from-global-scope="deck-stage" from="./deck-stage.js" width="1920" height="1080" hint-size="100%,100%">
+
+<section data-label="Cover" data-speaker-notes="Direction B: Pulse — bold, diagonal, high-energy performance brand." style="position:relative; width:1920px; height:1080px; background:#0F1116; overflow:hidden; font-family:'Space Grotesk',sans-serif; color:#F5F6F7; font-size:24px;">
+  <div style="position:absolute; top:0; right:0; width:900px; height:1080px; background:linear-gradient(160deg,#22C7B4,#FF8A3D); clip-path:polygon(35% 0, 100% 0, 100% 100%, 0% 100%);"></div>
+  <div style="position:relative; z-index:1; height:100%; display:flex; flex-direction:column; justify-content:space-between; padding:96px; box-sizing:border-box;">
+    <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+      <img src="assets/imi-logo-white.png" style="height:64px;" alt="IMI logo" />
+      <div class="tag" style="color:#0F1116; background:#F5F6F7; padding:8px 16px; border-radius:100px;">Direction B — Pulse</div>
+    </div>
+    <div>
+      <div class="tag" style="color:#9AA3AE; margin-bottom:24px;">Brand &amp; Product Style Guide</div>
+      <div style="font-family:'Azonix','Archivo Black',sans-serif; font-size:140px; line-height:0.92; letter-spacing:-0.01em; text-transform:uppercase;">IMI<br/>Kadabra</div>
+      <div style="font-size:26px; color:#E4E6EA; margin-top:28px; max-width:760px;">Move it. Play it. A brand system built for stage energy.</div>
+    </div>
+    <div style="display:flex; gap:48px;">
+      <div class="tag" style="color:#5B6270;">Ver. 1.0</div>
+      <div class="tag" style="color:#5B6270;">2026</div>
+      <div class="tag" style="color:#5B6270;">Innovative Musical Instruments Ltd.</div>
+    </div>
+  </div>
+</section>
+
+<section data-label="Brand" data-speaker-notes="Positioning and brand pillars, bold color-blocked layout." style="position:relative; width:1920px; height:1080px; background:#0F1116; padding:96px; box-sizing:border-box; font-family:'Space Grotesk',sans-serif; color:#F5F6F7; font-size:24px; display:flex; flex-direction:column; gap:56px;">
+  <div>
+    <div class="tag" style="color:#22C7B4; margin-bottom:16px;">01 / Brand</div>
+    <div style="font-family:'Azonix','Archivo Black',sans-serif; font-size:72px; text-transform:uppercase;">Who we are</div>
+  </div>
+  <div style="font-size:36px; line-height:1.4; max-width:1300px; font-weight:600;">Instruments that turn a room into a stage — motion, touch and sound, worn on the body.</div>
+  <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:24px; margin-top:auto;">
+    <div style="border-radius:4px; padding:32px; background:#22C7B4; color:#0F1116;">
+      <div class="tag">Pillar 01</div>
+      <div style="font-size:32px; font-weight:700; margin-top:16px;">Physical</div>
+      <div style="font-size:24px; margin-top:12px; line-height:1.5;">Sound you make with your body, not a mouse.</div>
+    </div>
+    <div style="border-radius:4px; padding:32px; background:#171a21;">
+      <div class="tag" style="color:#FF8A3D;">Pillar 02</div>
+      <div style="font-size:32px; font-weight:700; margin-top:16px;">Bold</div>
+      <div style="font-size:24px; color:#9AA3AE; margin-top:12px; line-height:1.5;">Unapologetically loud, on stage and in print.</div>
+    </div>
+    <div style="border-radius:4px; padding:32px; background:#FF8A3D; color:#0F1116;">
+      <div class="tag">Pillar 03</div>
+      <div style="font-size:32px; font-weight:700; margin-top:16px;">Alive</div>
+      <div style="font-size:24px; margin-top:12px; line-height:1.5;">Every show, every take, a little different.</div>
+    </div>
+  </div>
+</section>
+
+<section data-label="Logo" data-speaker-notes="Clearspace, minimum size, do and don't." style="position:relative; width:1920px; height:1080px; background:#0F1116; padding:96px; box-sizing:border-box; font-family:'Space Grotesk',sans-serif; color:#F5F6F7; font-size:24px; display:flex; flex-direction:column; gap:40px;">
+  <div>
+    <div class="tag" style="color:#22C7B4; margin-bottom:16px;">02 / Logo</div>
+    <div style="font-family:'Azonix','Archivo Black',sans-serif; font-size:72px; text-transform:uppercase;">Mark &amp; usage</div>
+  </div>
+  <div style="display:grid; grid-template-columns:1.1fr 1fr; gap:48px; flex:1;">
+    <div style="display:flex; flex-direction:column; gap:24px;">
+      <div style="flex:1; background:linear-gradient(135deg,#171a21,#0F1116); border-radius:4px; display:flex; align-items:center; justify-content:center; position:relative;">
+        <img src="assets/imi-logo-white.png" style="height:130px;" alt="IMI logo clearspace" />
+        <div style="position:absolute; inset:60px; border:2px dashed #FF8A3D;"></div>
+        <div class="tag" style="position:absolute; bottom:24px; color:#FF8A3D;">Clearspace = height of the "I" on all sides</div>
+      </div>
+      <div style="background:#F5F6F7; border-radius:4px; display:flex; align-items:center; justify-content:center; padding:40px 0;">
+        <img src="assets/imi-logo-white.png" style="height:48px; filter:invert(1);" alt="IMI logo on light" />
+      </div>
+      <div class="tag" style="color:#5B6270;">Minimum size: 28px tall (digital) / 10mm (print) — never smaller.</div>
+    </div>
+    <div style="display:flex; flex-direction:column; gap:16px;">
+      <div class="tag" style="color:#FF8A3D;">Don't</div>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; flex:1;">
+        <div style="background:#171a21; border-radius:4px; display:flex; align-items:center; justify-content:center;"><img src="assets/imi-logo-white.png" style="height:60px; transform:scaleX(1.6);" alt="stretched"/></div>
+        <div style="background:#171a21; border-radius:4px; display:flex; align-items:center; justify-content:center;"><img src="assets/imi-logo-white.png" style="height:60px; transform:rotate(12deg);" alt="rotated"/></div>
+        <div style="background:linear-gradient(135deg,#22C7B4,#FF8A3D); border-radius:4px; display:flex; align-items:center; justify-content:center;"><img src="assets/imi-logo-white.png" style="height:60px; filter:invert(1) sepia(1) saturate(4) hue-rotate(200deg);" alt="recolored"/></div>
+        <div class="placeholder" style="background-color:#171a21; border-radius:4px; display:flex; align-items:center; justify-content:center;"><img src="assets/imi-logo-white.png" style="height:60px; opacity:0.35;" alt="on busy background"/></div>
+      </div>
+      <div style="font-size:24px; color:#9AA3AE; line-height:1.5;">Never stretch, rotate, recolor, or drop the mark on a busy background without a solid holding shape.</div>
+    </div>
+  </div>
+</section>
+
+<section data-label="Color" data-speaker-notes="Palette: dark neutrals plus bold teal and orange blocks." style="position:relative; width:1920px; height:1080px; background:#0F1116; padding:96px; box-sizing:border-box; font-family:'Space Grotesk',sans-serif; color:#F5F6F7; font-size:24px; display:flex; flex-direction:column; gap:40px;">
+  <div>
+    <div class="tag" style="color:#22C7B4; margin-bottom:16px;">03 / Color</div>
+    <div style="font-family:'Azonix','Archivo Black',sans-serif; font-size:72px; text-transform:uppercase;">Palette</div>
+  </div>
+  <div style="display:grid; grid-template-columns:repeat(5,1fr); gap:16px;">
+    <div class="swatch"><div class="swatch-fill" style="background:#0F1116;"></div><div class="swatch-meta"><div style="font-weight:600; font-size:24px;">Ink</div><div class="tag" style="color:#5B6270;">#0F1116</div></div></div>
+    <div class="swatch"><div class="swatch-fill" style="background:#171A21;"></div><div class="swatch-meta"><div style="font-weight:600; font-size:24px;">Panel</div><div class="tag" style="color:#5B6270;">#171A21</div></div></div>
+    <div class="swatch"><div class="swatch-fill" style="background:#9AA3AE;"></div><div class="swatch-meta"><div style="font-weight:600; font-size:24px;">Muted</div><div class="tag" style="color:#5B6270;">#9AA3AE</div></div></div>
+    <div class="swatch"><div class="swatch-fill" style="background:#F5F6F7;"></div><div class="swatch-meta"><div style="font-weight:600; font-size:24px;">Paper</div><div class="tag" style="color:#5B6270;">#F5F6F7</div></div></div>
+    <div class="swatch"><div class="swatch-fill" style="background:#22C7B4;"></div><div class="swatch-meta"><div style="font-weight:600; font-size:24px;">Pulse Teal</div><div class="tag" style="color:#5B6270;">#22C7B4</div></div></div>
+    <div class="swatch"><div class="swatch-fill" style="background:#FF8A3D;"></div><div class="swatch-meta"><div style="font-weight:600; font-size:24px;">Pulse Orange</div><div class="tag" style="color:#5B6270;">#FF8A3D</div></div></div>
+    <div class="swatch"><div class="swatch-fill" style="background:#3B5A8A;"></div><div class="swatch-meta"><div style="font-weight:600; font-size:24px;">Signal Blue</div><div class="tag" style="color:#5B6270;">#3B5A8A</div></div></div>
+    <div class="swatch"><div class="swatch-fill" style="background:#123834;"></div><div class="swatch-meta"><div style="font-weight:600; font-size:24px;">Teal — shade</div><div class="tag" style="color:#5B6270;">#123834</div></div></div>
+    <div class="swatch"><div class="swatch-fill" style="background:#4A2A16;"></div><div class="swatch-meta"><div style="font-weight:600; font-size:24px;">Orange — shade</div><div class="tag" style="color:#5B6270;">#4A2A16</div></div></div>
+    <div class="swatch"><div class="swatch-fill" style="background:#1A2138;"></div><div class="swatch-meta"><div style="font-weight:600; font-size:24px;">Blue — shade</div><div class="tag" style="color:#5B6270;">#1A2138</div></div></div>
+  </div>
+  <div style="flex:1; border-radius:4px; overflow:hidden; display:flex;">
+    <div style="flex:1; background:linear-gradient(135deg,#171a21,#0F1116);"></div>
+    <div style="flex:0.8; background:#3B5A8A; clip-path:polygon(20% 0,100% 0,100% 100%,0 100%);"></div>
+    <div style="flex:0.7; background:#22C7B4; clip-path:polygon(25% 0,100% 0,100% 100%,0 100%); margin-left:-30px;"></div>
+    <div style="flex:0.5; background:#FF8A3D; clip-path:polygon(30% 0,100% 0,100% 100%,0 100%); margin-left:-30px;"></div>
+  </div>
+  <div class="tag" style="color:#9AA3AE;">Signal Blue is the product-GUI world — host app panels, faders, structure. Teal is the brand accent everywhere else. Orange stays reserved for alerts and Mute.</div>
+</section>
+
+<section data-label="Type" data-speaker-notes="Azureus for display headings, Space Grotesk for everything else." style="position:relative; width:1920px; height:1080px; background:#0F1116; padding:96px; box-sizing:border-box; font-family:'Space Grotesk',sans-serif; color:#F5F6F7; font-size:24px; display:flex; flex-direction:column; gap:32px;">
+  <div>
+    <div class="tag" style="color:#22C7B4; margin-bottom:16px;">04 / Typography</div>
+    <div style="font-family:'Azonix','Archivo Black',sans-serif; font-size:72px; text-transform:uppercase;">Type system</div>
+  </div>
+  <div style="display:grid; grid-template-columns:1fr 1fr; gap:40px; flex:1;">
+    <div style="background:linear-gradient(160deg,#171a21,#0F1116); border-radius:4px; padding:40px; display:flex; flex-direction:column; justify-content:space-between;">
+      <div>
+        <div class="tag" style="color:#FF8A3D;">Display — Azonix</div>
+        <div style="font-family:'Azonix','Archivo Black',sans-serif; font-size:130px; line-height:1; margin-top:16px; text-transform:uppercase;">Play</div>
+      </div>
+      <div style="font-size:24px; color:#9AA3AE; line-height:1.6;">Headlines &amp; wordmarks only, set in ALL CAPS. This is the licensed Azonix family — already live in every Kadabra plugin GUI.</div>
+    </div>
+    <div style="background:#171a21; border-radius:4px; padding:40px; display:flex; flex-direction:column; justify-content:space-between;">
+      <div>
+        <div class="tag" style="color:#22C7B4;">Body / UI — Space Grotesk</div>
+        <div style="font-size:44px; font-weight:600; margin-top:16px;">Aa Bb Cc 0123</div>
+        <div style="font-size:24px; color:#E4E6EA; margin-top:20px; line-height:1.6; font-weight:400;">A modern geometric sans that reads clean at small sizes — for body copy, UI labels and captions, weights 400–700.</div>
+      </div>
+      <div class="tag" style="color:#5B6270;">Space Grotesk — Regular / Medium / Semibold / Bold</div>
+    </div>
+  </div>
+  <div style="display:grid; grid-template-columns:repeat(5,1fr); gap:16px;">
+    <div><div style="font-size:56px; font-weight:700; color:#22C7B4;">Aa</div><div class="tag" style="color:#5B6270; margin-top:8px;">H1 / 56</div></div>
+    <div><div style="font-size:40px; font-weight:700;">Aa</div><div class="tag" style="color:#5B6270; margin-top:8px;">H2 / 40</div></div>
+    <div><div style="font-size:28px; font-weight:600;">Aa</div><div class="tag" style="color:#5B6270; margin-top:8px;">H3 / 28</div></div>
+    <div><div style="font-size:24px; font-weight:500;">Aa</div><div class="tag" style="color:#5B6270; margin-top:8px;">Body / 24</div></div>
+    <div><div style="font-family:'JetBrains Mono',monospace; font-size:24px; color:#FF8A3D;">Aa</div><div class="tag" style="color:#5B6270; margin-top:8px;">Mono / 24</div></div>
+  </div>
+</section>
+
+<section data-label="Voice" data-speaker-notes="Voice and tone principles with do/don't copy, bolder energy." style="position:relative; width:1920px; height:1080px; background:#0F1116; padding:96px; box-sizing:border-box; font-family:'Space Grotesk',sans-serif; color:#F5F6F7; font-size:24px; display:flex; flex-direction:column; gap:40px;">
+  <div>
+    <div class="tag" style="color:#22C7B4; margin-bottom:16px;">05 / Voice &amp; Tone</div>
+    <div style="font-family:'Azonix','Archivo Black',sans-serif; font-size:72px; text-transform:uppercase;">How we sound</div>
+  </div>
+  <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:24px;">
+    <div style="background:#171a21; border-radius:4px; padding:28px;">
+      <div style="font-size:26px; font-weight:700;">Loud</div>
+      <div style="font-size:24px; color:#9AA3AE; margin-top:10px; line-height:1.5;">Short, punchy lines. Exclaim when it's earned.</div>
+    </div>
+    <div style="background:#171a21; border-radius:4px; padding:28px;">
+      <div style="font-size:26px; font-weight:700;">Confident</div>
+      <div style="font-size:24px; color:#9AA3AE; margin-top:10px; line-height:1.5;">We built the thing. We know what it does.</div>
+    </div>
+    <div style="background:#171a21; border-radius:4px; padding:28px;">
+      <div style="font-size:26px; font-weight:700;">Human</div>
+      <div style="font-size:24px; color:#9AA3AE; margin-top:10px; line-height:1.5;">Made by musicians. Talk like one.</div>
+    </div>
+  </div>
+  <div style="display:grid; grid-template-columns:1fr 1fr; gap:24px; flex:1;">
+    <div style="background:#22C7B4; color:#0F1116; border-radius:4px; padding:32px;">
+      <div class="tag">Do</div>
+      <div style="font-size:28px; margin-top:16px; line-height:1.4; font-weight:600;">"Strap it on. Move. That's the interface."</div>
+    </div>
+    <div style="background:#171a21; border-radius:4px; padding:32px;">
+      <div class="tag" style="color:#FF8A3D;">Don't</div>
+      <div style="font-size:28px; margin-top:16px; line-height:1.4; color:#9AA3AE;">"Leverage our synergistic motion-capture ecosystem for enhanced performative outcomes."</div>
+    </div>
+  </div>
+</section>
+
+<section data-label="Components" data-speaker-notes="UI components and iconography, bold color-filled shapes." style="position:relative; width:1920px; height:1080px; background:#0F1116; padding:96px; box-sizing:border-box; font-family:'Space Grotesk',sans-serif; color:#F5F6F7; font-size:24px; display:flex; flex-direction:column; gap:40px;">
+  <div>
+    <div class="tag" style="color:#22C7B4; margin-bottom:16px;">06 / Components</div>
+    <div style="font-family:'Azonix','Archivo Black',sans-serif; font-size:72px; text-transform:uppercase;">UI &amp; icons</div>
+  </div>
+  <div style="display:grid; grid-template-columns:1fr 1fr; gap:40px; flex:1;">
+    <div style="background:#171a21; border-radius:4px; padding:36px; display:flex; flex-direction:column; gap:20px;">
+      <div class="tag" style="color:#9AA3AE;">Buttons &amp; tags</div>
+      <div style="display:flex; gap:16px; flex-wrap:wrap;">
+        <div style="background:#22C7B4; color:#0F1116; padding:14px 28px; border-radius:100px; font-weight:700;">Primary</div>
+        <div style="background:transparent; color:#F5F6F7; padding:14px 28px; border-radius:100px; border:2px solid #F5F6F7; font-weight:700;">Secondary</div>
+        <div style="background:#FF8A3D; color:#0F1116; padding:14px 28px; border-radius:100px; font-weight:700;">Alert / CTA</div>
+        <div class="tag" style="background:rgba(255,255,255,0.08); color:#9AA3AE; padding:10px 18px; border-radius:100px;">Tag Label</div>
+      </div>
+      <div class="tag" style="color:#9AA3AE; margin-top:12px;">Fully-rounded controls, sharp-edged cards — pill buttons on square panels.</div>
+    </div>
+    <div style="background:#171a21; border-radius:4px; padding:36px; display:flex; flex-direction:column; gap:20px;">
+      <div class="tag" style="color:#9AA3AE;">Iconography</div>
+      <div style="display:flex; gap:24px;">
+        <div style="width:64px; height:64px; border-radius:50%; background:#22C7B4;"></div>
+        <div style="width:64px; height:64px; border-radius:50%; border:3px solid #F5F6F7;"></div>
+        <div style="width:64px; height:64px; background:#FF8A3D;"></div>
+        <div style="width:64px; height:3px; background:#9AA3AE; margin-top:30px;"></div>
+      </div>
+      <div style="font-size:24px; color:#9AA3AE; line-height:1.6;">Filled circles for active/motion states, outline circles for idle, filled squares for pads/keys. Bold, no gradients on glyphs.</div>
+    </div>
+  </div>
+</section>
+
+<section data-label="GUI Chrome" data-speaker-notes="Plugin window anatomy: IMI mark, presets, Azonix wordmark, about, Tribal-Tools credit." style="position:relative; width:1920px; height:1080px; background:#0F1116; padding:96px; box-sizing:border-box; font-family:'Space Grotesk',sans-serif; color:#F5F6F7; font-size:24px; display:flex; flex-direction:column; gap:32px;">
+  <div>
+    <div class="tag" style="color:#22C7B4; margin-bottom:16px;">07 / Product GUI</div>
+    <div style="font-family:'Azonix','Archivo Black',sans-serif; font-size:64px; text-transform:uppercase;">Plugin chrome</div>
+  </div>
+  <div style="display:grid; grid-template-columns:1.4fr 1fr; gap:40px; flex:1;">
+    <div style="border-radius:4px; overflow:hidden; border:1px solid rgba(255,255,255,0.1); display:flex; align-items:center;">
+      <img src="assets/gui-drumkit.png" style="width:100%; display:block;" alt="Kadabra plugin GUI — title bar and panel anatomy"/>
+    </div>
+    <div style="display:flex; flex-direction:column; gap:20px; justify-content:center;">
+      <div style="background:#171a21; border-radius:4px; padding:24px;">
+        <div class="tag" style="color:#FF8A3D;">Left</div>
+        <div style="font-size:24px; margin-top:8px; line-height:1.4;">IMI mark, boxed, always top-left. Presets button next to it.</div>
+      </div>
+      <div style="background:#171a21; border-radius:4px; padding:24px;">
+        <div class="tag" style="color:#FF8A3D;">Center</div>
+        <div style="font-size:24px; margin-top:8px; line-height:1.4;">Product name set in Azonix, ALL CAPS — the loudest thing in the window.</div>
+      </div>
+      <div style="background:#171a21; border-radius:4px; padding:24px;">
+        <div class="tag" style="color:#FF8A3D;">Right</div>
+        <div style="font-size:24px; margin-top:8px; line-height:1.4;">About button, then Tribal-Tools manufacturing credit — smallest mark in the bar.</div>
+      </div>
+      <div style="font-size:24px; color:#9AA3AE; line-height:1.5;">Every plugin shares this exact header. Modules below (Tone, Delay, Reverb, Filter, Phaser, Scope) are labeled rounded panels in a fixed left-to-right signal order.</div>
+    </div>
+  </div>
+</section>
+
+<section data-label="GUI Controls" data-speaker-notes="Knob and readout component anatomy shared across every plugin." style="position:relative; width:1920px; height:1080px; background:#0F1116; padding:96px; box-sizing:border-box; font-family:'Space Grotesk',sans-serif; color:#F5F6F7; font-size:24px; display:flex; flex-direction:column; gap:32px;">
+  <div>
+    <div class="tag" style="color:#22C7B4; margin-bottom:16px;">08 / Product GUI</div>
+    <div style="font-family:'Azonix','Archivo Black',sans-serif; font-size:64px; text-transform:uppercase;">Controls</div>
+  </div>
+  <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:32px; flex:1;">
+    <div style="background:#171a21; border-radius:4px; padding:32px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:20px;">
+      <div style="width:120px; height:120px; border-radius:50%; background:radial-gradient(circle at 35% 30%, #7a7d82, #4c4f54); border:6px solid #2a2c30; position:relative;">
+        <div style="position:absolute; top:14px; left:50%; width:4px; height:36px; background:#e14b34; transform:translateX(-50%) rotate(20deg); transform-origin:bottom center; border-radius:2px;"></div>
+      </div>
+      <div style="background:#000; border:1px solid rgba(255,255,255,0.15); border-radius:4px; padding:8px 20px;"><span style="font-family:'JetBrains Mono',monospace; font-size:24px; color:#c9c9c9;">2.6s</span></div>
+      <div class="tag" style="color:#9AA3AE;">Knob + LCD readout</div>
+    </div>
+    <div style="background:#171a21; border-radius:4px; padding:32px; display:flex; flex-direction:column; gap:16px; justify-content:center;">
+      <div class="tag" style="color:#FF8A3D;">Knob</div>
+      <div style="font-size:24px; color:#9AA3AE; line-height:1.5;">Brushed-metal gray, knurled edge, single red indicator line. Never filled with accent color — the indicator is the only moving part.</div>
+      <div class="tag" style="color:#FF8A3D; margin-top:8px;">Readout</div>
+      <div style="font-size:24px; color:#9AA3AE; line-height:1.5;">Black LCD chip, monospace value, sits directly under its knob. Units always shown (%, dB, ms, Hz, Q).</div>
+    </div>
+    <div style="background:#171a21; border-radius:4px; padding:32px; display:flex; flex-direction:column; gap:16px; justify-content:center;">
+      <div class="tag" style="color:#FF8A3D;">Panel</div>
+      <div style="font-size:24px; color:#9AA3AE; line-height:1.5;">Each function (Tone, Delay, Reverb…) is a rounded dark group with a capitalized label above it. No panel borders touch — a hairline gap always separates them.</div>
+      <div class="tag" style="color:#FF8A3D; margin-top:8px;">Toggle</div>
+      <div style="font-size:24px; color:#9AA3AE; line-height:1.5;">Small round switch + label, e.g. "Sync" — off state gray, on state fills with the instrument's accent.</div>
+    </div>
+  </div>
+</section>
+
+<section data-label="GUI Accents" data-speaker-notes="One accent color per instrument; base chrome, knobs and layout never change." style="position:relative; width:1920px; height:1080px; background:#0F1116; padding:96px; box-sizing:border-box; font-family:'Space Grotesk',sans-serif; color:#F5F6F7; font-size:24px; display:flex; flex-direction:column; gap:32px;">
+  <div>
+    <div class="tag" style="color:#22C7B4; margin-bottom:16px;">09 / Product GUI</div>
+    <div style="font-family:'Azonix','Archivo Black',sans-serif; font-size:64px; text-transform:uppercase;">Instrument accents</div>
+  </div>
+  <div style="display:grid; grid-template-columns:repeat(5,1fr); gap:16px;">
+    <div style="border-radius:4px; overflow:hidden; border:1px solid rgba(255,255,255,0.1);"><img src="assets/gui-drumkit.png" style="width:100%; display:block;" alt="Drumkit — graphite"/></div>
+    <div style="border-radius:4px; overflow:hidden; border:1px solid rgba(255,255,255,0.1);"><img src="assets/gui-epiano.png" style="width:100%; display:block;" alt="Electric Piano — violet"/></div>
+    <div style="border-radius:4px; overflow:hidden; border:1px solid rgba(255,255,255,0.1);"><img src="assets/gui-grand.png" style="width:100%; display:block;" alt="Grand — silver"/></div>
+    <div style="border-radius:4px; overflow:hidden; border:1px solid rgba(255,255,255,0.1);"><img src="assets/gui-percussion.png" style="width:100%; display:block;" alt="Percussion — indigo"/></div>
+    <div style="border-radius:4px; overflow:hidden; border:1px solid rgba(255,255,255,0.1);"><img src="assets/gui-acousticdrums.png" style="width:100%; display:block;" alt="Acoustic Drums — maroon"/></div>
+  </div>
+  <div style="display:grid; grid-template-columns:repeat(7,1fr); gap:12px; font-size:24px;">
+    <div style="border-radius:4px; padding:16px 12px; background:#1a1a1c; border:1px solid rgba(255,255,255,0.1);"><div class="tag">Graphite</div><div style="color:#9AA3AE; margin-top:4px;">Drumkit</div></div>
+    <div style="border-radius:4px; padding:16px 12px; background:#3d1f4d;"><div class="tag">Violet</div><div style="color:#d8bfe6; margin-top:4px;">E. Piano</div></div>
+    <div style="border-radius:4px; padding:16px 12px; background:#c7cad0;"><div class="tag" style="color:#0F1116;">Silver</div><div style="color:#3a3d42; margin-top:4px;">Grand</div></div>
+    <div style="border-radius:4px; padding:16px 12px; background:#2e1f52;"><div class="tag">Indigo</div><div style="color:#b9aee0; margin-top:4px;">Percussion</div></div>
+    <div style="border-radius:4px; padding:16px 12px; background:#3a1520;"><div class="tag">Maroon</div><div style="color:#d9a3ae; margin-top:4px;">Ac. Drums</div></div>
+    <div style="border-radius:4px; padding:16px 12px; background:#123834;"><div class="tag" style="color:#22C7B4;">Teal</div><div style="color:#9AA3AE; margin-top:4px;">Reserved</div></div>
+    <div style="border-radius:4px; padding:16px 12px; background:#4A2A16;"><div class="tag" style="color:#FF8A3D;">Orange</div><div style="color:#9AA3AE; margin-top:4px;">Reserved</div></div>
+  </div>
+  <div style="font-size:24px; color:#9AA3AE; line-height:1.5;">Rule: one accent tints a plugin's background wash, scope-panel glyph and toggle fills — the black header bar, knobs and Azonix wordmark never change. Five instruments, five accents; two more (teal, orange) held in reserve.</div>
+</section>
+
+<section data-label="GUI Host App" data-speaker-notes="The mixer/host app is a separate utility UI language from the instrument plugin faces." style="position:relative; width:1920px; height:1080px; background:#0F1116; padding:96px; box-sizing:border-box; font-family:'Space Grotesk',sans-serif; color:#F5F6F7; font-size:24px; display:flex; flex-direction:column; gap:32px;">
+  <div>
+    <div class="tag" style="color:#22C7B4; margin-bottom:16px;">10 / Product GUI</div>
+    <div style="font-family:'Azonix','Archivo Black',sans-serif; font-size:64px; text-transform:uppercase;">Host &amp; mixer app</div>
+  </div>
+  <div style="display:grid; grid-template-columns:1.5fr 1fr; gap:40px; flex:1;">
+    <div style="border-radius:4px; overflow:hidden; border:1px solid rgba(255,255,255,0.1); display:flex; align-items:center;">
+      <img src="assets/gui-mixer.png" style="width:100%; display:block;" alt="Kadabra host mixer app"/>
+    </div>
+    <div style="display:flex; flex-direction:column; gap:16px; justify-content:center;">
+      <div style="background:#171a21; border-radius:4px; padding:24px;">
+        <div class="tag" style="color:#FF8A3D;">A second language</div>
+        <div style="font-size:24px; margin-top:8px; line-height:1.4; color:#E4E6EA;">The multi-channel host is a utility, not an instrument face: cool navy-blue panels, thin outlines, dropdowns and linear faders — no knobs, no wordmark treatment.</div>
+      </div>
+      <div style="background:#171a21; border-radius:4px; padding:24px;">
+        <div class="tag" style="color:#FF8A3D;">Shared DNA</div>
+        <div style="font-size:24px; margin-top:8px; line-height:1.4; color:#E4E6EA;">Each channel still loads its plugin by name; mute state uses the same Pulse Orange as the brand accent — the one deliberate color bridge between the two UI languages.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section data-label="Icons" data-speaker-notes="App and plugin icon system: two-letter Azonix code on the instrument accent, IMI mark below, matching frame color." style="position:relative; width:1920px; height:1080px; background:#0F1116; padding:96px; box-sizing:border-box; font-family:'Space Grotesk',sans-serif; color:#F5F6F7; font-size:24px; display:flex; flex-direction:column; gap:36px;">
+  <div>
+    <div class="tag" style="color:#22C7B4; margin-bottom:16px;">11 / Product GUI</div>
+    <div style="font-family:'Azonix','Archivo Black',sans-serif; font-size:64px; text-transform:uppercase;">App &amp; plugin icons</div>
+  </div>
+  <div style="font-size:24px; color:#9AA3AE; max-width:1300px; line-height:1.5;">A bold two-letter code in Azonix on the instrument's full accent color, IMI mark centered below it, frame matching the letter color (Grand's frame is white for contrast).</div>
+  <div style="display:flex; gap:24px; flex-wrap:wrap;">
+    <div style="display:flex; flex-direction:column; align-items:center; gap:10px;">
+      <div style="width:120px; height:120px; border-radius:28px; background:linear-gradient(160deg,#4a6da3,#2e4468); border:3px solid #eef2f9; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; box-shadow:0 10px 22px rgba(0,0,0,0.4);">
+        <div style="font-family:'Azonix','Archivo Black',sans-serif; font-size:40px; color:#eef2f9;">KP</div>
+        <img src="assets/imi-logo-white.png" style="height:18px;" alt="IMI"/>
+      </div>
+      <div style="font-size:24px; font-weight:600;">KPlayer</div>
+    </div>
+    <div style="display:flex; flex-direction:column; align-items:center; gap:10px;">
+      <div style="width:120px; height:120px; border-radius:28px; background:#0F1116; border:3px solid #8a8f99; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; box-shadow:0 10px 22px rgba(0,0,0,0.4);">
+        <div style="font-family:'Azonix','Archivo Black',sans-serif; font-size:40px; color:#8a8f99;">ED</div>
+        <img src="assets/imi-logo-white.png" style="height:18px;" alt="IMI"/>
+      </div>
+      <div style="font-size:24px; font-weight:600;">Drumkit</div>
+    </div>
+    <div style="display:flex; flex-direction:column; align-items:center; gap:10px;">
+      <div style="width:120px; height:120px; border-radius:28px; background:linear-gradient(160deg,#8a5aa8,#5a2e78); border:3px solid #f6edfb; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; box-shadow:0 10px 22px rgba(0,0,0,0.4);">
+        <div style="font-family:'Azonix','Archivo Black',sans-serif; font-size:40px; color:#f6edfb;">EP</div>
+        <img src="assets/imi-logo-white.png" style="height:18px;" alt="IMI"/>
+      </div>
+      <div style="font-size:24px; font-weight:600;">Electric Piano</div>
+    </div>
+    <div style="display:flex; flex-direction:column; align-items:center; gap:10px;">
+      <div style="width:120px; height:120px; border-radius:28px; background:linear-gradient(160deg,#e2e5ea,#b7bcc6); border:3px solid #F5F6F7; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; box-shadow:0 10px 22px rgba(0,0,0,0.4);">
+        <div style="font-family:'Azonix','Archivo Black',sans-serif; font-size:40px; color:#24262a;">GP</div>
+        <img src="assets/imi-logo-white.png" style="height:18px; filter:invert(1);" alt="IMI"/>
+      </div>
+      <div style="font-size:24px; font-weight:600;">Grand</div>
+    </div>
+    <div style="display:flex; flex-direction:column; align-items:center; gap:10px;">
+      <div style="width:120px; height:120px; border-radius:28px; background:linear-gradient(160deg,#6a54a8,#402e78); border:3px solid #eee8fb; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; box-shadow:0 10px 22px rgba(0,0,0,0.4);">
+        <div style="font-family:'Azonix','Archivo Black',sans-serif; font-size:40px; color:#eee8fb;">PN</div>
+        <img src="assets/imi-logo-white.png" style="height:18px;" alt="IMI"/>
+      </div>
+      <div style="font-size:24px; font-weight:600;">Percussion</div>
+    </div>
+    <div style="display:flex; flex-direction:column; align-items:center; gap:10px;">
+      <div style="width:120px; height:120px; border-radius:28px; background:linear-gradient(160deg,#8a4a5a,#5a1f2e); border:3px solid #fbe9ec; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; box-shadow:0 10px 22px rgba(0,0,0,0.4);">
+        <div style="font-family:'Azonix','Archivo Black',sans-serif; font-size:40px; color:#fbe9ec;">AD</div>
+        <img src="assets/imi-logo-white.png" style="height:18px;" alt="IMI"/>
+      </div>
+      <div style="font-size:24px; font-weight:600;">Acoustic Drums</div>
+    </div>
+    <div style="display:flex; flex-direction:column; align-items:center; gap:10px;">
+      <div style="width:120px; height:120px; border-radius:28px; background:linear-gradient(160deg,#3fd9c4,#0f8a7c); border:3px solid #052622; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; box-shadow:0 10px 22px rgba(0,0,0,0.4);">
+        <div style="font-family:'Azonix','Archivo Black',sans-serif; font-size:40px; color:#052622;">—</div>
+        <img src="assets/imi-logo-white.png" style="height:18px;" alt="IMI"/>
+      </div>
+      <div style="font-size:24px; font-weight:600; color:#22C7B4;">Reserved — Teal</div>
+    </div>
+    <div style="display:flex; flex-direction:column; align-items:center; gap:10px;">
+      <div style="width:120px; height:120px; border-radius:28px; background:linear-gradient(160deg,#ffab6b,#d96a1f); border:3px solid #2e1608; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; box-shadow:0 10px 22px rgba(0,0,0,0.4);">
+        <div style="font-family:'Azonix','Archivo Black',sans-serif; font-size:40px; color:#2e1608;">—</div>
+        <img src="assets/imi-logo-white.png" style="height:18px;" alt="IMI"/>
+      </div>
+      <div style="font-size:24px; font-weight:600; color:#FF8A3D;">Reserved — Orange</div>
+    </div>
+  </div>
+  <div style="font-size:24px; color:#9AA3AE; line-height:1.5; margin-top:auto;">macOS: full-bleed 1024×1024 square, no pre-baked mask — OS applies its own squircle clip. Windows: bake a ~14% rounded-rect into the art yourself; export flattened at 16/24/32/48/256px into one .ico.</div>
+</section>
+
+<section data-label="Imagery" data-speaker-notes="Photography direction: high energy, duotone-tinted, performance-focused." style="position:relative; width:1920px; height:1080px; background:#0F1116; padding:96px; box-sizing:border-box; font-family:'Space Grotesk',sans-serif; color:#F5F6F7; font-size:24px; display:flex; flex-direction:column; gap:32px;">
+  <div>
+    <div class="tag" style="color:#22C7B4; margin-bottom:16px;">12 / Imagery</div>
+    <div style="font-family:'Azonix','Archivo Black',sans-serif; font-size:72px; text-transform:uppercase;">Photography</div>
+  </div>
+  <div style="display:grid; grid-template-columns:1.3fr 1fr 1fr; gap:16px; flex:1;">
+    <div class="placeholder" style="background-color:#123834;"><span class="tag" style="color:#22C7B4;">stage / performance shot</span></div>
+    <div class="placeholder" style="background-color:#171a21;"><span class="tag" style="color:#5B6270; text-align:center;">product detail<br/>close-up</span></div>
+    <div class="placeholder" style="background-color:#4A2A16;"><span class="tag" style="color:#FF8A3D; text-align:center;">player in<br/>motion</span></div>
+  </div>
+  <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:20px;">
+    <div style="font-size:24px; color:#9AA3AE; line-height:1.5;"><b style="color:#F5F6F7;">Motion blur welcome.</b> Freeze the instrument, blur the body.</div>
+    <div style="font-size:24px; color:#9AA3AE; line-height:1.5;"><b style="color:#F5F6F7;">Duotone accents.</b> Shadow crops can lean teal or orange in post.</div>
+    <div style="font-size:24px; color:#9AA3AE; line-height:1.5;"><b style="color:#F5F6F7;">Real crowds, real stages.</b> No studio white-box unless it's a product cutout.</div>
+  </div>
+</section>
+
+<section data-label="System" data-speaker-notes="How IMI and Kadabra brand lockups relate, plus Tribal-Tools relationship." style="position:relative; width:1920px; height:1080px; background:#0F1116; padding:96px; box-sizing:border-box; font-family:'Space Grotesk',sans-serif; color:#F5F6F7; font-size:24px; display:flex; flex-direction:column; gap:40px;">
+  <div>
+    <div class="tag" style="color:#22C7B4; margin-bottom:16px;">13 / Architecture</div>
+    <div style="font-family:'Azonix','Archivo Black',sans-serif; font-size:72px; text-transform:uppercase;">IMI + products</div>
+  </div>
+  <div style="display:grid; grid-template-columns:1fr 1fr; gap:40px; flex:1;">
+    <div style="background:#171a21; border-radius:4px; padding:36px; display:flex; flex-direction:column; gap:24px;">
+      <div class="tag" style="color:#9AA3AE;">Parent + product lockup</div>
+      <div style="display:flex; align-items:center; gap:20px;">
+        <img src="assets/imi-logo-white.png" style="height:44px;" alt="IMI"/>
+        <div style="width:1px; height:36px; background:rgba(255,255,255,0.2);"></div>
+        <div style="font-family:'Azonix','Archivo Black',sans-serif; font-size:40px; text-transform:uppercase; color:#22C7B4;">Kadabra</div>
+      </div>
+      <div style="font-size:24px; color:#9AA3AE; line-height:1.6;">IMI is the maker's mark — always small, always paired. Kadabra is the product voice customers see and hear most.</div>
+    </div>
+    <div style="background:#171a21; border-radius:4px; padding:36px; display:flex; flex-direction:column; gap:16px;">
+      <div class="tag" style="color:#9AA3AE;">Manufacturing partner credit</div>
+      <div style="font-size:24px; color:#E4E6EA;">Designed by <span style="color:#22C7B4; font-weight:700;">IMI</span> · Built with <span style="color:#F5F6F7; font-weight:700;">Tribal-Tools</span></div>
+      <div style="font-size:24px; color:#9AA3AE; line-height:1.6;">Tribal-Tools credit stays small and secondary — one line, never competing with the IMI or Kadabra marks.</div>
+    </div>
+  </div>
+</section>
+
+</x-import>
+
+</x-dc>
+</body>
+</html>

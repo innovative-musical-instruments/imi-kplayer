@@ -19,6 +19,15 @@ elseif(WIN32)
     add_subdirectory(C:/SDKs/JUCE JUCE)
 endif()
 
+# Binary-embedded assets (logos, About/splash art, app icons) so the app
+# doesn't depend on files existing next to the binary at runtime.
+juce_add_binary_data(KPlayerAssets SOURCES
+    Assets/branding/imi-logo-white.png
+    Assets/branding/tribal-tools-logo.png
+    Assets/about/kplayer-256.png
+    Assets/about/Azonix.otf
+)
+
 juce_add_gui_app(IMI_KPlayer
     PRODUCT_NAME "Kadabra K-Player"
     COMPANY_NAME "IMI"
@@ -30,6 +39,12 @@ juce_add_gui_app(IMI_KPlayer
         com.apple.security.cs.disable-library-validation
         com.apple.security.cs.allow-dyld-environment-variables
         com.apple.security.cs.allow-unsigned-executable-memory
+    # 1024px full-bleed master art (do not pre-mask for macOS - it applies
+    # its own squircle clip + shadow) and a pre-scaled 256px version; JUCE
+    # generates the .icns/.ico from these at build time. Plugin binary
+    # icons (KSampler, built via HISE) are out of scope here.
+    ICON_BIG "${CMAKE_SOURCE_DIR}/Assets/icons/kplayer-1024.png"
+    ICON_SMALL "${CMAKE_SOURCE_DIR}/Assets/icons/kplayer-256.png"
 )
 
 # disable-library-validation is what actually matters here: it's what lets
@@ -89,6 +104,9 @@ target_sources(IMI_KPlayer PRIVATE
     Source/SessionMigrator.h
     Source/SessionFormat.cpp
     Source/SessionFormat.h
+    Source/BrandingStripComponent.h
+    Source/AboutScreenComponent.cpp
+    Source/AboutScreenComponent.h
 )
 
 target_compile_definitions(IMI_KPlayer PRIVATE
@@ -101,6 +119,7 @@ target_compile_definitions(IMI_KPlayer PRIVATE
 )
 
 target_link_libraries(IMI_KPlayer PRIVATE
+    KPlayerAssets
     juce::juce_audio_basics
     juce::juce_audio_devices
     juce::juce_audio_formats

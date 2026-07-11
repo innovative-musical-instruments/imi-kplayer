@@ -6,6 +6,7 @@
 #include "PluginManager.h"
 #include "PluginBrowserComponent.h"
 #include "SessionIO.h"
+#include "AboutScreenComponent.h"
 
 class KPlayerApplication : public juce::JUCEApplication
 {
@@ -17,22 +18,47 @@ public:
 
     void initialise(const juce::String&) override
     {
-        // Requests 2 input channels too (was 0) so per-channel audio input
-        // routing (Increment 3 item 8) has something live to select by
-        // default; the user can add more via Settings > Audio & MIDI.
-        deviceManager.initialiseWithDefaultDevices(2, 2);
-        mainWindow.reset(new MainWindow(getApplicationName(),
-                                        deviceManager,
-                                        pluginManager));
+        // Splash covers the blank/delay period before the main window
+        // exists (device init + MainWindow construction, both synchronous)
+        // - separate from the LoadingOverlayComponent shown inside the
+        // already-visible main window during the async plugin scan below.
+        // Deferred one message-loop tick via callAsync so the splash
+        // actually gets a paint before the blocking work starts.
+        splashScreen = std::make_unique<AboutScreenComponent>(true);
+        splashScreen->setProgress(0.1f);
+        splashScreen->addToDesktop(juce::ComponentPeer::windowHasDropShadow
+                                   | juce::ComponentPeer::windowIsTemporary);
+        splashScreen->centreWithSize(AboutScreenComponent::fixedWidth, AboutScreenComponent::fixedHeight);
+        splashScreen->setVisible(true);
+        splashScreen->toFront(false);
 
-        pluginManager.scanPluginsAsync([this]
+        juce::MessageManager::callAsync([this]
         {
-            if (mainWindow != nullptr)
-                mainWindow->mainComponent->onScanComplete();
+            // Requests 2 input channels too (was 0) so per-channel audio
+            // input routing (Increment 3 item 8) has something live to
+            // select by default; the user can add more via Settings >
+            // Audio & MIDI.
+            deviceManager.initialiseWithDefaultDevices(2, 2);
+            if (splashScreen != nullptr)
+                splashScreen->setProgress(0.5f);
+
+            mainWindow.reset(new MainWindow(getApplicationName(),
+                                            deviceManager,
+                                            pluginManager));
+
+            if (splashScreen != nullptr)
+                splashScreen->setProgress(1.0f);
+            splashScreen.reset();
+
+            pluginManager.scanPluginsAsync([this]
+            {
+                if (mainWindow != nullptr)
+                    mainWindow->mainComponent->onScanComplete();
+            });
         });
     }
 
-    void shutdown() override { mainWindow = nullptr; }
+    void shutdown() override { mainWindow = nullptr; splashScreen = nullptr; }
     void systemRequestedQuit() override { quit(); }
 
     enum CommandIDs
@@ -41,6 +67,8 @@ public:
         cmdSaveSession,
         cmdSaveSessionAs,
         cmdSettings,
+        cmdAbout,
+        cmdHelp,
         cmdQuit
     };
 
@@ -87,7 +115,7 @@ public:
 
         juce::StringArray getMenuBarNames() override
         {
-            return { "File", "Settings" };
+            return { "File", "Settings", "Help" };
         }
 
         juce::PopupMenu getMenuForIndex(int index, const juce::String&) override
@@ -105,6 +133,11 @@ public:
             {
                 menu.addCommandItem(&commandManager, cmdSettings);
             }
+            else if (index == 2)
+            {
+                menu.addCommandItem(&commandManager, cmdAbout);
+                menu.addCommandItem(&commandManager, cmdHelp);
+            }
             return menu;
         }
 
@@ -115,7 +148,8 @@ public:
 
         void getAllCommands(juce::Array<juce::CommandID>& commands) override
         {
-            commands.addArray({ cmdOpenSession, cmdSaveSession, cmdSaveSessionAs, cmdSettings, cmdQuit });
+            commands.addArray({ cmdOpenSession, cmdSaveSession, cmdSaveSessionAs, cmdSettings,
+                                cmdAbout, cmdHelp, cmdQuit });
         }
 
         void getCommandInfo(juce::CommandID commandID, juce::ApplicationCommandInfo& result) override
@@ -137,6 +171,12 @@ public:
                 case cmdSettings:
                     result.setInfo("Audio & MIDI...", "Open audio/MIDI settings", "Settings", 0);
                     break;
+                case cmdAbout:
+                    result.setInfo("About", "About KPlayer", "Help", 0);
+                    break;
+                case cmdHelp:
+                    result.setInfo("Help", "Open the KPlayer user guide and video tutorials", "Help", 0);
+                    break;
                 case cmdQuit:
                     result.setInfo("Quit", "Quit the application", "File", 0);
                     result.addDefaultKeypress('q', juce::ModifierKeys::commandModifier);
@@ -154,6 +194,8 @@ public:
                 case cmdSaveSession:   saveSession();       return true;
                 case cmdSaveSessionAs: saveSessionAs();      return true;
                 case cmdSettings:      showSettings();       return true;
+                case cmdAbout:         showAboutDialog();    return true;
+                case cmdHelp:          openHelpWebsite();    return true;
                 case cmdQuit:          juce::JUCEApplication::getInstance()->systemRequestedQuit(); return true;
                 default: return false;
             }
@@ -254,6 +296,36 @@ public:
             opts.launchAsync();
         }
 
+        // The About box draws its own fake title bar (traffic lights /
+        // Windows close x) to match the plugin GUIs' own About boxes, so
+        // this dialog has no native title bar of its own - the fake close
+        // control is wired to actually close it via onCloseRequested.
+        void showAboutDialog()
+        {
+            auto* about = new AboutScreenComponent();
+            juce::Component::SafePointer<juce::DialogWindow> dialogWindow;
+
+            juce::DialogWindow::LaunchOptions opts;
+            opts.content.setOwned(about);
+            opts.dialogTitle = "About KPlayer";
+            opts.dialogBackgroundColour = juce::Colour(0xff141a26);
+            opts.escapeKeyTriggersCloseButton = true;
+            opts.useNativeTitleBar = false;
+            opts.resizable = false;
+            dialogWindow = opts.launchAsync();
+
+            about->onCloseRequested = [dialogWindow]
+            {
+                if (dialogWindow != nullptr)
+                    dialogWindow->exitModalState(0);
+            };
+        }
+
+        void openHelpWebsite()
+        {
+            juce::URL("https://www.innovativemusicalinstruments.com/Kplayer/help").launchInDefaultBrowser();
+        }
+
         // Grow applies immediately (adding empty channels is never
         // destructive). Shrink first checks whether any channel above the
         // new count has a loaded plugin and, if so, confirms before
@@ -318,6 +390,7 @@ private:
     juce::AudioDeviceManager deviceManager;
     PluginManager pluginManager;
     std::unique_ptr<MainWindow> mainWindow;
+    std::unique_ptr<AboutScreenComponent> splashScreen;
 };
 
 START_JUCE_APPLICATION(KPlayerApplication)

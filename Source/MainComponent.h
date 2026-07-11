@@ -9,6 +9,7 @@
 #include "ChannelComponent.h"
 #include "MasterChainProcessor.h"
 #include "MasterChainComponent.h"
+#include "BrandingStripComponent.h"
 #include "PluginManager.h"
 #include "LoadingOverlayComponent.h"
 #include "SessionMigrator.h"
@@ -105,6 +106,10 @@ private:
     // takes a reference to it).
     MasterChainProcessor masterChainProcessor;
     MasterChainComponent masterChainComponent { masterChainProcessor };
+
+    // IMI + Tribal Tools logos, fixed height, directly above the master
+    // strip (spec item 2).
+    BrandingStripComponent brandingStrip;
 
     // Nothing renders a SettableTooltipClient's tooltip text without one of
     // these existing somewhere in the app - it watches the whole desktop

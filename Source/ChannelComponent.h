@@ -5,11 +5,13 @@
 #include "ChannelProcessor.h"
 #include "PeakMeterComponent.h"
 #include "ConsoleFaderLookAndFeel.h"
+#include "SelectorLookAndFeel.h"
 
 class ChannelComponent : public juce::Component,
                          public juce::Slider::Listener,
                          public juce::ComboBox::Listener,
-                         public juce::ChangeListener
+                         public juce::ChangeListener,
+                         public juce::Label::Listener
 {
 public:
     static constexpr int totalSlots = ChannelProcessor::totalSlotCount;
@@ -28,7 +30,12 @@ public:
     // the audio-input selector (Increment 3 item 8) and to be notified when
     // the active device/channel set changes (AudioDeviceManager is a
     // ChangeBroadcaster) - mirrors why SettingsComponent takes one too.
-    ChannelComponent(ChannelProcessor& processor, juce::AudioDeviceManager& deviceManager);
+    // channelNumber is the fixed, 1-based, non-editable position shown as
+    // "Channel N" (or the "N." prefix once a custom name is set, item 1.1)
+    // - derived from the channel's position in MainComponent's vectors,
+    // which channels are only ever appended to or truncated from the tail
+    // of, so a given channel's number never changes after construction.
+    ChannelComponent(ChannelProcessor& processor, juce::AudioDeviceManager& deviceManager, int channelNumber);
     ~ChannelComponent() override;
 
     void paint(juce::Graphics&) override;
@@ -38,18 +45,23 @@ public:
     void sliderValueChanged(juce::Slider* slider) override;
     void comboBoxChanged(juce::ComboBox* combo) override;
     void changeListenerCallback(juce::ChangeBroadcaster*) override;
+    void labelTextChanged(juce::Label* label) override;
+    void editorShown(juce::Label* label, juce::TextEditor& editor) override;
 
 private:
     void refreshMidiDeviceList();
     void updateMidiDeviceWarning();
     void refreshAudioInputList();
     void updateAudioInputWarning();
+    void updateChannelNameLabel();
 
     ChannelProcessor& processor;
     juce::AudioDeviceManager& deviceManager;
+    int channelNumber = 1;
 
     std::unique_ptr<ConsoleFaderLookAndFeel> gainFaderLookAndFeel;
     std::unique_ptr<ConsoleFaderLookAndFeel> panFaderLookAndFeel;
+    std::unique_ptr<SelectorLookAndFeel> selectorLookAndFeel;
 
     juce::Label channelNameLabel;
     juce::Label pluginLabel;
@@ -84,6 +96,12 @@ private:
 
     void showPluginSlotMenu(int slotIndex);
     void updateSlotButton(int slotIndex);
+
+    // Y-coordinates of the Input/Plugins section divider lines, computed in
+    // resized() and drawn in paint() - keeps the two in sync without
+    // duplicating the layout math.
+    int inputSectionDividerY = 0;
+    int pluginsSectionDividerY = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ChannelComponent)
 };

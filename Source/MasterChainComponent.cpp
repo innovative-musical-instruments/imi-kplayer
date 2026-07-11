@@ -1,4 +1,5 @@
 #include "MasterChainComponent.h"
+#include <cmath>
 
 MasterChainComponent::MasterChainComponent(MasterChainProcessor& p)
     : processor(p)
@@ -28,7 +29,24 @@ MasterChainComponent::MasterChainComponent(MasterChainProcessor& p)
     addAndMakeVisible(volumeLabel);
 
     volumeSlider.setSliderStyle(juce::Slider::LinearVertical);
-    volumeSlider.setRange(-60.0, 6.0, 0.1);
+    // Same quadratic taper shape as the channel gain fader, scaled to this
+    // slider's own +6/-60dB range: dB(t) = 6 - 66*t^2, t = fraction of
+    // travel down from the top. See
+    // docs/KPlayer_Refinement_Spec_2026-07-11.md section 1.3.
+    juce::NormalisableRange<double> volumeRange(
+        -60.0, 6.0,
+        [](double start, double end, double normalised)
+        {
+            double t = 1.0 - normalised;
+            return end - (end - start) * t * t;
+        },
+        [](double start, double end, double value)
+        {
+            double t = std::sqrt((end - value) / (end - start));
+            return 1.0 - t;
+        });
+    volumeRange.interval = 0.1;
+    volumeSlider.setNormalisableRange(volumeRange);
     volumeSlider.setValue(0.0, juce::dontSendNotification);
     volumeSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 16);
     volumeSlider.setTextValueSuffix(" dB");
@@ -100,34 +118,13 @@ void MasterChainComponent::showPluginSlotMenu(int slotIndex)
                         processor.showEditor(slotIndex);
                     break;
                 case 3:
-                    juce::AlertWindow::showAsync(
-                        juce::MessageBoxOptions::makeOptionsOkCancel(
-                            juce::MessageBoxIconType::WarningIcon,
-                            "Replace Plugin",
-                            "Replace the plugin loaded in this slot? Its current state will be lost.",
-                            "Replace", "Cancel", this),
-                        [this, slotIndex](int confirmResult)
-                        {
-                            if (confirmResult == 1 && onReplacePlugin)
-                                onReplacePlugin(slotIndex);
-                        });
+                    if (onReplacePlugin)
+                        onReplacePlugin(slotIndex);
                     break;
                 case 4:
-                    juce::AlertWindow::showAsync(
-                        juce::MessageBoxOptions::makeOptionsOkCancel(
-                            juce::MessageBoxIconType::WarningIcon,
-                            "Remove Plugin",
-                            "Remove the plugin loaded in this slot? Its current state will be lost.",
-                            "Remove", "Cancel", this),
-                        [this, slotIndex](int confirmResult)
-                        {
-                            if (confirmResult == 1)
-                            {
-                                processor.unloadPlugin(slotIndex);
-                                updateSlotButton(slotIndex);
-                                if (onDirty) onDirty();
-                            }
-                        });
+                    processor.unloadPlugin(slotIndex);
+                    updateSlotButton(slotIndex);
+                    if (onDirty) onDirty();
                     break;
                 case 5:
                     processor.setBypassed(slotIndex, ! processor.isBypassed(slotIndex));

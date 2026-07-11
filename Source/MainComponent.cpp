@@ -18,6 +18,7 @@ MainComponent::MainComponent(juce::AudioDeviceManager& dm, PluginManager& pm)
     masterChainComponent.setLevelMeterSources(&masterPeakLeft, &masterPeakRight,
                                               &masterClipFlagLeft, &masterClipFlagRight);
     addAndMakeVisible(masterChainComponent);
+    addAndMakeVisible(brandingStrip);
 
     deviceManager.addAudioCallback(this);
 
@@ -37,11 +38,13 @@ MainComponent::MainComponent(juce::AudioDeviceManager& dm, PluginManager& pm)
 void MainComponent::addChannel(int index)
 {
     auto processor = std::make_unique<ChannelProcessor>();
-    processor->setName("Channel " + juce::String(index + 1));
     processor->setTempo(currentTempo);
     processor->prepareToPlay(currentSampleRate, currentBlockSize);
 
-    auto component = std::make_unique<ChannelComponent>(*processor, deviceManager);
+    // getName() is now purely an optional custom name (item 1.1) - the
+    // fixed, non-editable "Channel N" number is derived from position and
+    // handed to the component separately, not stored on the processor.
+    auto component = std::make_unique<ChannelComponent>(*processor, deviceManager, index + 1);
     component->onLoadPlugin    = [this, index](int slot) { showPluginBrowser(index, slot, false); };
     component->onReplacePlugin = [this, index](int slot) { showPluginBrowser(index, slot, true);  };
     component->onDirty         = [this] { notifyDirty(); };
@@ -343,6 +346,8 @@ void MainComponent::resized()
     auto area = getLocalBounds().reduced(20);
 
     auto masterChainArea = area.removeFromRight(130);
+    brandingStrip.setBounds(masterChainArea.removeFromTop(40));
+    masterChainArea.removeFromTop(6);
     masterChainComponent.setBounds(masterChainArea);
 
     area.removeFromRight(20);

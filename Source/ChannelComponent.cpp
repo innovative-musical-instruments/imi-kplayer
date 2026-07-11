@@ -1,5 +1,6 @@
 #include "ChannelComponent.h"
 #include <algorithm>
+#include <cmath>
 
 namespace
 {
@@ -22,18 +23,24 @@ namespace
     }
 }
 
-ChannelComponent::ChannelComponent(ChannelProcessor& p, juce::AudioDeviceManager& dm)
-    : processor(p), deviceManager(dm)
+ChannelComponent::ChannelComponent(ChannelProcessor& p, juce::AudioDeviceManager& dm, int channelNum)
+    : processor(p), deviceManager(dm), channelNumber(channelNum)
 {
     // Gain caps are twice as tall as the base size; pan caps are half as
     // wide - both cosmetic-only, per user request, not a track-length change.
     gainFaderLookAndFeel = std::make_unique<ConsoleFaderLookAndFeel>(2.0f, 1.0f);
     panFaderLookAndFeel  = std::make_unique<ConsoleFaderLookAndFeel>(0.5f, 1.0f);
+    selectorLookAndFeel  = std::make_unique<SelectorLookAndFeel>();
 
-    channelNameLabel.setText(processor.getName(), juce::dontSendNotification);
     channelNameLabel.setFont(juce::Font(13.0f, juce::Font::bold));
     channelNameLabel.setJustificationType(juce::Justification::centred);
     channelNameLabel.setColour(juce::Label::textColourId, juce::Colours::white);
+    // Item 1.1: double-click to rename. Only the custom name is ever
+    // editable - the "N." number prefix is redrawn by updateChannelNameLabel()
+    // after every edit, never present in the editor itself (see editorShown()).
+    channelNameLabel.setEditable(false, true, false);
+    channelNameLabel.addListener(this);
+    updateChannelNameLabel();
     addAndMakeVisible(channelNameLabel);
 
     pluginLabel.setText("Instrument", juce::dontSendNotification);
@@ -68,6 +75,7 @@ ChannelComponent::ChannelComponent(ChannelProcessor& p, juce::AudioDeviceManager
         audioInputBox.addItem(availableAudioInputNames[i], i + 2);
     audioInputBox.setSelectedId(1, juce::dontSendNotification);
     audioInputBox.addListener(this);
+    audioInputBox.setLookAndFeel(selectorLookAndFeel.get());
     addAndMakeVisible(audioInputBox);
 
     deviceManager.addChangeListener(this);
@@ -93,6 +101,7 @@ ChannelComponent::ChannelComponent(ChannelProcessor& p, juce::AudioDeviceManager
     }
     midiDeviceBox.setSelectedId(defaultId, juce::dontSendNotification);
     midiDeviceBox.addListener(this);
+    midiDeviceBox.setLookAndFeel(selectorLookAndFeel.get());
     addAndMakeVisible(midiDeviceBox);
 
     if (defaultId > 1)
@@ -118,6 +127,7 @@ ChannelComponent::ChannelComponent(ChannelProcessor& p, juce::AudioDeviceManager
         midiChannelBox.addItem(juce::String(i), i + 1);
     midiChannelBox.setSelectedId(1, juce::dontSendNotification);
     midiChannelBox.addListener(this);
+    midiChannelBox.setLookAndFeel(selectorLookAndFeel.get());
     addAndMakeVisible(midiChannelBox);
 
     gainLabel.setText("Gain", juce::dontSendNotification);
@@ -127,7 +137,25 @@ ChannelComponent::ChannelComponent(ChannelProcessor& p, juce::AudioDeviceManager
     addAndMakeVisible(gainLabel);
 
     gainSlider.setSliderStyle(juce::Slider::LinearVertical);
-    gainSlider.setRange(-96.0, 0.0, 0.1);
+    // Quadratic taper: dB(t) = -96 * t^2, t = fraction of travel down from the
+    // top (unity gain). Gives -6dB at a quarter down, -24dB at halfway, so
+    // the musically useful range near unity gets far more of the fader's
+    // travel than a plain linear-dB mapping would. See
+    // docs/KPlayer_Refinement_Spec_2026-07-11.md section 1.3.
+    juce::NormalisableRange<double> gainRange(
+        -96.0, 0.0,
+        [](double start, double end, double normalised)
+        {
+            double t = 1.0 - normalised;
+            return end - (end - start) * t * t;
+        },
+        [](double start, double end, double value)
+        {
+            double t = std::sqrt((end - value) / (end - start));
+            return 1.0 - t;
+        });
+    gainRange.interval = 0.1;
+    gainSlider.setNormalisableRange(gainRange);
     gainSlider.setValue(0.0, juce::dontSendNotification);
     gainSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 16);
     gainSlider.setTextValueSuffix(" dB");
@@ -185,6 +213,9 @@ ChannelComponent::~ChannelComponent()
     deviceManager.removeChangeListener(this);
     gainSlider.setLookAndFeel(nullptr);
     panSlider.setLookAndFeel(nullptr);
+    audioInputBox.setLookAndFeel(nullptr);
+    midiDeviceBox.setLookAndFeel(nullptr);
+    midiChannelBox.setLookAndFeel(nullptr);
 }
 
 void ChannelComponent::showPluginSlotMenu(int slotIndex)
@@ -223,34 +254,13 @@ void ChannelComponent::showPluginSlotMenu(int slotIndex)
                         processor.showEditor(slotIndex);
                     break;
                 case 3:
-                    juce::AlertWindow::showAsync(
-                        juce::MessageBoxOptions::makeOptionsOkCancel(
-                            juce::MessageBoxIconType::WarningIcon,
-                            "Replace Plugin",
-                            "Replace the plugin loaded in this slot? Its current state will be lost.",
-                            "Replace", "Cancel", this),
-                        [this, slotIndex](int confirmResult)
-                        {
-                            if (confirmResult == 1 && onReplacePlugin)
-                                onReplacePlugin(slotIndex);
-                        });
+                    if (onReplacePlugin)
+                        onReplacePlugin(slotIndex);
                     break;
                 case 4:
-                    juce::AlertWindow::showAsync(
-                        juce::MessageBoxOptions::makeOptionsOkCancel(
-                            juce::MessageBoxIconType::WarningIcon,
-                            "Remove Plugin",
-                            "Remove the plugin loaded in this slot? Its current state will be lost.",
-                            "Remove", "Cancel", this),
-                        [this, slotIndex](int confirmResult)
-                        {
-                            if (confirmResult == 1)
-                            {
-                                processor.unloadPlugin(slotIndex);
-                                updateSlotButton(slotIndex);
-                                if (onDirty) onDirty();
-                            }
-                        });
+                    processor.unloadPlugin(slotIndex);
+                    updateSlotButton(slotIndex);
+                    if (onDirty) onDirty();
                     break;
                 case 5:
                     processor.setBypassed(slotIndex, ! processor.isBypassed(slotIndex));
@@ -291,7 +301,7 @@ void ChannelComponent::refresh()
     for (int i = 0; i < totalSlots; ++i)
         updateSlotButton(i);
 
-    channelNameLabel.setText(processor.getName(), juce::dontSendNotification);
+    updateChannelNameLabel();
 
     float gainDb = juce::Decibels::gainToDecibels(processor.getGain(), -96.0f);
     gainSlider.setValue(gainDb, juce::dontSendNotification);
@@ -322,6 +332,34 @@ void ChannelComponent::refresh()
 
     updateMidiDeviceWarning();
     updateAudioInputWarning();
+}
+
+// Fixed "Channel N" default, or "N. CustomName" once the user has renamed
+// it - either way the number itself is never part of the editable text
+// (see editorShown()), so it can't be edited or deleted by mistake.
+void ChannelComponent::updateChannelNameLabel()
+{
+    auto customName = processor.getName().trim();
+    auto display = customName.isEmpty()
+        ? ("Channel " + juce::String(channelNumber))
+        : (juce::String(channelNumber) + ". " + customName);
+    channelNameLabel.setText(display, juce::dontSendNotification);
+}
+
+void ChannelComponent::editorShown(juce::Label* label, juce::TextEditor& editor)
+{
+    if (label == &channelNameLabel)
+        editor.setText(processor.getName(), false);
+}
+
+void ChannelComponent::labelTextChanged(juce::Label* label)
+{
+    if (label != &channelNameLabel)
+        return;
+
+    processor.setName(channelNameLabel.getText().trim());
+    updateChannelNameLabel();
+    if (onDirty) onDirty();
 }
 
 void ChannelComponent::sliderValueChanged(juce::Slider* slider)
@@ -462,21 +500,40 @@ void ChannelComponent::paint(juce::Graphics& g)
     g.fillAll(juce::Colour(0xff1e1e2e));
     g.setColour(juce::Colour(0xff3d5a80));
     g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(2), 6.0f, 1.5f);
+
+    // Section dividers between Input/Plugins/Mix, per the resectioned layout.
+    g.setColour(juce::Colour(0xff3d5a80).withAlpha(0.5f));
+    auto dividerBounds = getLocalBounds().reduced(6);
+    g.drawHorizontalLine(inputSectionDividerY, (float) dividerBounds.getX(), (float) dividerBounds.getRight());
+    g.drawHorizontalLine(pluginsSectionDividerY, (float) dividerBounds.getX(), (float) dividerBounds.getRight());
 }
 
 void ChannelComponent::resized()
 {
     auto area = getLocalBounds().reduced(6);
 
+    // ---- Input section: name, audio in, MIDI in, MIDI channel ----
     channelNameLabel.setBounds(area.removeFromTop(18));
     area.removeFromTop(6);
 
-    pluginLabel.setBounds(area.removeFromTop(16));
-    slotButtons[0].setBounds(area.removeFromTop(26));
-    area.removeFromTop(10);
-
     audioInLabel.setBounds(area.removeFromTop(16));
     audioInputBox.setBounds(area.removeFromTop(24));
+    area.removeFromTop(8);
+
+    midiInLabel.setBounds(area.removeFromTop(16));
+    midiDeviceBox.setBounds(area.removeFromTop(24));
+    area.removeFromTop(8);
+
+    midiLabel.setBounds(area.removeFromTop(16));
+    midiChannelBox.setBounds(area.removeFromTop(24));
+
+    area.removeFromTop(6);
+    inputSectionDividerY = area.getY();
+    area.removeFromTop(7);
+
+    // ---- Plugins section: instrument, inserts ----
+    pluginLabel.setBounds(area.removeFromTop(16));
+    slotButtons[0].setBounds(area.removeFromTop(26));
     area.removeFromTop(10);
 
     insertsLabel.setBounds(area.removeFromTop(16));
@@ -486,16 +543,12 @@ void ChannelComponent::resized()
         if (i != totalSlots - 1)
             area.removeFromTop(3);
     }
-    area.removeFromTop(12);
 
-    midiInLabel.setBounds(area.removeFromTop(16));
-    midiDeviceBox.setBounds(area.removeFromTop(24));
-    area.removeFromTop(8);
+    area.removeFromTop(6);
+    pluginsSectionDividerY = area.getY();
+    area.removeFromTop(7);
 
-    midiLabel.setBounds(area.removeFromTop(16));
-    midiChannelBox.setBounds(area.removeFromTop(24));
-    area.removeFromTop(16);
-
+    // ---- Mix section: gain, pan, mute/solo ----
     auto bottomArea = area.removeFromBottom(140);
 
     auto meterArea = area.removeFromRight(16);
