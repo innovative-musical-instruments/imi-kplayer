@@ -212,6 +212,10 @@ bool SessionIO::saveSession(const juce::File& file,
 
     root->setProperty("masterChain", masterChainToVar(mainComponent.getMasterChainProcessor()));
 
+    root->setProperty("windowWidth", mainComponent.getSavedWindowWidth());
+    root->setProperty("windowHeight", mainComponent.getSavedWindowHeight());
+    root->setProperty("inputSectionCollapsed", mainComponent.isInputSectionCollapsed());
+
     // Round-trip any fields this app version doesn't recognize (spec §4.4);
     // known fields set above always take precedence over a stale extra.
     SessionFormat::mergeExtraFields(*root, mainComponent.getLastLoadedExtraFields());
@@ -260,6 +264,9 @@ bool SessionIO::loadSession(const juce::File& file,
 
     mainComponent.setMasterVolume((float) (double) parsed.getProperty("masterVolume", 1.0));
     mainComponent.setGlobalTempo((double) parsed.getProperty("tempo", 120.0));
+    mainComponent.setWindowSize((int) parsed.getProperty("windowWidth", 0),
+                                (int) parsed.getProperty("windowHeight", 0));
+    mainComponent.setInputSectionCollapsedState((bool) parsed.getProperty("inputSectionCollapsed", false));
 
     auto* device = deviceManager.getCurrentAudioDevice();
     double sampleRate = device != nullptr ? device->getCurrentSampleRate()        : 44100.0;

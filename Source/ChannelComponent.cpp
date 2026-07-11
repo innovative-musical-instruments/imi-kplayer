@@ -334,6 +334,15 @@ void ChannelComponent::refresh()
     updateAudioInputWarning();
 }
 
+void ChannelComponent::setInputSectionCollapsed(bool collapsed)
+{
+    if (inputCollapsed == collapsed)
+        return;
+    inputCollapsed = collapsed;
+    resized();
+    repaint();
+}
+
 // Fixed "Channel N" default, or "N. CustomName" once the user has renamed
 // it - either way the number itself is never part of the editable text
 // (see editorShown()), so it can't be edited or deleted by mistake.
@@ -516,16 +525,28 @@ void ChannelComponent::resized()
     channelNameLabel.setBounds(area.removeFromTop(18));
     area.removeFromTop(6);
 
-    audioInLabel.setBounds(area.removeFromTop(16));
-    audioInputBox.setBounds(area.removeFromTop(24));
-    area.removeFromTop(8);
+    // Item: global collapsible Input section - hidden widgets consume no
+    // layout space, so the divider and everything below just shift up.
+    audioInLabel.setVisible(! inputCollapsed);
+    audioInputBox.setVisible(! inputCollapsed);
+    midiInLabel.setVisible(! inputCollapsed);
+    midiDeviceBox.setVisible(! inputCollapsed);
+    midiLabel.setVisible(! inputCollapsed);
+    midiChannelBox.setVisible(! inputCollapsed);
 
-    midiInLabel.setBounds(area.removeFromTop(16));
-    midiDeviceBox.setBounds(area.removeFromTop(24));
-    area.removeFromTop(8);
+    if (! inputCollapsed)
+    {
+        audioInLabel.setBounds(area.removeFromTop(16));
+        audioInputBox.setBounds(area.removeFromTop(24));
+        area.removeFromTop(8);
 
-    midiLabel.setBounds(area.removeFromTop(16));
-    midiChannelBox.setBounds(area.removeFromTop(24));
+        midiInLabel.setBounds(area.removeFromTop(16));
+        midiDeviceBox.setBounds(area.removeFromTop(24));
+        area.removeFromTop(8);
+
+        midiLabel.setBounds(area.removeFromTop(16));
+        midiChannelBox.setBounds(area.removeFromTop(24));
+    }
 
     area.removeFromTop(6);
     inputSectionDividerY = area.getY();

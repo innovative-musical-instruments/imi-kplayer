@@ -49,6 +49,17 @@ public:
     void   setGlobalTempo(double bpm);
     double getGlobalTempo() const { return currentTempo; }
 
+    // Window size round-trips through the session the same way tempo does:
+    // MainWindow (which actually owns the DocumentWindow) writes its current
+    // size here right before SessionIO::saveSession(), and reads it back
+    // after SessionIO::loadSession() to resize itself - MainComponent has
+    // no window of its own, it's just where SessionIO expects session state
+    // to live. 0 means "not set" (fresh session, or a file saved before
+    // this feature existed) - callers should leave the window size alone.
+    void setWindowSize(int width, int height) { savedWindowWidth = width; savedWindowHeight = height; }
+    int getSavedWindowWidth() const  { return savedWindowWidth; }
+    int getSavedWindowHeight() const { return savedWindowHeight; }
+
     // Accessors for SessionIO - it reads/writes channel and master state
     // without needing its own copy of MainComponent's internals.
     int getNumChannels() const { return (int) channelProcessors.size(); }
@@ -89,6 +100,14 @@ public:
     juce::var getLastLoadedExtraFields() const { return lastLoadedExtraFields; }
     void setLastLoadedExtraFields(juce::var extraFields) { lastLoadedExtraFields = std::move(extraFields); }
 
+    // Global collapse of the Audio In/MIDI In/MIDI Ch rows on every channel
+    // strip. Session-persisted, like window size - setInputSectionCollapsedState()
+    // applies the state without marking dirty (used on session load);
+    // toggleInputSectionCollapsed() is the user-driven path and does.
+    bool isInputSectionCollapsed() const { return inputSectionCollapsed; }
+    void setInputSectionCollapsedState(bool collapsed);
+    void toggleInputSectionCollapsed();
+
 private:
     juce::AudioDeviceManager& deviceManager;
     PluginManager& pluginManager;
@@ -110,6 +129,13 @@ private:
     // IMI + Tribal Tools logos, fixed height, directly above the master
     // strip (spec item 2).
     BrandingStripComponent brandingStrip;
+
+    // Single global toggle (not per-channel) that collapses/expands the
+    // Audio In/MIDI In/MIDI Ch rows on every channel strip at once - lives
+    // in the master column so it's visible regardless of channel-rack
+    // scroll position.
+    juce::TextButton collapseInputButton;
+    bool inputSectionCollapsed = false;
 
     // Nothing renders a SettableTooltipClient's tooltip text without one of
     // these existing somewhere in the app - it watches the whole desktop
@@ -150,6 +176,8 @@ private:
     double currentSampleRate = 44100.0;
     int    currentBlockSize  = 512;
     double currentTempo      = 120.0;
+    int savedWindowWidth  = 0;
+    int savedWindowHeight = 0;
 
     juce::MidiDeviceListConnection midiDeviceListConnection;
     void enableAllMidiInputs();

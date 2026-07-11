@@ -101,8 +101,30 @@ public:
         std::unique_ptr<juce::FileChooser> fileChooser;
         juce::File currentSessionFile;
         bool sessionDirty = false;
+        // Starts true so the construction-time resizes above don't count
+        // as user-driven; see the end of the constructor and resized().
+        bool programmaticResize = true;
         juce::ApplicationCommandManager commandManager;
         juce::Component::SafePointer<SettingsComponent> activeSettings;
+
+        // File > Recent - persisted to disk (mirrors PluginManager's
+        // ~/Library/Application Support/IMI/KPlayer/ convention) so it
+        // survives across launches, not just within one session.
+        static constexpr int recentFilesBaseId = 1000;
+        juce::RecentlyOpenedFilesList recentFiles;
+
+        static juce::File getRecentFilesStorageFile()
+        {
+            return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
+                       .getChildFile("IMI").getChildFile("KPlayer").getChildFile("recent_sessions.txt");
+        }
+
+        void saveRecentFilesList()
+        {
+            auto file = getRecentFilesStorageFile();
+            file.getParentDirectory().createDirectory();
+            file.replaceWithText(recentFiles.toString());
+        }
 
         MainWindow(juce::String name,
                    juce::AudioDeviceManager& dm,
@@ -114,6 +136,9 @@ public:
               deviceManager(dm),
               pluginManager(pm)
         {
+            recentFiles.setMaxNumberOfItems(10);
+            recentFiles.restoreFromString(getRecentFilesStorageFile().loadFileAsString());
+
             setUsingNativeTitleBar(false);
             setMenuBar(this);
             mainComponent = new MainComponent(dm, pm);
@@ -128,9 +153,22 @@ public:
             addKeyListener(commandManager.getKeyMappings());
 
             setVisible(true);
+
+            // Everything above (centreWithSize, setContentOwned's initial
+            // layout, etc.) fires resized() as a side effect of construction,
+            // not a user action - only start treating resizes as dirtying
+            // the session once construction is actually done.
+            programmaticResize = false;
         }
 
         ~MainWindow() override { setMenuBar(nullptr); }
+
+        void resized() override
+        {
+            DocumentWindow::resized();
+            if (! programmaticResize)
+                markDirty();
+        }
 
         juce::StringArray getMenuBarNames() override
         {
@@ -145,6 +183,12 @@ public:
                 menu.addCommandItem(&commandManager, cmdOpenSession);
                 menu.addCommandItem(&commandManager, cmdSaveSession);
                 menu.addCommandItem(&commandManager, cmdSaveSessionAs);
+
+                juce::PopupMenu recentMenu;
+                recentFiles.removeNonExistentFiles();
+                int numRecent = recentFiles.createPopupMenuItems(recentMenu, recentFilesBaseId, false, true);
+                menu.addSubMenu("Recent", recentMenu, numRecent > 0);
+
                 menu.addSeparator();
                 menu.addCommandItem(&commandManager, cmdQuit);
             }
@@ -160,7 +204,14 @@ public:
             return menu;
         }
 
-        void menuItemSelected(int, int) override {}
+        void menuItemSelected(int itemID, int) override
+        {
+            // Recent-file items are plain PopupMenu entries (from
+            // createPopupMenuItems), not ApplicationCommand items, so they
+            // arrive here rather than through perform().
+            if (itemID >= recentFilesBaseId && itemID < recentFilesBaseId + recentFiles.getMaxNumberOfItems())
+                openRecentFile(recentFiles.getFile(itemID - recentFilesBaseId));
+        }
 
         // juce::ApplicationCommandTarget
         juce::ApplicationCommandTarget* getNextCommandTarget() override { return nullptr; }
@@ -280,14 +331,46 @@ public:
                     [this](const juce::FileChooser& fc)
                     {
                         auto file = fc.getResult();
-                        if (file.existsAsFile() &&
-                            SessionIO::loadSession(file, *mainComponent, pluginManager, deviceManager))
-                        {
-                            currentSessionFile = file;
-                            clearDirty();
-                        }
+                        if (file.existsAsFile())
+                            loadSessionFile(file);
                     });
             });
+        }
+
+        void openRecentFile(const juce::File& file)
+        {
+            confirmDiscardUnsavedChanges([this, file]
+            {
+                if (file.existsAsFile())
+                    loadSessionFile(file);
+            });
+        }
+
+        void loadSessionFile(const juce::File& file)
+        {
+            if (SessionIO::loadSession(file, *mainComponent, pluginManager, deviceManager))
+            {
+                currentSessionFile = file;
+                clearDirty();
+                applyLoadedWindowSize();
+                recentFiles.addFile(file);
+                saveRecentFilesList();
+            }
+        }
+
+        // A saved window size is 0x0 for a fresh session or a file saved
+        // before this feature existed - leave the current window size
+        // alone in that case rather than snapping it to 0x0.
+        void applyLoadedWindowSize()
+        {
+            int w = mainComponent->getSavedWindowWidth();
+            int h = mainComponent->getSavedWindowHeight();
+            if (w > 0 && h > 0)
+            {
+                programmaticResize = true;
+                setSize(w, h);
+                programmaticResize = false;
+            }
         }
 
         // Saves over currentSessionFile if one is already known, otherwise
@@ -296,11 +379,17 @@ public:
         // happened (false if it fell through to a cancelled Save As).
         void saveSession(std::function<void(bool)> onComplete = nullptr)
         {
+            mainComponent->setWindowSize(getWidth(), getHeight());
+
             if (currentSessionFile != juce::File())
             {
                 bool saved = SessionIO::saveSession(currentSessionFile, *mainComponent, deviceManager);
                 if (saved)
+                {
                     clearDirty();
+                    recentFiles.addFile(currentSessionFile);
+                    saveRecentFilesList();
+                }
                 if (onComplete)
                     onComplete(saved);
             }
@@ -310,6 +399,8 @@ public:
 
         void saveSessionAs(std::function<void(bool)> onComplete = nullptr)
         {
+            mainComponent->setWindowSize(getWidth(), getHeight());
+
             fileChooser = std::make_unique<juce::FileChooser>(
                 "Save Session As", juce::File(), "*.kplayer");
 
@@ -333,6 +424,8 @@ public:
                     {
                         currentSessionFile = file;
                         clearDirty();
+                        recentFiles.addFile(file);
+                        saveRecentFilesList();
                     }
                     if (onComplete)
                         onComplete(saved);

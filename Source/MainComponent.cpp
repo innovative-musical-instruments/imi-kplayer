@@ -20,6 +20,10 @@ MainComponent::MainComponent(juce::AudioDeviceManager& dm, PluginManager& pm)
     addAndMakeVisible(masterChainComponent);
     addAndMakeVisible(brandingStrip);
 
+    collapseInputButton.setButtonText("Hide Channel I/O's");
+    collapseInputButton.onClick = [this] { toggleInputSectionCollapsed(); };
+    addAndMakeVisible(collapseInputButton);
+
     deviceManager.addAudioCallback(this);
 
     enableAllMidiInputs();
@@ -48,6 +52,7 @@ void MainComponent::addChannel(int index)
     component->onLoadPlugin    = [this, index](int slot) { showPluginBrowser(index, slot, false); };
     component->onReplacePlugin = [this, index](int slot) { showPluginBrowser(index, slot, true);  };
     component->onDirty         = [this] { notifyDirty(); };
+    component->setInputSectionCollapsed(inputSectionCollapsed);
     channelRackContent.addAndMakeVisible(component.get());
 
     channelProcessors.push_back(std::move(processor));
@@ -81,6 +86,20 @@ void MainComponent::setChannelCount(int newCount)
 
     deviceManager.addAudioCallback(this);
     resized();
+}
+
+void MainComponent::setInputSectionCollapsedState(bool collapsed)
+{
+    inputSectionCollapsed = collapsed;
+    collapseInputButton.setButtonText(inputSectionCollapsed ? "Show Channel I/O's" : "Hide Channel I/O's");
+    for (auto& c : channelComponents)
+        c->setInputSectionCollapsed(inputSectionCollapsed);
+}
+
+void MainComponent::toggleInputSectionCollapsed()
+{
+    setInputSectionCollapsedState(! inputSectionCollapsed);
+    notifyDirty();
 }
 
 bool MainComponent::channelHasLoadedPlugin(int index) const
@@ -347,6 +366,8 @@ void MainComponent::resized()
 
     auto masterChainArea = area.removeFromRight(130);
     brandingStrip.setBounds(masterChainArea.removeFromTop(40));
+    masterChainArea.removeFromTop(6);
+    collapseInputButton.setBounds(masterChainArea.removeFromTop(22));
     masterChainArea.removeFromTop(6);
     masterChainComponent.setBounds(masterChainArea);
 

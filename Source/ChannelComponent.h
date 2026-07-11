@@ -42,6 +42,11 @@ public:
     void resized() override;
     void refresh();
 
+    // Global collapse toggle (all channels move together, driven from
+    // MainComponent) - hides the Audio In/MIDI In/MIDI Ch rows, leaving the
+    // channel name visible. Purely a view preference, not session state.
+    void setInputSectionCollapsed(bool collapsed);
+
     void sliderValueChanged(juce::Slider* slider) override;
     void comboBoxChanged(juce::ComboBox* combo) override;
     void changeListenerCallback(juce::ChangeBroadcaster*) override;
@@ -58,6 +63,7 @@ private:
     ChannelProcessor& processor;
     juce::AudioDeviceManager& deviceManager;
     int channelNumber = 1;
+    bool inputCollapsed = false;
 
     std::unique_ptr<ConsoleFaderLookAndFeel> gainFaderLookAndFeel;
     std::unique_ptr<ConsoleFaderLookAndFeel> panFaderLookAndFeel;
