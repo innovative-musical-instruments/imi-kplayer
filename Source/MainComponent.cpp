@@ -37,6 +37,8 @@ MainComponent::MainComponent(juce::AudioDeviceManager& dm, PluginManager& pm)
     addAndMakeVisible(loadingOverlay.get());
 
     setSize(1152, 800);
+
+    startTimer(dirtyPollIntervalMs);
 }
 
 void MainComponent::addChannel(int index)
@@ -125,6 +127,7 @@ void MainComponent::enableAllMidiInputs()
 
 MainComponent::~MainComponent()
 {
+    stopTimer();
     deviceManager.removeAudioCallback(this);
 
     auto midiInputs = juce::MidiInput::getAvailableDevices();
@@ -136,6 +139,20 @@ void MainComponent::onScanComplete()
 {
     pluginsReady = true;
     loadingOverlay.reset();
+}
+
+void MainComponent::timerCallback()
+{
+    // Drain every processor's flag unconditionally (not short-circuiting on
+    // the first hit) so none are left set from this tick to linger into the
+    // next one, then notify at most once regardless of how many fired.
+    bool anyDirty = false;
+    for (auto& processor : channelProcessors)
+        anyDirty |= processor->consumeParametersDirtyFlag();
+    anyDirty |= masterChainProcessor.consumeParametersDirtyFlag();
+
+    if (anyDirty)
+        notifyDirty();
 }
 
 void MainComponent::setGlobalTempo(double bpm)

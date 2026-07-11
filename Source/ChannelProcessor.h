@@ -8,7 +8,14 @@
 
 // A channel's plugin chain is slot 0 (instrument OR audio-effect plugin,
 // per the MVP spec) followed by 5 insert slots (audio-effect plugins only).
-class ChannelProcessor
+//
+// Implements AudioProcessorListener purely to catch parameter/state changes
+// made *inside* a loaded plugin's own editor (turning a knob doesn't touch
+// any of our own UI, which is the only thing the existing onDirty callbacks
+// see) and flag the session dirty for those too. The callback can fire from
+// any thread - including the audio thread mid-automation - so it only ever
+// does a single relaxed atomic store; see consumeParametersDirtyFlag().
+class ChannelProcessor : public juce::AudioProcessorListener
 {
 public:
     static constexpr int numInsertSlots = 5;
@@ -100,7 +107,27 @@ public:
     void setMidiDeviceIdentifier(const juce::String& deviceId);
     juce::String getMidiDeviceIdentifier() const;
 
+    // Set (from any thread) by audioProcessorParameterChanged/audioProcessorChanged
+    // below whenever a loaded plugin's parameters or non-parameter state
+    // change. A message-thread Timer polls and clears this via the
+    // test-and-reset below - same fire-and-forget atomic pattern as the
+    // peak meters, deliberately not doing any real work in the callback
+    // itself since it can arrive on the audio thread mid-automation.
+    bool consumeParametersDirtyFlag() { return parametersDirty.exchange(false, std::memory_order_relaxed); }
+
 private:
+    void audioProcessorParameterChanged(juce::AudioProcessor*, int, float) override
+    {
+        parametersDirty.store(true, std::memory_order_relaxed);
+    }
+
+    void audioProcessorChanged(juce::AudioProcessor*, const ChangeDetails&) override
+    {
+        parametersDirty.store(true, std::memory_order_relaxed);
+    }
+
+    std::atomic<bool> parametersDirty { false };
+
     struct Slot
     {
         std::unique_ptr<juce::AudioPluginInstance> plugin;

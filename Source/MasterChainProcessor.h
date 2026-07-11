@@ -12,7 +12,12 @@
 // instrument slot) is empty, which is correct for a channel with nothing
 // loaded but would silently wipe the master sum every block here, since
 // the master chain has no instrument slot at all.
-class MasterChainProcessor
+//
+// Implements AudioProcessorListener for the same reason as ChannelProcessor
+// - see its header comment for the full rationale and the thread-safety
+// note on why the callbacks below only ever do a single relaxed atomic
+// store.
+class MasterChainProcessor : public juce::AudioProcessorListener
 {
 public:
     static constexpr int numSlots = 5;
@@ -52,7 +57,21 @@ public:
     void showEditor(int slotIndex);
     void hideEditor(int slotIndex);
 
+    bool consumeParametersDirtyFlag() { return parametersDirty.exchange(false, std::memory_order_relaxed); }
+
 private:
+    void audioProcessorParameterChanged(juce::AudioProcessor*, int, float) override
+    {
+        parametersDirty.store(true, std::memory_order_relaxed);
+    }
+
+    void audioProcessorChanged(juce::AudioProcessor*, const ChangeDetails&) override
+    {
+        parametersDirty.store(true, std::memory_order_relaxed);
+    }
+
+    std::atomic<bool> parametersDirty { false };
+
     struct Slot
     {
         std::unique_ptr<juce::AudioPluginInstance> plugin;

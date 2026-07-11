@@ -16,7 +16,8 @@
 
 class MainComponent : public juce::Component,
                       public juce::AudioIODeviceCallback,
-                      public juce::MidiInputCallback
+                      public juce::MidiInputCallback,
+                      private juce::Timer
 {
 public:
     static constexpr int maxChannels          = 24;
@@ -109,6 +110,14 @@ public:
     void toggleInputSectionCollapsed();
 
 private:
+    // Polls every loaded plugin's parametersDirty flag (set from any thread,
+    // including the audio thread mid-automation - see ChannelProcessor's
+    // header comment) at a low, UI-appropriate rate and calls notifyDirty()
+    // at most once per tick, no matter how many parameters changed or how
+    // fast. This is deliberately not on the hot path.
+    void timerCallback() override;
+    static constexpr int dirtyPollIntervalMs = 300;
+
     juce::AudioDeviceManager& deviceManager;
     PluginManager& pluginManager;
 

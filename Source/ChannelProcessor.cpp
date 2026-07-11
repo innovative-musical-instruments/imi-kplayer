@@ -94,6 +94,7 @@ bool ChannelProcessor::loadPlugin(int slotIndex,
         newPlugin->setStateInformation(initialState->getData(), (int) initialState->getSize());
 
     slot.plugin = std::move(newPlugin);
+    slot.plugin->addListener(this);
     slot.bypassed = false;
     currentSampleRate = sampleRate;
     currentBlockSize  = blockSize;
@@ -122,6 +123,7 @@ void ChannelProcessor::unloadPlugin(int slotIndex)
     slot.ready.store(false, std::memory_order_release);
     juce::Thread::sleep(50);
 
+    slot.plugin->removeListener(this);
     slot.plugin->setPlayHead(nullptr);
     slot.plugin->releaseResources();
 
