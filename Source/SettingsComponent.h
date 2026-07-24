@@ -7,11 +7,7 @@
 class SettingsComponent : public juce::Component
 {
 public:
-    // Tempo is a transport-wide setting shared by all channels, so this
-    // takes a plain value + change callback rather than a ChannelProcessor&.
     SettingsComponent(juce::AudioDeviceManager& dm,
-                        double initialTempo,
-                        std::function<void(double)> onTempoChanged,
                         int initialChannelCount,
                         int maxChannelCount,
                         std::function<void(int)> onChannelCountChanged);
@@ -26,12 +22,9 @@ public:
 
 private:
     juce::AudioDeviceManager& deviceManager;
-    std::function<void(double)> onTempoChanged;
     std::function<void(int)> onChannelCountChanged;
 
     std::unique_ptr<juce::AudioDeviceSelectorComponent> selector;
-    juce::Label  tempoLabel;
-    juce::Slider tempoSlider;
     juce::Label  channelCountLabel;
     juce::Slider channelCountSlider;
 

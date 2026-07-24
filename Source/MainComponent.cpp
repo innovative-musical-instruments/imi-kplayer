@@ -1,5 +1,22 @@
 #include "MainComponent.h"
 #include "PluginBrowserComponent.h"
+#include <array>
+
+namespace
+{
+    // First available MIDI input device whose name contains "kadabra"
+    // (case-insensitive), or an empty identifier if none is connected -
+    // same match ChannelComponent used to do itself for its own default,
+    // centralised here now since choosing a new channel's default also
+    // needs to see every *other* channel's current assignment.
+    juce::String findKadabraMidiDeviceIdentifier()
+    {
+        for (auto& device : juce::MidiInput::getAvailableDevices())
+            if (device.name.containsIgnoreCase("kadabra"))
+                return device.identifier;
+        return {};
+    }
+}
 
 MainComponent::MainComponent(juce::AudioDeviceManager& dm, PluginManager& pm)
     : deviceManager(dm), pluginManager(pm)
@@ -24,6 +41,29 @@ MainComponent::MainComponent(juce::AudioDeviceManager& dm, PluginManager& pm)
     collapseInputButton.setButtonText("Hide Channel I/O's");
     collapseInputButton.onClick = [this] { toggleInputSectionCollapsed(); };
     addAndMakeVisible(collapseInputButton);
+
+    // Manual edits only apply while sync is off (TempoSyncComponent itself
+    // won't even let the value label be edited while synced, but the guard
+    // here is what actually matters). Sync-on/off and device changes are
+    // deliberate user actions - unlike the sync-driven tempo ticks in
+    // timerCallback(), they do mark the session dirty.
+    tempoSyncComponent.onTempoChanged = [this](double bpm)
+    {
+        if (tempoSyncEnabled) return;
+        setGlobalTempo(bpm);
+        notifyDirty();
+    };
+    tempoSyncComponent.onSyncToggled = [this](bool enabled)
+    {
+        setTempoSyncEnabled(enabled);
+        notifyDirty();
+    };
+    tempoSyncComponent.onSyncDeviceChanged = [this](juce::String identifier)
+    {
+        setTempoSyncDeviceIdentifier(std::move(identifier));
+        notifyDirty();
+    };
+    addAndMakeVisible(tempoSyncComponent);
 
     deviceManager.addAudioCallback(this);
 
@@ -53,6 +93,36 @@ void MainComponent::addChannel(int index)
     // processor itself (setChannelNumber) so showEditor() can put it in a
     // loaded plugin's window title, not just on the ChannelComponent label.
     processor->setChannelNumber(index + 1);
+
+    // Default a fresh channel to the next free Kadabra MIDI channel: scan
+    // every already-existing channel's *current* device+channel assignment
+    // (not a running counter) so this stays correct no matter how channels
+    // were added/removed/reassigned before now. Falls back to MIDI In =
+    // None / Ch = All (ChannelComponent's own construction-time default)
+    // once all 16 Kadabra channels are already claimed, or if no Kadabra
+    // port is connected at all.
+    auto kadabraId = findKadabraMidiDeviceIdentifier();
+    if (kadabraId.isNotEmpty())
+    {
+        std::array<bool, 16> claimed {};
+        for (auto& existing : channelProcessors)
+        {
+            int ch = existing->getMidiChannel();
+            if (ch >= 1 && ch <= 16 && existing->getMidiDeviceIdentifier() == kadabraId)
+                claimed[(size_t) (ch - 1)] = true;
+        }
+
+        for (int i = 0; i < 16; ++i)
+        {
+            if (! claimed[(size_t) i])
+            {
+                processor->setMidiDeviceIdentifier(kadabraId);
+                processor->setMidiChannel(i + 1);
+                break;
+            }
+        }
+    }
+
     auto component = std::make_unique<ChannelComponent>(*processor, deviceManager, index + 1);
     component->onLoadPlugin    = [this, index](int slot) { showPluginBrowser(index, slot, false); };
     component->onReplacePlugin = [this, index](int slot) { showPluginBrowser(index, slot, true);  };
@@ -151,12 +221,37 @@ void MainComponent::timerCallback()
     // the first hit) so none are left set from this tick to linger into the
     // next one, then notify at most once regardless of how many fired.
     bool anyDirty = false;
-    for (auto& processor : channelProcessors)
+    for (size_t i = 0; i < channelProcessors.size(); ++i)
+    {
+        auto& processor = channelProcessors[i];
         anyDirty |= processor->consumeParametersDirtyFlag();
+
+        // A MIDI CC7 message just changed this channel's gain (see
+        // ChannelProcessor::processBlock) - refresh its fader to match, and
+        // mark dirty the same as a manual fader drag would (sliderValueChanged
+        // always calls onDirty(), so this stays consistent with that).
+        if (processor->consumeGainChangedByMidi())
+        {
+            channelComponents[i]->refresh();
+            anyDirty = true;
+        }
+    }
     anyDirty |= masterChainProcessor.consumeParametersDirtyFlag();
 
     if (anyDirty)
         notifyDirty();
+
+    if (tempoSyncEnabled && tempoSyncDeviceIdentifier.isNotEmpty())
+    {
+        bool hasSignal = tempoClockDetector.hasSignal();
+        tempoSyncComponent.setSyncSignalWarning(! hasSignal);
+
+        // Holds the last-known tempo (rather than reverting to the manual
+        // value) once the signal drops, per the earlier design discussion -
+        // setGlobalTempo() just isn't called again until pulses resume.
+        if (hasSignal && tempoClockDetector.hasLockedTempo())
+            setGlobalTempo(tempoClockDetector.getBpm());
+    }
 }
 
 void MainComponent::setGlobalTempo(double bpm)
@@ -165,6 +260,25 @@ void MainComponent::setGlobalTempo(double bpm)
     for (auto& channel : channelProcessors)
         channel->setTempo(bpm);
     masterChainProcessor.setTempo(bpm);
+    tempoSyncComponent.setDisplayedTempo(bpm);
+}
+
+void MainComponent::setTempoSyncEnabled(bool enabled)
+{
+    tempoSyncEnabled = enabled;
+    tempoSyncComponent.setSyncEnabled(enabled);
+    if (! enabled)
+        tempoSyncComponent.setSyncSignalWarning(false);
+}
+
+void MainComponent::setTempoSyncDeviceIdentifier(juce::String identifier)
+{
+    tempoSyncDeviceIdentifier = std::move(identifier);
+    tempoSyncComponent.setSyncDeviceIdentifier(tempoSyncDeviceIdentifier);
+
+    // A stray interval spanning the old and new device's pulse streams
+    // must not get baked into the average - see MidiClockTempoDetector::reset().
+    tempoClockDetector.reset();
 }
 
 void MainComponent::setMasterVolume(float linearGain)
@@ -279,6 +393,14 @@ void MainComponent::showMasterChainPluginBrowser(int slotIndex, bool isReplace)
 void MainComponent::handleIncomingMidiMessage(juce::MidiInput* source,
                                                const juce::MidiMessage& msg)
 {
+    // MIDI clock/Start/Continue bytes on the currently-selected sync device
+    // still get buffered above for channel routing like any other message -
+    // this is an extra tap, not a replacement. Gated on tempoSyncEnabled too
+    // so bytes from a device the user picked before but has since disabled
+    // sync for can't silently keep feeding the detector.
+    if (tempoSyncEnabled && source->getIdentifier() == tempoSyncDeviceIdentifier)
+        tempoClockDetector.pushMessage(msg);
+
     const juce::ScopedLock sl(midiLock);
     pendingMidiByDevice[source->getIdentifier()].addEvent(msg, 0);
 }
@@ -390,7 +512,19 @@ void MainComponent::resized()
     masterChainArea.removeFromTop(6);
     collapseInputButton.setBounds(masterChainArea.removeFromTop(22));
     masterChainArea.removeFromTop(6);
+    tempoSyncComponent.setBounds(masterChainArea.removeFromTop(TempoSyncComponent::preferredHeight));
+    masterChainArea.removeFromTop(6);
+
+    // Align the master chain's own insert slots with the channel strips'
+    // (see ChannelComponent::insertSectionStartY - computed for the
+    // non-collapsed input-section case only, per that method's own comment).
+    // masterOwnOffsetToSlots mirrors MasterChainComponent::resized()'s own
+    // row math up to its slot loop (reduced(6) + titleLabel + gap).
+    static constexpr int masterOwnOffsetToSlots = 6 + 16 + 6;
+    int targetSlotsY = area.getY() + ChannelComponent::insertSectionStartY(false);
+    int spacer = targetSlotsY - masterChainArea.getY() - masterOwnOffsetToSlots;
     masterChainComponent.setBounds(masterChainArea);
+    masterChainComponent.setTopSpacerHeight(juce::jmax(0, spacer));
 
     area.removeFromRight(20);
 

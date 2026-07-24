@@ -73,6 +73,14 @@ void MasterChainComponent::setVolume(float linearGain)
                           juce::dontSendNotification);
 }
 
+void MasterChainComponent::setTopSpacerHeight(int height)
+{
+    if (topSpacerHeight == height)
+        return;
+    topSpacerHeight = height;
+    resized();
+}
+
 void MasterChainComponent::setLevelMeterSources(const std::atomic<float>* leftLevel,
                                                 const std::atomic<float>* rightLevel,
                                                 std::atomic<bool>* clipFlagLeft,
@@ -84,23 +92,24 @@ void MasterChainComponent::setLevelMeterSources(const std::atomic<float>* leftLe
 
 void MasterChainComponent::showPluginSlotMenu(int slotIndex)
 {
-    juce::PopupMenu menu;
-
+    // Empty slot: "Load Plugin..." was the only item in the menu anyway -
+    // skip straight to the plugin browser instead of making the user click
+    // through a one-item popup first.
     if (! processor.hasPlugin(slotIndex))
     {
-        menu.addItem(1, "Load Plugin...");
+        if (onLoadPlugin) onLoadPlugin(slotIndex);
+        return;
     }
-    else
-    {
-        menu.addItem(0, processor.getPluginName(slotIndex), false, false);
-        menu.addSeparator();
-        menu.addItem(2, processor.isEditorVisible(slotIndex) ? "Hide Plugin" : "Show Plugin");
-        menu.addItem(5, processor.isBypassed(slotIndex) ? "Un-bypass" : "Bypass");
-        menu.addSeparator();
-        menu.addItem(3, "Replace Plugin...");
-        menu.addSeparator();
-        menu.addItem(4, "Remove Plugin");
-    }
+
+    juce::PopupMenu menu;
+    menu.addItem(0, processor.getPluginName(slotIndex), false, false);
+    menu.addSeparator();
+    menu.addItem(2, processor.isEditorVisible(slotIndex) ? "Hide Plugin" : "Show Plugin");
+    menu.addItem(5, processor.isBypassed(slotIndex) ? "Un-bypass" : "Bypass");
+    menu.addSeparator();
+    menu.addItem(3, "Replace Plugin...");
+    menu.addSeparator();
+    menu.addItem(4, "Remove Plugin");
 
     menu.showMenuAsync(
         juce::PopupMenu::Options().withTargetComponent(&slotButtons[(size_t) slotIndex]),
@@ -108,9 +117,6 @@ void MasterChainComponent::showPluginSlotMenu(int slotIndex)
         {
             switch (result)
             {
-                case 1:
-                    if (onLoadPlugin) onLoadPlugin(slotIndex);
-                    break;
                 case 2:
                     if (processor.isEditorVisible(slotIndex))
                         processor.hideEditor(slotIndex);
@@ -176,6 +182,9 @@ void MasterChainComponent::paint(juce::Graphics& g)
 void MasterChainComponent::resized()
 {
     auto area = getLocalBounds().reduced(6);
+
+    if (topSpacerHeight > 0)
+        area.removeFromTop(topSpacerHeight);
 
     titleLabel.setBounds(area.removeFromTop(16));
     area.removeFromTop(6);

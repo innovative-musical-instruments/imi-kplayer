@@ -1,6 +1,7 @@
 #pragma once
 #include <array>
 #include <atomic>
+#include <cmath>
 #include <functional>
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_audio_devices/juce_audio_devices.h>
@@ -66,6 +67,25 @@ public:
 
     void  setGain(float g)      { gain = g; }
     float getGain() const       { return gain; }
+
+    // Same quadratic taper as the on-screen gain fader (see
+    // docs/KPlayer_Refinement_Spec_2026-07-11.md section 1.3) - shared here
+    // so a MIDI CC7 gain change (see processBlock) lands on the exact same
+    // curve as dragging the fader to the equivalent position, not a second,
+    // independently-tuned one. Both fixed to the -96dB..0dB range already
+    // used everywhere gain is expressed in dB (e.g. getGain()'s callers via
+    // Decibels::gainToDecibels(..., -96.0f)).
+    static double normalisedToGainDb(double normalised)
+    {
+        double t = 1.0 - normalised;
+        return -96.0 * t * t;
+    }
+
+    static double gainDbToNormalised(double dB)
+    {
+        double t = std::sqrt(juce::jlimit(0.0, 1.0, -dB / 96.0));
+        return 1.0 - t;
+    }
     void  setPan(float p)       { pan = juce::jlimit(-1.0f, 1.0f, p); }
     float getPan() const        { return pan; }
     void setMidiChannel(int ch) { midiChannel = ch; }
@@ -129,6 +149,13 @@ public:
     // itself since it can arrive on the audio thread mid-automation.
     bool consumeParametersDirtyFlag() { return parametersDirty.exchange(false, std::memory_order_relaxed); }
 
+    // Set (from the audio thread) whenever an incoming MIDI CC7 message sets
+    // this channel's gain (see processBlock) - a message-thread Timer polls
+    // and clears this via the same exchange-and-reset pattern as
+    // consumeParametersDirtyFlag(), then refreshes the on-screen gain fader
+    // to match and marks the session dirty (same as a manual fader drag).
+    bool consumeGainChangedByMidi() { return gainChangedByMidi.exchange(false, std::memory_order_relaxed); }
+
 private:
     void audioProcessorParameterChanged(juce::AudioProcessor*, int, float) override
     {
@@ -141,6 +168,7 @@ private:
     }
 
     std::atomic<bool> parametersDirty { false };
+    std::atomic<bool> gainChangedByMidi { false };
 
     struct Slot
     {

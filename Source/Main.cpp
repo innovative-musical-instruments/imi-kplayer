@@ -434,8 +434,7 @@ public:
 
         void showSettings()
         {
-            auto* settings = new SettingsComponent(deviceManager, mainComponent->getGlobalTempo(),
-                                                    [this](double bpm) { mainComponent->setGlobalTempo(bpm); markDirty(); },
+            auto* settings = new SettingsComponent(deviceManager,
                                                     mainComponent->getNumChannels(),
                                                     MainComponent::maxChannels,
                                                     [this](int newCount) { requestChannelCountChange(newCount); });

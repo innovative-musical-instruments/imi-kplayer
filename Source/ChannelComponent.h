@@ -42,6 +42,16 @@ public:
     void resized() override;
     void refresh();
 
+    // Vertical offset (from a channel strip's own top edge) at which the
+    // first *insert* slot button begins (i.e. slotButtons[1], right after
+    // the "Inserts" label - not slot 0, the instrument slot, which the
+    // master chain has no equivalent of). MainComponent uses this to line
+    // up the master chain's own insert slots with the channels' - only
+    // meaningful for the non-collapsed input section (see MainComponent's
+    // caller for why). Must be kept in sync with resized()'s row math below
+    // if either changes.
+    static int insertSectionStartY(bool inputSectionCollapsed);
+
     // Global collapse toggle (all channels move together, driven from
     // MainComponent) - hides the Audio In/MIDI In/MIDI Ch rows, leaving the
     // channel name visible. Purely a view preference, not session state.
@@ -55,6 +65,10 @@ public:
 
 private:
     void refreshMidiDeviceList();
+    // Shared by the constructor and refreshMidiDeviceList(): the midiDeviceBox
+    // item id (1 = "None", 2.. = availableMidiInputs index) matching a given
+    // device identifier, or 1 if it's empty/not found.
+    int midiDeviceItemIdFor(const juce::String& identifier) const;
     void updateMidiDeviceWarning();
     void refreshAudioInputList();
     void updateAudioInputWarning();

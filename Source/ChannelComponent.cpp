@@ -1,6 +1,5 @@
 #include "ChannelComponent.h"
 #include <algorithm>
-#include <cmath>
 
 namespace
 {
@@ -88,24 +87,18 @@ ChannelComponent::ChannelComponent(ChannelProcessor& p, juce::AudioDeviceManager
 
     availableMidiInputs = juce::MidiInput::getAvailableDevices();
     midiDeviceBox.addItem("None", 1);
-
-    // Default a fresh channel to our own Kadabra MIDI port if it's present,
-    // rather than "None" - this only ever applies at construction time, so
-    // it never overrides a deliberate later choice (including "None").
-    int defaultId = 1;
     for (int i = 0; i < availableMidiInputs.size(); ++i)
-    {
         midiDeviceBox.addItem(availableMidiInputs[i].name, i + 2);
-        if (defaultId == 1 && availableMidiInputs[i].name.containsIgnoreCase("kadabra"))
-            defaultId = i + 2;
-    }
-    midiDeviceBox.setSelectedId(defaultId, juce::dontSendNotification);
+
+    // Reflects whatever's already on the processor rather than deciding a
+    // default itself - MainComponent::addChannel() decides that (it alone
+    // can see every other channel's current MIDI device/channel, needed to
+    // find the next free Kadabra channel) before constructing this component,
+    // and a session load overrides it again afterward the same way.
+    midiDeviceBox.setSelectedId(midiDeviceItemIdFor(processor.getMidiDeviceIdentifier()), juce::dontSendNotification);
     midiDeviceBox.addListener(this);
     midiDeviceBox.setLookAndFeel(selectorLookAndFeel.get());
     addAndMakeVisible(midiDeviceBox);
-
-    if (defaultId > 1)
-        processor.setMidiDeviceIdentifier(availableMidiInputs[defaultId - 2].identifier);
 
     // Devices connecting/disconnecting after construction need to update
     // this channel's dropdown and warning state - event-driven rather than
@@ -125,7 +118,12 @@ ChannelComponent::ChannelComponent(ChannelProcessor& p, juce::AudioDeviceManager
     midiChannelBox.addItem("All", 1);
     for (int i = 1; i <= 16; ++i)
         midiChannelBox.addItem(juce::String(i), i + 1);
-    midiChannelBox.setSelectedId(1, juce::dontSendNotification);
+    // Same rationale as midiDeviceBox above - reflects whatever
+    // MainComponent::addChannel() already set on the processor (its next-free-
+    // Kadabra-channel scan, or "All" if it left the default untouched).
+    int initialChannel = processor.getMidiChannel();
+    midiChannelBox.setSelectedId(initialChannel >= 1 && initialChannel <= 16 ? initialChannel + 1 : 1,
+                                 juce::dontSendNotification);
     midiChannelBox.addListener(this);
     midiChannelBox.setLookAndFeel(selectorLookAndFeel.get());
     addAndMakeVisible(midiChannelBox);
@@ -141,19 +139,14 @@ ChannelComponent::ChannelComponent(ChannelProcessor& p, juce::AudioDeviceManager
     // top (unity gain). Gives -6dB at a quarter down, -24dB at halfway, so
     // the musically useful range near unity gets far more of the fader's
     // travel than a plain linear-dB mapping would. See
-    // docs/KPlayer_Refinement_Spec_2026-07-11.md section 1.3.
+    // docs/KPlayer_Refinement_Spec_2026-07-11.md section 1.3. The curve
+    // itself lives on ChannelProcessor (shared with MIDI CC7 gain control)
+    // so a hardware fader move lands on the exact same mapping as dragging
+    // this slider to the equivalent position.
     juce::NormalisableRange<double> gainRange(
         -96.0, 0.0,
-        [](double start, double end, double normalised)
-        {
-            double t = 1.0 - normalised;
-            return end - (end - start) * t * t;
-        },
-        [](double start, double end, double value)
-        {
-            double t = std::sqrt((end - value) / (end - start));
-            return 1.0 - t;
-        });
+        [](double, double, double normalised) { return ChannelProcessor::normalisedToGainDb(normalised); },
+        [](double, double, double value) { return ChannelProcessor::gainDbToNormalised(value); });
     gainRange.interval = 0.1;
     gainSlider.setNormalisableRange(gainRange);
     gainSlider.setValue(0.0, juce::dontSendNotification);
@@ -220,23 +213,24 @@ ChannelComponent::~ChannelComponent()
 
 void ChannelComponent::showPluginSlotMenu(int slotIndex)
 {
-    juce::PopupMenu menu;
+    // Empty slot: "Load Plugin..." was the only item in the menu anyway -
+    // skip straight to the plugin browser instead of making the user click
+    // through a one-item popup first.
+    if (! processor.hasPlugin(slotIndex))
+    {
+        if (onLoadPlugin) onLoadPlugin(slotIndex);
+        return;
+    }
 
-    if (!processor.hasPlugin(slotIndex))
-    {
-        menu.addItem(1, "Load Plugin...");
-    }
-    else
-    {
-        menu.addItem(0, processor.getPluginName(slotIndex), false, false);
-        menu.addSeparator();
-        menu.addItem(2, processor.isEditorVisible(slotIndex) ? "Hide Plugin" : "Show Plugin");
-        menu.addItem(5, processor.isBypassed(slotIndex) ? "Un-bypass" : "Bypass");
-        menu.addSeparator();
-        menu.addItem(3, "Replace Plugin...");
-        menu.addSeparator();
-        menu.addItem(4, "Remove Plugin");
-    }
+    juce::PopupMenu menu;
+    menu.addItem(0, processor.getPluginName(slotIndex), false, false);
+    menu.addSeparator();
+    menu.addItem(2, processor.isEditorVisible(slotIndex) ? "Hide Plugin" : "Show Plugin");
+    menu.addItem(5, processor.isBypassed(slotIndex) ? "Un-bypass" : "Bypass");
+    menu.addSeparator();
+    menu.addItem(3, "Replace Plugin...");
+    menu.addSeparator();
+    menu.addItem(4, "Remove Plugin");
 
     menu.showMenuAsync(
         juce::PopupMenu::Options().withTargetComponent(&slotButtons[(size_t) slotIndex]),
@@ -244,9 +238,6 @@ void ChannelComponent::showPluginSlotMenu(int slotIndex)
         {
             switch (result)
             {
-                case 1:
-                    if (onLoadPlugin) onLoadPlugin(slotIndex);
-                    break;
                 case 2:
                     if (processor.isEditorVisible(slotIndex))
                         processor.hideEditor(slotIndex);
@@ -433,16 +424,15 @@ void ChannelComponent::refreshMidiDeviceList()
     for (int i = 0; i < availableMidiInputs.size(); ++i)
         midiDeviceBox.addItem(availableMidiInputs[i].name, i + 2);
 
-    int selectedId = 1;
+    midiDeviceBox.setSelectedId(midiDeviceItemIdFor(currentIdentifier), juce::dontSendNotification);
+}
+
+int ChannelComponent::midiDeviceItemIdFor(const juce::String& identifier) const
+{
     for (int i = 0; i < availableMidiInputs.size(); ++i)
-    {
-        if (availableMidiInputs[i].identifier == currentIdentifier)
-        {
-            selectedId = i + 2;
-            break;
-        }
-    }
-    midiDeviceBox.setSelectedId(selectedId, juce::dontSendNotification);
+        if (availableMidiInputs[i].identifier == identifier)
+            return i + 2;
+    return 1;
 }
 
 void ChannelComponent::updateMidiDeviceWarning()
@@ -515,6 +505,21 @@ void ChannelComponent::paint(juce::Graphics& g)
     auto dividerBounds = getLocalBounds().reduced(6);
     g.drawHorizontalLine(inputSectionDividerY, (float) dividerBounds.getX(), (float) dividerBounds.getRight());
     g.drawHorizontalLine(pluginsSectionDividerY, (float) dividerBounds.getX(), (float) dividerBounds.getRight());
+}
+
+int ChannelComponent::insertSectionStartY(bool inputSectionCollapsed)
+{
+    int y = 6;             // getLocalBounds().reduced(6) top inset
+    y += 18 + 6;            // channelNameLabel + gap
+
+    if (! inputSectionCollapsed)
+        y += 16 + 24 + 8    // audioInLabel, audioInputBox, gap
+           + 16 + 24 + 8    // midiInLabel, midiDeviceBox, gap
+           + 16 + 24;       // midiLabel, midiChannelBox
+
+    y += 6 + 7;             // gap before/after inputSectionDividerY
+    y += 16 + 26 + 10 + 16; // pluginLabel, slotButtons[0], gap, insertsLabel
+    return y;
 }
 
 void ChannelComponent::resized()

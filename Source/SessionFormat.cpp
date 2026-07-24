@@ -6,7 +6,7 @@ const juce::StringArray& SessionFormat::getKnownTopLevelFields()
         "formatVersion", "appVersion", "createdAt", "sessionName",
         "audioDeviceStateXml", "masterVolume", "tempo", "channels",
         "masterChain", "audioInputs", "windowWidth", "windowHeight",
-        "inputSectionCollapsed"
+        "inputSectionCollapsed", "tempoSyncEnabled", "tempoSyncDeviceIdentifier"
     };
     return fields;
 }

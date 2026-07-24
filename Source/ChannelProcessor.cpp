@@ -197,6 +197,26 @@ void ChannelProcessor::prepareToPlay(double sampleRate, int blockSize)
 void ChannelProcessor::processBlock(juce::AudioBuffer<float>& buffer,
                                      juce::MidiBuffer& midi)
 {
+    // Channel volume via MIDI CC7: scanned unconditionally, even with
+    // nothing loaded in slot 0, since gain should be controllable regardless
+    // of what else the channel is doing. Same channel-matching rule as the
+    // plugin-forwarding filter below - "All" (midiChannel == 0) matches any
+    // channel, otherwise only messages on midiChannel itself. `midi` here is
+    // already this channel's own per-device buffer (MainComponent only
+    // hands it messages from the assigned MIDI device), so no separate
+    // device check is needed.
+    for (auto meta : midi)
+    {
+        auto msg = meta.getMessage();
+        if (msg.isController() && msg.getControllerNumber() == 7
+            && (midiChannel == 0 || msg.getChannel() == midiChannel))
+        {
+            double dB = normalisedToGainDb(msg.getControllerValue() / 127.0);
+            setGain(dB <= -96.0 ? 0.0f : (float) juce::Decibels::decibelsToGain(dB));
+            gainChangedByMidi.store(true, std::memory_order_relaxed);
+        }
+    }
+
     auto& first = slots[(size_t) slot0Index];
 
     if (! first.ready.load(std::memory_order_acquire) || first.plugin == nullptr || first.bypassed)

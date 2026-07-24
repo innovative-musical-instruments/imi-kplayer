@@ -204,6 +204,8 @@ bool SessionIO::saveSession(const juce::File& file,
 
     root->setProperty("masterVolume", mainComponent.getMasterVolume());
     root->setProperty("tempo", mainComponent.getGlobalTempo());
+    root->setProperty("tempoSyncEnabled", mainComponent.isTempoSyncEnabled());
+    root->setProperty("tempoSyncDeviceIdentifier", mainComponent.getTempoSyncDeviceIdentifier());
 
     juce::Array<juce::var> channelArray;
     for (int i = 0; i < mainComponent.getNumChannels(); ++i)
@@ -264,6 +266,8 @@ bool SessionIO::loadSession(const juce::File& file,
 
     mainComponent.setMasterVolume((float) (double) parsed.getProperty("masterVolume", 1.0));
     mainComponent.setGlobalTempo((double) parsed.getProperty("tempo", 120.0));
+    mainComponent.setTempoSyncDeviceIdentifier(parsed.getProperty("tempoSyncDeviceIdentifier", juce::String()).toString());
+    mainComponent.setTempoSyncEnabled((bool) parsed.getProperty("tempoSyncEnabled", false));
     mainComponent.setWindowSize((int) parsed.getProperty("windowWidth", 0),
                                 (int) parsed.getProperty("windowHeight", 0));
     mainComponent.setInputSectionCollapsedState((bool) parsed.getProperty("inputSectionCollapsed", false));

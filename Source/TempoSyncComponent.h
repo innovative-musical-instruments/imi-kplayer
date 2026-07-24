@@ -1,0 +1,67 @@
+#pragma once
+#include <functional>
+#include <juce_gui_basics/juce_gui_basics.h>
+#include <juce_audio_devices/juce_audio_devices.h>
+
+// Master-column control for the transport-wide tempo (moved out of the
+// Settings dialog) plus MIDI-clock sync: a manually-editable BPM value when
+// unsynced, or a live read-only display driven by MidiClockTempoDetector
+// once a sync source is selected and locked. MainComponent owns the actual
+// tempo/sync state and is the only thing that talks to MIDI devices for
+// this feature - this component only displays that state and reports
+// user-driven changes via its callbacks, the same relationship
+// ChannelComponent has with ChannelProcessor's MIDI routing.
+class TempoSyncComponent : public juce::Component,
+                           private juce::Label::Listener
+{
+public:
+    static constexpr int preferredHeight = 48;
+
+    // Fired when the user edits the BPM value directly (only possible while
+    // sync is off - the value label isn't editable while synced).
+    std::function<void(double)> onTempoChanged;
+    // Fired when the user clicks the Sync toggle.
+    std::function<void(bool)> onSyncToggled;
+    // Fired when the user picks a different sync source device; an empty
+    // identifier means "None".
+    std::function<void(juce::String)> onSyncDeviceChanged;
+
+    TempoSyncComponent();
+    ~TempoSyncComponent() override;
+
+    void paint(juce::Graphics&) override;
+    void resized() override;
+
+    // All setters below reflect external state (session load, a sync-driven
+    // tempo tick, a device list change) without firing the callbacks above -
+    // the same dontSendNotification convention used throughout the rest of
+    // the channel-strip UI.
+    void setDisplayedTempo(double bpm);
+    void setSyncEnabled(bool enabled);
+    void setSyncDeviceIdentifier(const juce::String& identifier);
+    // Only meaningful while sync is enabled - colours the device selector to
+    // match the existing "device selected but nothing's coming through"
+    // warning convention already used by each channel's own MIDI In box.
+    void setSyncSignalWarning(bool noSignal);
+
+private:
+    void labelTextChanged(juce::Label*) override;
+    void editorShown(juce::Label*, juce::TextEditor&) override;
+    void refreshMidiDeviceList();
+    int  midiDeviceItemIdFor(const juce::String& identifier) const;
+    void updateTempoValueLabel();
+
+    juce::Label tempoLabel;
+    juce::Label tempoValueLabel;
+    juce::TextButton syncButton;
+    juce::ComboBox   syncDeviceBox;
+
+    juce::Array<juce::MidiDeviceInfo> availableMidiInputs;
+    juce::MidiDeviceListConnection midiDeviceListConnection;
+    juce::String currentSyncDeviceId;
+
+    bool   syncEnabled  = false;
+    double displayedBpm = 120.0;
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(TempoSyncComponent)
+};

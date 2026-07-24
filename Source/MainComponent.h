@@ -13,6 +13,8 @@
 #include "PluginManager.h"
 #include "LoadingOverlayComponent.h"
 #include "SessionMigrator.h"
+#include "TempoSyncComponent.h"
+#include "MidiClockTempoDetector.h"
 
 class MainComponent : public juce::Component,
                       public juce::AudioIODeviceCallback,
@@ -49,6 +51,16 @@ public:
     // Tempo is transport-wide, applied to every channel's playhead.
     void   setGlobalTempo(double bpm);
     double getGlobalTempo() const { return currentTempo; }
+
+    // MIDI-clock tempo sync (moved out of the Settings dialog into the
+    // master column, see TempoSyncComponent) - MainComponent owns this
+    // state and is the only thing that reads MIDI devices for it; the UI
+    // component just reflects it. tempoSyncDeviceIdentifier empty means "no
+    // sync source picked yet", independent of whether sync itself is on.
+    bool isTempoSyncEnabled() const { return tempoSyncEnabled; }
+    void setTempoSyncEnabled(bool enabled);
+    juce::String getTempoSyncDeviceIdentifier() const { return tempoSyncDeviceIdentifier; }
+    void setTempoSyncDeviceIdentifier(juce::String identifier);
 
     // Window size round-trips through the session the same way tempo does:
     // MainWindow (which actually owns the DocumentWindow) writes its current
@@ -138,6 +150,13 @@ private:
     // IMI + Tribal Tools logos, fixed height, directly above the master
     // strip (spec item 2).
     BrandingStripComponent brandingStrip;
+
+    // Tempo + MIDI-clock sync control, between collapseInputButton and
+    // masterChainComponent in the master column (see resized()).
+    TempoSyncComponent tempoSyncComponent;
+    MidiClockTempoDetector tempoClockDetector;
+    bool tempoSyncEnabled = false;
+    juce::String tempoSyncDeviceIdentifier;
 
     // Single global toggle (not per-channel) that collapses/expands the
     // Audio In/MIDI In/MIDI Ch rows on every channel strip at once - lives

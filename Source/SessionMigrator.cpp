@@ -19,6 +19,7 @@ const std::vector<SessionMigrator::MigrationStep>& SessionMigrator::getMigration
     static const std::vector<MigrationStep> chain {
         migrate_v0_to_v1,
         migrate_v1_to_v2,
+        migrate_v2_to_v3,
     };
     return chain;
 }
@@ -54,5 +55,24 @@ juce::var SessionMigrator::migrate_v1_to_v2(const juce::var& v1Json)
         obj->setProperty("audioInputs", juce::var(juce::Array<juce::var>()));
 
     obj->setProperty("formatVersion", 2);
+    return upgraded;
+}
+
+// Adds MIDI-clock tempo sync (Kadabra integration): whether it's on and
+// which device it follows. Both default to off/none for any file saved
+// before this feature existed - no other structural change.
+juce::var SessionMigrator::migrate_v2_to_v3(const juce::var& v2Json)
+{
+    auto upgraded = v2Json.clone();
+    auto* obj = upgraded.getDynamicObject();
+    jassert(obj != nullptr);
+
+    if (! upgraded.hasProperty("tempoSyncEnabled"))
+        obj->setProperty("tempoSyncEnabled", false);
+
+    if (! upgraded.hasProperty("tempoSyncDeviceIdentifier"))
+        obj->setProperty("tempoSyncDeviceIdentifier", juce::String());
+
+    obj->setProperty("formatVersion", 3);
     return upgraded;
 }

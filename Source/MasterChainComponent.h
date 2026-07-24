@@ -40,11 +40,21 @@ public:
                               std::atomic<bool>* clipFlagLeft,
                               std::atomic<bool>* clipFlagRight);
 
+    // Extra empty space reserved above titleLabel, so the insert-slot
+    // buttons below it can be pushed down to align with the channel strips'
+    // own insert slots (which sit below a taller "Input section" that the
+    // master column has nothing equivalent to) - set by MainComponent's
+    // resized(), which is the only place that can see both column layouts
+    // at once.
+    void setTopSpacerHeight(int height);
+
 private:
     void showPluginSlotMenu(int slotIndex);
     void updateSlotButton(int slotIndex);
 
     MasterChainProcessor& processor;
+
+    int topSpacerHeight = 0;
 
     juce::Label titleLabel;
     std::array<juce::TextButton, numSlots> slotButtons;

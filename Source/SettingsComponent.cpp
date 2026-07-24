@@ -1,12 +1,10 @@
 #include "SettingsComponent.h"
 
 SettingsComponent::SettingsComponent(juce::AudioDeviceManager& dm,
-                                            double initialTempo,
-                                            std::function<void(double)> onTempoChangedIn,
                                             int initialChannelCount,
                                             int maxChannelCount,
                                             std::function<void(int)> onChannelCountChangedIn)
-    : deviceManager(dm), onTempoChanged(std::move(onTempoChangedIn)),
+    : deviceManager(dm),
       onChannelCountChanged(std::move(onChannelCountChangedIn))
 {
     selector = std::make_unique<juce::AudioDeviceSelectorComponent>(
@@ -22,15 +20,6 @@ SettingsComponent::SettingsComponent(juce::AudioDeviceManager& dm,
     );
     addAndMakeVisible(selector.get());
 
-    tempoLabel.setText("Tempo (BPM)", juce::dontSendNotification);
-    addAndMakeVisible(tempoLabel);
-
-    tempoSlider.setRange(20.0, 300.0, 0.1);
-    tempoSlider.setValue(initialTempo, juce::dontSendNotification);
-    tempoSlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 70, 22);
-    tempoSlider.onValueChange = [this] { if (onTempoChanged) onTempoChanged(tempoSlider.getValue()); };
-    addAndMakeVisible(tempoSlider);
-
     channelCountLabel.setText("Channels", juce::dontSendNotification);
     addAndMakeVisible(channelCountLabel);
 
@@ -45,7 +34,7 @@ SettingsComponent::SettingsComponent(juce::AudioDeviceManager& dm,
     };
     addAndMakeVisible(channelCountSlider);
 
-    setSize(500, 490);
+    setSize(500, 450);
 }
 
 SettingsComponent::~SettingsComponent() {}
@@ -53,12 +42,6 @@ SettingsComponent::~SettingsComponent() {}
 void SettingsComponent::resized()
 {
     auto area = getLocalBounds().reduced(10);
-
-    auto tempoRow = area.removeFromTop(30);
-    tempoLabel.setBounds(tempoRow.removeFromLeft(100));
-    tempoSlider.setBounds(tempoRow);
-
-    area.removeFromTop(10);
 
     auto channelRow = area.removeFromTop(30);
     channelCountLabel.setBounds(channelRow.removeFromLeft(100));

@@ -97,6 +97,9 @@ target_sources(IMI_KPlayer PRIVATE
     Source/PeakMeterComponent.h
     Source/PluginEditorWindow.h
     Source/KPlayerAudioPlayHead.h
+    Source/TempoSyncComponent.cpp
+    Source/TempoSyncComponent.h
+    Source/MidiClockTempoDetector.h
     Source/ConsoleFaderLookAndFeel.h
     Source/LoadingOverlayComponent.h
     Source/SessionIO.cpp
