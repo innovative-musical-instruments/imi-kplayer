@@ -1,6 +1,7 @@
 #pragma once
 #include <array>
 #include <atomic>
+#include <functional>
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "KPlayerAudioPlayHead.h"
@@ -44,6 +45,11 @@ public:
 
     void setBypassed(int slotIndex, bool shouldBeBypassed);
     bool isBypassed(int slotIndex) const;
+
+    // See ChannelProcessor::onBypassChanged for the rationale - fired at the
+    // end of setBypassed() regardless of whether the slot's context menu or
+    // the plugin's own editor window triggered the change.
+    std::function<void(int slotIndex)> onBypassChanged;
 
     // Processes buffer in place, in series, starting from whatever the
     // caller already put in it (the channel-rack sum) - never clears it.

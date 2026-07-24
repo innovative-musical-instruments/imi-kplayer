@@ -171,7 +171,13 @@ juce::MemoryBlock ChannelProcessor::getPluginState(int slotIndex) const
 
 void ChannelProcessor::setBypassed(int slotIndex, bool shouldBeBypassed)
 {
-    slots[(size_t) slotIndex].bypassed = shouldBeBypassed;
+    auto& slot = slots[(size_t) slotIndex];
+    slot.bypassed = shouldBeBypassed;
+
+    if (auto* window = dynamic_cast<PluginEditorWindow*>(slot.editorWindow.get()))
+        window->setBypassedIndicator(shouldBeBypassed);
+
+    if (onBypassChanged) onBypassChanged(slotIndex);
 }
 
 bool ChannelProcessor::isBypassed(int slotIndex) const
@@ -279,13 +285,16 @@ void ChannelProcessor::showEditor(int slotIndex)
         auto* ed = slot.plugin->createEditorIfNeeded();
         if (ed == nullptr) return;
 
-        auto* window = new PluginEditorWindow(slot.plugin->getName(),
+        auto title = slot.plugin->getName()
+                        + " channel-" + juce::String(channelNumber)
+                        + " slot-"    + juce::String(slotIndex);
+        auto* window = new PluginEditorWindow(title,
                                               [this, slotIndex] { hideEditor(slotIndex); });
         slot.editorWindow.reset(window);
 
-        window->setContentOwned(ed, true);
-        window->setResizable(ed->isResizable(), false);
-        window->centreWithSize(ed->getWidth(), ed->getHeight());
+        window->setPluginEditor(std::unique_ptr<juce::AudioProcessorEditor>(ed),
+                                slot.bypassed,
+                                [this, slotIndex](bool b) { setBypassed(slotIndex, b); });
         window->setVisible(true);
         window->setAlwaysOnTop(true);
     }

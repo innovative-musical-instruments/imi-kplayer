@@ -15,6 +15,7 @@ MainComponent::MainComponent(juce::AudioDeviceManager& dm, PluginManager& pm)
     masterChainComponent.onReplacePlugin = [this](int slot) { showMasterChainPluginBrowser(slot, true);  };
     masterChainComponent.onDirty         = [this] { notifyDirty(); };
     masterChainComponent.onVolumeChanged = [this](float linearGain) { masterVolume = linearGain; notifyDirty(); };
+    masterChainProcessor.onBypassChanged = [this](int) { masterChainComponent.refresh(); };
     masterChainComponent.setLevelMeterSources(&masterPeakLeft, &masterPeakRight,
                                               &masterClipFlagLeft, &masterClipFlagRight);
     addAndMakeVisible(masterChainComponent);
@@ -47,13 +48,16 @@ void MainComponent::addChannel(int index)
     processor->setTempo(currentTempo);
     processor->prepareToPlay(currentSampleRate, currentBlockSize);
 
-    // getName() is now purely an optional custom name (item 1.1) - the
-    // fixed, non-editable "Channel N" number is derived from position and
-    // handed to the component separately, not stored on the processor.
+    // getName() is still purely an optional custom name (item 1.1) - but the
+    // fixed, non-editable "Channel N" number is now also mirrored onto the
+    // processor itself (setChannelNumber) so showEditor() can put it in a
+    // loaded plugin's window title, not just on the ChannelComponent label.
+    processor->setChannelNumber(index + 1);
     auto component = std::make_unique<ChannelComponent>(*processor, deviceManager, index + 1);
     component->onLoadPlugin    = [this, index](int slot) { showPluginBrowser(index, slot, false); };
     component->onReplacePlugin = [this, index](int slot) { showPluginBrowser(index, slot, true);  };
     component->onDirty         = [this] { notifyDirty(); };
+    processor->onBypassChanged = [this, index](int) { channelComponents[(size_t) index]->refresh(); };
     component->setInputSectionCollapsed(inputSectionCollapsed);
     channelRackContent.addAndMakeVisible(component.get());
 

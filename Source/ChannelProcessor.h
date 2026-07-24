@@ -1,6 +1,7 @@
 #pragma once
 #include <array>
 #include <atomic>
+#include <functional>
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_audio_devices/juce_audio_devices.h>
 #include <juce_gui_basics/juce_gui_basics.h>
@@ -51,6 +52,13 @@ public:
     void setBypassed(int slotIndex, bool shouldBeBypassed);
     bool isBypassed(int slotIndex) const;
 
+    // Fired at the end of setBypassed(), regardless of which caller changed
+    // the state - the slot's context menu and the plugin's own editor window
+    // (PluginEditorWindow::setPluginEditor's onToggleBypass) both funnel
+    // through setBypassed(), so this is the one place ChannelComponent needs
+    // to hook to keep its slot button in sync with either source.
+    std::function<void(int slotIndex)> onBypassChanged;
+
     void processBlock(juce::AudioBuffer<float>& buffer,
                       juce::MidiBuffer& midi);
 
@@ -83,6 +91,12 @@ public:
 
     void setName(const juce::String& newName) { name = newName; }
     juce::String getName() const              { return name; }
+
+    // Fixed 1-based position, mirroring ChannelComponent's own channelNumber
+    // (see MainComponent::addChannel) - needed here too so showEditor() can
+    // put "channel-N slot-M" in the plugin window's title.
+    void setChannelNumber(int n) { channelNumber = n; }
+    int  getChannelNumber() const { return channelNumber; }
 
     void setMuted(bool shouldBeMuted) { mute.store(shouldBeMuted, std::memory_order_relaxed); }
     bool isMuted() const               { return mute.load(std::memory_order_relaxed); }
@@ -156,6 +170,7 @@ private:
 
     juce::Uuid id;
     juce::String name;
+    int channelNumber = 0;
     std::atomic<bool> mute { false };
     std::atomic<bool> solo { false };
 
