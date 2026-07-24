@@ -39,6 +39,7 @@ juce_add_gui_app(IMI_KPlayer
         com.apple.security.cs.disable-library-validation
         com.apple.security.cs.allow-dyld-environment-variables
         com.apple.security.cs.allow-unsigned-executable-memory
+        com.apple.security.device.audio-input
     # 1024px full-bleed master art (do not pre-mask for macOS - it applies
     # its own squircle clip + shadow) and a pre-scaled 256px version; JUCE
     # generates the .icns/.ico from these at build time. Plugin binary
