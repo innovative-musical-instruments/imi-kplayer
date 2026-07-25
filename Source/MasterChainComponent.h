@@ -24,6 +24,15 @@ public:
     // Fired with the new linear gain whenever the user moves the fader.
     std::function<void(float linearGain)> onVolumeChanged;
 
+    // Multitrack recording (see RecordingManager) - MainComponent owns the
+    // arm/recording-active truth and is the one global transport for every
+    // armed channel and the master together; this component only reflects
+    // that state via setArmed()/setRecordingActive() and reports user
+    // clicks. The arm toggle is disabled while recording is active, same as
+    // a channel's own arm button.
+    std::function<void(bool armed)> onMasterArmToggled;
+    std::function<void()> onRecordButtonClicked;
+
     explicit MasterChainComponent(MasterChainProcessor& processor);
     ~MasterChainComponent() override;
 
@@ -48,6 +57,9 @@ public:
     // at once.
     void setTopSpacerHeight(int height);
 
+    void setArmed(bool shouldBeArmed);
+    void setRecordingActive(bool active);
+
 private:
     void showPluginSlotMenu(int slotIndex);
     void updateSlotButton(int slotIndex);
@@ -64,6 +76,12 @@ private:
     juce::Slider     volumeSlider;
     PeakMeterComponent leftLevelMeter;
     PeakMeterComponent rightLevelMeter;
+
+    juce::TextButton armButton;
+    juce::TextButton recordButton;
+    bool armed = false;
+    bool recordingActive = false;
+    void updateArmAndRecordButtons();
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MasterChainComponent)
 };

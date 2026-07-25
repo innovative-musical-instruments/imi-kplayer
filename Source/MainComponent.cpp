@@ -23,6 +23,7 @@ MainComponent::MainComponent(juce::AudioDeviceManager& dm, PluginManager& pm)
 {
     for (int i = 0; i < defaultChannelCount; ++i)
         addChannel(i);
+    recordingManager.setChannelCount(defaultChannelCount);
 
     channelViewport.setViewedComponent(&channelRackContent, false);
     channelViewport.setScrollBarsShown(false, true);
@@ -33,6 +34,38 @@ MainComponent::MainComponent(juce::AudioDeviceManager& dm, PluginManager& pm)
     masterChainComponent.onDirty         = [this] { notifyDirty(); };
     masterChainComponent.onVolumeChanged = [this](float linearGain) { masterVolume = linearGain; notifyDirty(); };
     masterChainProcessor.onBypassChanged = [this](int) { masterChainComponent.refresh(); };
+    masterChainComponent.onMasterArmToggled = [this](bool armed) { setMasterArmed(armed); notifyDirty(); };
+    masterChainComponent.onRecordButtonClicked = [this]
+    {
+        // Lazy prompt: ask for a recordings folder right here the first
+        // time it's needed, rather than requiring a trip to Settings first.
+        if (! recordingManager.isRecording() && recordingManager.getRecordingsFolder() == juce::File())
+        {
+            recordingFolderChooser = std::make_unique<juce::FileChooser>(
+                "Choose a folder for recordings",
+                juce::File::getSpecialLocation(juce::File::userMusicDirectory));
+
+            auto flags = juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories;
+            recordingFolderChooser->launchAsync(flags, [this](const juce::FileChooser& chooser)
+            {
+                auto result = chooser.getResult();
+                if (result == juce::File())
+                    return;
+
+                setRecordingsFolder(result);
+                notifyDirty();
+
+                auto error = toggleRecording();
+                if (error.isNotEmpty())
+                    juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, "Recording", error);
+            });
+            return;
+        }
+
+        auto error = toggleRecording();
+        if (error.isNotEmpty())
+            juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, "Recording", error);
+    };
     masterChainComponent.setLevelMeterSources(&masterPeakLeft, &masterPeakRight,
                                               &masterClipFlagLeft, &masterClipFlagRight);
     addAndMakeVisible(masterChainComponent);
@@ -65,14 +98,29 @@ MainComponent::MainComponent(juce::AudioDeviceManager& dm, PluginManager& pm)
     };
     addAndMakeVisible(tempoSyncComponent);
 
+    // Fires from RecordingManager's silence/disk-space watchdog (see
+    // timerCallback() -> pollForAutoStop()) - refresh the arm/recording
+    // visuals the same way a manual stop would, and forward the reason so
+    // the app-level owner (Main.cpp) can show it to the user.
+    recordingManager.onAutoStopped = [this](juce::String reason)
+    {
+        refreshRecordingUI();
+        if (onRecordingStateChanged) onRecordingStateChanged(reason);
+    };
+
     deviceManager.addAudioCallback(this);
 
     enableAllMidiInputs();
+    refreshKadabraDeviceIdentifier();
 
     // Devices connected/disconnected after launch never got a callback
     // registered at all otherwise - re-enable/register on every device-list
     // change rather than only once at startup.
-    midiDeviceListConnection = juce::MidiDeviceListConnection::make([this] { enableAllMidiInputs(); });
+    midiDeviceListConnection = juce::MidiDeviceListConnection::make([this]
+    {
+        enableAllMidiInputs();
+        refreshKadabraDeviceIdentifier();
+    });
 
     loadingOverlay = std::make_unique<LoadingOverlayComponent>();
     addAndMakeVisible(loadingOverlay.get());
@@ -128,6 +176,7 @@ void MainComponent::addChannel(int index)
     component->onReplacePlugin = [this, index](int slot) { showPluginBrowser(index, slot, true);  };
     component->onDirty         = [this] { notifyDirty(); };
     processor->onBypassChanged = [this, index](int) { channelComponents[(size_t) index]->refresh(); };
+    component->onArmToggled    = [this, index](bool armed) { setChannelArmed(index, armed); notifyDirty(); };
     component->setInputSectionCollapsed(inputSectionCollapsed);
     channelRackContent.addAndMakeVisible(component.get());
 
@@ -159,6 +208,8 @@ void MainComponent::setChannelCount(int newCount)
         channelComponents.resize((size_t) newCount);
         channelProcessors.resize((size_t) newCount);
     }
+
+    recordingManager.setChannelCount(newCount);
 
     deviceManager.addAudioCallback(this);
     resized();
@@ -199,6 +250,13 @@ void MainComponent::enableAllMidiInputs()
     }
 }
 
+void MainComponent::refreshKadabraDeviceIdentifier()
+{
+    auto id = findKadabraMidiDeviceIdentifier();
+    const juce::ScopedLock sl(kadabraDeviceLock);
+    kadabraDeviceIdentifier = id;
+}
+
 MainComponent::~MainComponent()
 {
     stopTimer();
@@ -235,8 +293,48 @@ void MainComponent::timerCallback()
             channelComponents[i]->refresh();
             anyDirty = true;
         }
+
+        // A MIDI CC84-89 message just bypassed/activated a slot (see
+        // ChannelProcessor::processBlock) - sync any open editor window's
+        // bypass bar and the slot buttons to match, and mark dirty the same
+        // as the slot's own context-menu bypass toggle would.
+        if (processor->consumeBypassChangedByMidi())
+        {
+            processor->syncBypassIndicatorsFromMidi();
+            channelComponents[i]->refresh();
+            anyDirty = true;
+        }
+
+        // A MIDI CC103 message just requested this channel be armed/disarmed
+        // for recording (see ChannelProcessor::processBlock) - setChannelArmed()
+        // already pushes the UI update itself, same path the channel's own
+        // arm button uses, so nothing further to do here besides marking dirty.
+        bool requestedArmed = false;
+        if (processor->consumeArmChangedByMidi(requestedArmed))
+        {
+            setChannelArmed((int) i, requestedArmed);
+            anyDirty = true;
+        }
     }
     anyDirty |= masterChainProcessor.consumeParametersDirtyFlag();
+
+    // Master-level commands on the Kadabra port's MIDI channel 16 (see
+    // audioDeviceIOCallbackWithContext) - level-based, only acted on when
+    // they actually disagree with the current state, so a continuously-
+    // streaming controller (e.g. Kadabra motion) re-sending the same value
+    // doesn't repeatedly re-trigger a start/stop or arm/disarm.
+    if (masterArmChangedByMidi.exchange(false, std::memory_order_relaxed))
+    {
+        setMasterArmed(pendingMasterArmValueFromMidi.load(std::memory_order_relaxed));
+        anyDirty = true;
+    }
+
+    if (recordStateChangedByMidi.exchange(false, std::memory_order_relaxed))
+    {
+        bool desiredRecording = pendingRecordStateValueFromMidi.load(std::memory_order_relaxed);
+        if (desiredRecording != recordingManager.isRecording())
+            toggleRecording(); // MIDI-triggered failures fail quietly, same as a live-arm track-creation failure - see RecordingManager::setChannelArmed's comment
+    }
 
     if (anyDirty)
         notifyDirty();
@@ -252,6 +350,15 @@ void MainComponent::timerCallback()
         if (hasSignal && tempoClockDetector.hasLockedTempo())
             setGlobalTempo(tempoClockDetector.getBpm());
     }
+
+    recordingManager.pollForAutoStop();
+}
+
+void MainComponent::discardIncidentalDirtyFlags()
+{
+    for (auto& processor : channelProcessors)
+        processor->consumeParametersDirtyFlag();
+    masterChainProcessor.consumeParametersDirtyFlag();
 }
 
 void MainComponent::setGlobalTempo(double bpm)
@@ -285,6 +392,52 @@ void MainComponent::setMasterVolume(float linearGain)
 {
     masterVolume = linearGain;
     masterChainComponent.setVolume(linearGain);
+}
+
+void MainComponent::setChannelArmed(int channelIndex, bool armed)
+{
+    // Deliberately does not call notifyDirty() itself - SessionIO::loadSession
+    // calls this directly to restore saved arm state, and must not leave the
+    // just-loaded session marked dirty (same convention as setGlobalTempo/
+    // setTempoSyncEnabled). The UI-driven callback site marks dirty instead.
+    recordingManager.setChannelArmed(channelIndex, armed);
+    if (channelIndex >= 0 && channelIndex < (int) channelComponents.size())
+        channelComponents[(size_t) channelIndex]->setArmed(armed);
+}
+
+void MainComponent::setMasterArmed(bool armed)
+{
+    // See setChannelArmed() above for why this doesn't self-mark dirty.
+    recordingManager.setMasterArmed(armed);
+    masterChainComponent.setArmed(armed);
+}
+
+juce::String MainComponent::toggleRecording()
+{
+    if (recordingManager.isRecording())
+    {
+        recordingManager.stopRecording();
+        refreshRecordingUI();
+        return {};
+    }
+
+    // Both writers are always requested at 2 channels - the app's audio
+    // device selector (see SettingsComponent) is hardcoded to exactly 2
+    // output channels, so channelScratch/masterBuffer are always stereo.
+    auto* device = deviceManager.getCurrentAudioDevice();
+    double sampleRate = device != nullptr ? device->getCurrentSampleRate() : currentSampleRate;
+
+    auto error = recordingManager.startRecording(sampleRate, 2, 2);
+    refreshRecordingUI();
+    return error;
+}
+
+void MainComponent::refreshRecordingUI()
+{
+    bool active = recordingManager.isRecording();
+    for (auto& c : channelComponents)
+        c->setRecordingActive(active);
+    masterChainComponent.setRecordingActive(active);
 }
 
 void MainComponent::showPluginBrowser(int channelIndex, int slotIndex, bool isReplace)
@@ -437,6 +590,41 @@ void MainComponent::audioDeviceIOCallbackWithContext(
         midiSnapshot.swap(pendingMidiByDevice);
     }
 
+    // Master-level MIDI commands: arm = CC104, record start/stop = CC102,
+    // reserved on MIDI channel 16 of the Kadabra port specifically (not any
+    // device's channel 16 - master has no per-channel device selector of
+    // its own to scope this by, so it's tied to the same port the
+    // channel-auto-assign scheme already treats as "the" Kadabra input).
+    // Only reports the request here (audio thread) - timerCallback() is
+    // what actually calls setMasterArmed()/toggleRecording(), since those
+    // touch juce::Component state that must stay on the message thread.
+    auto kadabraId = getKadabraDeviceIdentifier();
+    if (kadabraId.isNotEmpty())
+    {
+        auto it = midiSnapshot.find(kadabraId);
+        if (it != midiSnapshot.end())
+        {
+            for (auto meta : it->second)
+            {
+                auto msg = meta.getMessage();
+                if (! msg.isController() || msg.getChannel() != 16)
+                    continue;
+
+                int cc = msg.getControllerNumber();
+                if (cc == 104)
+                {
+                    pendingMasterArmValueFromMidi.store(msg.getControllerValue() >= 64, std::memory_order_relaxed);
+                    masterArmChangedByMidi.store(true, std::memory_order_relaxed);
+                }
+                else if (cc == 102)
+                {
+                    pendingRecordStateValueFromMidi.store(msg.getControllerValue() >= 64, std::memory_order_relaxed);
+                    recordStateChangedByMidi.store(true, std::memory_order_relaxed);
+                }
+            }
+        }
+    }
+
     bool anySolo = false;
     for (auto& channel : channelProcessors)
     {
@@ -447,8 +635,9 @@ void MainComponent::audioDeviceIOCallbackWithContext(
         }
     }
 
-    for (auto& channel : channelProcessors)
+    for (int channelIndex = 0; channelIndex < (int) channelProcessors.size(); ++channelIndex)
     {
+        auto& channel = channelProcessors[(size_t) channelIndex];
         channelScratch.clear();
 
         // Audio input routing (Increment 3 item 8): feed the selected
@@ -477,6 +666,11 @@ void MainComponent::audioDeviceIOCallbackWithContext(
 
         channel->processBlock(channelScratch, channelMidi);
 
+        // Tapped post-plugin-chain/gain/pan, pre-mute (see RecordingManager's
+        // header comment) - a recorded take shouldn't silently gap because a
+        // channel was muted for monitoring purposes only.
+        recordingManager.writeChannelBlock(channelIndex, channelScratch);
+
         bool audible = ! channel->isMuted() && (! anySolo || channel->isSolo());
         if (audible)
             for (int ch = 0; ch < numOutputChannels; ++ch)
@@ -485,6 +679,11 @@ void MainComponent::audioDeviceIOCallbackWithContext(
 
     masterChainProcessor.processBlock(masterBuffer);
     masterBuffer.applyGain(masterVolume);
+
+    // Post-volume: what the master fader actually delivers, matching "the
+    // master will deliver the full mix" from the feature's original ask.
+    recordingManager.writeMasterBlock(masterBuffer);
+    recordingManager.noteBlockProcessed(numSamples);
 
     float peakL = masterBuffer.getMagnitude(0, 0, numSamples);
     float peakR = numOutputChannels > 1

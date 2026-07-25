@@ -156,6 +156,37 @@ public:
     // to match and marks the session dirty (same as a manual fader drag).
     bool consumeGainChangedByMidi() { return gainChangedByMidi.exchange(false, std::memory_order_relaxed); }
 
+    // Set (from the audio thread) whenever an incoming MIDI CC84-89 message
+    // bypasses/activates a slot (see processBlock) - same message-thread
+    // Timer poll pattern as consumeGainChangedByMidi() above. This only
+    // says *something* changed, not which slot; syncBypassIndicatorsFromMidi()
+    // below re-syncs every slot in one cheap pass (only 6 of them) once
+    // polled, since processBlock can't call setBypassed() itself - that
+    // touches juce::Component state (an open editor window's bypass bar,
+    // see PluginEditorWindow::setBypassedIndicator()) which must only ever
+    // be touched from the message thread. slots[i].bypassed itself is
+    // written directly in processBlock, the same plain-value, single-writer-
+    // at-a-time convention already accepted for gain/pan (see setGain()).
+    bool consumeBypassChangedByMidi() { return bypassChangedByMidi.exchange(false, std::memory_order_relaxed); }
+    void syncBypassIndicatorsFromMidi();
+
+    // Set (from the audio thread) whenever an incoming MIDI CC103 message
+    // requests this channel be armed/disarmed for recording (see
+    // processBlock). ChannelProcessor has no reference to RecordingManager
+    // or even its own channel index, so it can only report the *request* -
+    // MainComponent's message-thread Timer poll consumes this and calls its
+    // own setChannelArmed(index, ...), the same path the channel's own arm
+    // button uses. Returns false (armedOut left untouched) if nothing is
+    // pending, matching the exchange-and-reset pattern used throughout this
+    // class rather than a separate has/get pair.
+    bool consumeArmChangedByMidi(bool& armedOut)
+    {
+        if (! armChangedByMidi.exchange(false, std::memory_order_relaxed))
+            return false;
+        armedOut = pendingArmValueFromMidi.load(std::memory_order_relaxed);
+        return true;
+    }
+
 private:
     void audioProcessorParameterChanged(juce::AudioProcessor*, int, float) override
     {
@@ -169,6 +200,9 @@ private:
 
     std::atomic<bool> parametersDirty { false };
     std::atomic<bool> gainChangedByMidi { false };
+    std::atomic<bool> bypassChangedByMidi { false };
+    std::atomic<bool> armChangedByMidi { false };
+    std::atomic<bool> pendingArmValueFromMidi { false };
 
     struct Slot
     {

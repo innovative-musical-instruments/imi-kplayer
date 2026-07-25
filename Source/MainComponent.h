@@ -15,6 +15,7 @@
 #include "SessionMigrator.h"
 #include "TempoSyncComponent.h"
 #include "MidiClockTempoDetector.h"
+#include "RecordingManager.h"
 
 class MainComponent : public juce::Component,
                       public juce::AudioIODeviceCallback,
@@ -62,6 +63,34 @@ public:
     juce::String getTempoSyncDeviceIdentifier() const { return tempoSyncDeviceIdentifier; }
     void setTempoSyncDeviceIdentifier(juce::String identifier);
 
+    // Multitrack recording (RecordingManager owns the actual engine/state -
+    // see its header for the full design). Arming is per-source and purely
+    // a selection; toggleRecording() is the one global transport action
+    // that starts/stops every currently-armed source together as a single
+    // take. Folder/timeout are session-persisted, like tempo.
+    void setChannelArmed(int channelIndex, bool armed);
+    bool isChannelArmed(int channelIndex) const { return recordingManager.isChannelArmed(channelIndex); }
+    void setMasterArmed(bool armed);
+    bool isMasterArmed() const { return recordingManager.isMasterArmed(); }
+
+    // Starts if not currently recording, stops if it is. Returns an empty
+    // string on success (including "was already in that state" no-ops), or
+    // a user-facing reason on failure - callers show it directly.
+    juce::String toggleRecording();
+    bool isRecording() const { return recordingManager.isRecording(); }
+    double getRecordingElapsedSeconds() const { return recordingManager.getRecordingElapsedSeconds(); }
+
+    void setRecordingsFolder(const juce::File& folder) { recordingManager.setRecordingsFolder(folder); }
+    juce::File getRecordingsFolder() const { return recordingManager.getRecordingsFolder(); }
+    void setRecordingSilenceTimeoutSeconds(double seconds) { recordingManager.setSilenceTimeoutSeconds(seconds); }
+    double getRecordingSilenceTimeoutSeconds() const { return recordingManager.getSilenceTimeoutSeconds(); }
+
+    // Fired whenever recording starts/stops/auto-stops, so the channel-strip
+    // and master-column UI can refresh their arm/recording-active visuals
+    // without polling - reason is non-empty only for an auto-stop (silence
+    // timeout or low disk space), for a message the caller can show the user.
+    std::function<void(juce::String reason)> onRecordingStateChanged;
+
     // Window size round-trips through the session the same way tempo does:
     // MainWindow (which actually owns the DocumentWindow) writes its current
     // size here right before SessionIO::saveSession(), and reads it back
@@ -100,6 +129,25 @@ public:
     // rather than through these UI-facing paths.
     std::function<void()> onDirty;
     void notifyDirty() { if (onDirty) onDirty(); }
+
+    // Drains every channel/master-chain plugin's parametersDirty flag
+    // *without* calling notifyDirty() - called by the app-level owner right
+    // after a successful save (or load) to discard any flag a plugin might
+    // have set as an incidental side effect of being queried during that
+    // same save/load (some plugins fire their own change-notification
+    // internally from inside getStateInformation()/setStateInformation()).
+    // Since the save/load itself runs synchronously on the message thread,
+    // nothing else could have set the flag in that window, so discarding it
+    // here is always safe.
+    //
+    // Deliberately no suppression window after this: live MIDI-driven
+    // parameter changes (e.g. Kadabra motion control continuously steering
+    // a loaded plugin) are a real, intended way to keep dirtying the
+    // session mid-performance, and briefly holding back the indicator right
+    // after a save would hide exactly that - see the session's earlier
+    // discussion of why the "flag reappears immediately after saving"
+    // behavior turned out to be correct, not a bug.
+    void discardIncidentalDirtyFlags();
 
     // Session-format round-trip bookkeeping for SessionIO (spec §4.5/§5):
     // remembers the formatVersion and any unrecognized top-level fields from
@@ -158,6 +206,40 @@ private:
     bool tempoSyncEnabled = false;
     juce::String tempoSyncDeviceIdentifier;
 
+    RecordingManager recordingManager;
+    // Kept alive for the duration of the lazy folder-picker prompt shown
+    // when Record is clicked with no recordings folder configured yet (see
+    // toggleRecording()'s caller in the constructor) - JUCE's FileChooser
+    // must outlive the async dialog itself.
+    std::unique_ptr<juce::FileChooser> recordingFolderChooser;
+
+    // Master-level MIDI commands (arm = CC104, record start/stop = CC102),
+    // reserved on MIDI channel 16 of the Kadabra port specifically - written
+    // from the audio thread in audioDeviceIOCallbackWithContext(), consumed
+    // by timerCallback() the same exchange-and-reset pattern as every other
+    // MIDI-driven flag in this app.
+    std::atomic<bool> masterArmChangedByMidi { false };
+    std::atomic<bool> pendingMasterArmValueFromMidi { false };
+    std::atomic<bool> recordStateChangedByMidi { false };
+    std::atomic<bool> pendingRecordStateValueFromMidi { false };
+
+    // Cached identifier of the first connected MIDI device whose name
+    // contains "kadabra" (see findKadabraMidiDeviceIdentifier() in
+    // MainComponent.cpp), refreshed on construction and on every device-list
+    // change - reading juce::String directly on the audio thread isn't
+    // safe (it's not lock-free), so this mirrors ChannelProcessor's own
+    // midiDeviceIdentifier/midiDeviceLock pattern rather than re-deriving it
+    // from juce::MidiInput::getAvailableDevices() (allocates, far too heavy
+    // to call every audio block) each time it's needed there.
+    mutable juce::CriticalSection kadabraDeviceLock;
+    juce::String kadabraDeviceIdentifier;
+    void refreshKadabraDeviceIdentifier();
+    juce::String getKadabraDeviceIdentifier() const
+    {
+        const juce::ScopedLock sl(kadabraDeviceLock);
+        return kadabraDeviceIdentifier;
+    }
+
     // Single global toggle (not per-channel) that collapses/expands the
     // Audio In/MIDI In/MIDI Ch rows on every channel strip at once - lives
     // in the master column so it's visible regardless of channel-rack
@@ -211,6 +293,7 @@ private:
     void enableAllMidiInputs();
 
     void addChannel(int index);
+    void refreshRecordingUI();
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MainComponent)
 };

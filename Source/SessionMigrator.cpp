@@ -20,6 +20,7 @@ const std::vector<SessionMigrator::MigrationStep>& SessionMigrator::getMigration
         migrate_v0_to_v1,
         migrate_v1_to_v2,
         migrate_v2_to_v3,
+        migrate_v3_to_v4,
     };
     return chain;
 }
@@ -74,5 +75,29 @@ juce::var SessionMigrator::migrate_v2_to_v3(const juce::var& v2Json)
         obj->setProperty("tempoSyncDeviceIdentifier", juce::String());
 
     obj->setProperty("formatVersion", 3);
+    return upgraded;
+}
+
+// Adds multitrack recording (arm state + the global recordings folder/
+// silence-timeout preference). Per-channel "armed" defaults to false via
+// applyChannelVar's own getProperty() fallback (same as every other
+// per-channel field, e.g. mute/solo) - no per-channel migration needed here,
+// only the new top-level fields.
+juce::var SessionMigrator::migrate_v3_to_v4(const juce::var& v3Json)
+{
+    auto upgraded = v3Json.clone();
+    auto* obj = upgraded.getDynamicObject();
+    jassert(obj != nullptr);
+
+    if (! upgraded.hasProperty("recordingsFolder"))
+        obj->setProperty("recordingsFolder", juce::String());
+
+    if (! upgraded.hasProperty("recordingSilenceTimeoutSeconds"))
+        obj->setProperty("recordingSilenceTimeoutSeconds", 60.0);
+
+    if (! upgraded.hasProperty("masterArmed"))
+        obj->setProperty("masterArmed", false);
+
+    obj->setProperty("formatVersion", 4);
     return upgraded;
 }

@@ -195,6 +195,16 @@ ChannelComponent::ChannelComponent(ChannelProcessor& p, juce::AudioDeviceManager
     };
     addAndMakeVisible(soloButton);
 
+    armButton.setButtonText(juce::String::charToString((juce::juce_wchar) 0x25CF)); // "●"
+    armButton.onClick = [this]
+    {
+        armed = ! armed;
+        updateArmButton();
+        if (onArmToggled) onArmToggled(armed);
+    };
+    updateArmButton();
+    addAndMakeVisible(armButton);
+
     setSize(80, 700);
 
     updateMidiDeviceWarning();
@@ -332,6 +342,36 @@ void ChannelComponent::setInputSectionCollapsed(bool collapsed)
     inputCollapsed = collapsed;
     resized();
     repaint();
+}
+
+void ChannelComponent::setArmed(bool shouldBeArmed)
+{
+    armed = shouldBeArmed;
+    updateArmButton();
+}
+
+void ChannelComponent::setRecordingActive(bool active)
+{
+    recordingActive = active;
+    // Arming/unarming while active takes effect immediately (see
+    // RecordingManager::setChannelArmed) - arming now starts a fresh file
+    // for this channel from this point on, as if it had just been forgotten
+    // and only now remembered.
+    updateArmButton();
+}
+
+void ChannelComponent::updateArmButton()
+{
+    bool live = armed && recordingActive;
+    armButton.setColour(juce::TextButton::buttonColourId,
+                        live  ? juce::Colours::red
+                              : armed ? juce::Colour(0xff7a2020)
+                                      : juce::Colour(0xff2a2a3e));
+    armButton.setColour(juce::TextButton::textColourOffId,
+                        armed ? juce::Colours::white : juce::Colour(0xffaaaaaa));
+    armButton.setTooltip(live  ? "Recording"
+                              : armed ? "Armed to record"
+                                      : "Arm for recording");
 }
 
 // Fixed "Channel N" default, or "N. CustomName" once the user has renamed
@@ -592,4 +632,7 @@ void ChannelComponent::resized()
     auto muteSoloArea = bottomArea.removeFromTop(24);
     muteButton.setBounds(muteSoloArea.removeFromLeft(muteSoloArea.getWidth() / 2).reduced(4, 0));
     soloButton.setBounds(muteSoloArea.reduced(4, 0));
+
+    bottomArea.removeFromTop(4);
+    armButton.setBounds(bottomArea.reduced(4, 0));
 }

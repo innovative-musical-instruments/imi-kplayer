@@ -9,7 +9,7 @@
 class SessionMigrator
 {
 public:
-    static constexpr int kCurrentFormatVersion = 3;
+    static constexpr int kCurrentFormatVersion = 4;
 
     // Mutates sessionJson in place, upgrading it to kCurrentFormatVersion.
     // Fails if sessionJson's formatVersion is negative or already newer than
@@ -26,4 +26,5 @@ private:
     static juce::var migrate_v0_to_v1(const juce::var& v0Json);
     static juce::var migrate_v1_to_v2(const juce::var& v1Json);
     static juce::var migrate_v2_to_v3(const juce::var& v2Json);
+    static juce::var migrate_v3_to_v4(const juce::var& v3Json);
 };

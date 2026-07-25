@@ -26,6 +26,13 @@ public:
     // complete once MainComponent's plugin browser callback runs.
     std::function<void()> onDirty;
 
+    // Multitrack recording (see RecordingManager) - MainComponent owns the
+    // arm/recording-active truth; this component only reflects it via
+    // setArmed()/setRecordingActive() and reports the user clicking the arm
+    // toggle. The toggle is disabled while recording is active - arm
+    // selection only applies to the *next* take, not the one in progress.
+    std::function<void(bool armed)> onArmToggled;
+
     // deviceManager is needed to enumerate active audio input channels for
     // the audio-input selector (Increment 3 item 8) and to be notified when
     // the active device/channel set changes (AudioDeviceManager is a
@@ -56,6 +63,9 @@ public:
     // MainComponent) - hides the Audio In/MIDI In/MIDI Ch rows, leaving the
     // channel name visible. Purely a view preference, not session state.
     void setInputSectionCollapsed(bool collapsed);
+
+    void setArmed(bool shouldBeArmed);
+    void setRecordingActive(bool active);
 
     void sliderValueChanged(juce::Slider* slider) override;
     void comboBoxChanged(juce::ComboBox* combo) override;
@@ -113,6 +123,11 @@ private:
 
     juce::TextButton muteButton;
     juce::TextButton soloButton;
+
+    juce::TextButton armButton;
+    bool armed = false;
+    bool recordingActive = false;
+    void updateArmButton();
 
     void showPluginSlotMenu(int slotIndex);
     void updateSlotButton(int slotIndex);

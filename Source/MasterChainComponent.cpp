@@ -60,6 +60,21 @@ MasterChainComponent::MasterChainComponent(MasterChainProcessor& p)
 
     addAndMakeVisible(leftLevelMeter);
     addAndMakeVisible(rightLevelMeter);
+
+    armButton.setButtonText("ARM");
+    armButton.onClick = [this]
+    {
+        armed = ! armed;
+        updateArmAndRecordButtons();
+        if (onMasterArmToggled) onMasterArmToggled(armed);
+    };
+    addAndMakeVisible(armButton);
+
+    recordButton.setButtonText(juce::String::charToString((juce::juce_wchar) 0x25CF) + " REC");
+    recordButton.onClick = [this] { if (onRecordButtonClicked) onRecordButtonClicked(); };
+    addAndMakeVisible(recordButton);
+
+    updateArmAndRecordButtons();
 }
 
 MasterChainComponent::~MasterChainComponent()
@@ -79,6 +94,35 @@ void MasterChainComponent::setTopSpacerHeight(int height)
         return;
     topSpacerHeight = height;
     resized();
+}
+
+void MasterChainComponent::setArmed(bool shouldBeArmed)
+{
+    armed = shouldBeArmed;
+    updateArmAndRecordButtons();
+}
+
+void MasterChainComponent::setRecordingActive(bool active)
+{
+    recordingActive = active;
+    // Arming/unarming while active takes effect immediately (see
+    // RecordingManager::setMasterArmed), same as a channel's own arm button.
+    updateArmAndRecordButtons();
+}
+
+void MasterChainComponent::updateArmAndRecordButtons()
+{
+    armButton.setColour(juce::TextButton::buttonColourId,
+                        armed ? juce::Colour(0xff7a2020) : juce::Colour(0xff2a2a3e));
+    armButton.setColour(juce::TextButton::textColourOffId,
+                        armed ? juce::Colours::white : juce::Colour(0xffaaaaaa));
+    armButton.setTooltip(armed ? "Master is armed to record" : "Arm master output for recording");
+
+    recordButton.setColour(juce::TextButton::buttonColourId,
+                           recordingActive ? juce::Colours::red : juce::Colour(0xff2a2a3e));
+    recordButton.setColour(juce::TextButton::textColourOffId,
+                           recordingActive ? juce::Colours::white : juce::Colour(0xffaaaaaa));
+    recordButton.setTooltip(recordingActive ? "Stop recording" : "Start recording every armed channel/master");
 }
 
 void MasterChainComponent::setLevelMeterSources(const std::atomic<float>* leftLevel,
@@ -196,6 +240,14 @@ void MasterChainComponent::resized()
             area.removeFromTop(3);
     }
     area.removeFromTop(16);
+
+    // ---- Record: arm + global transport, below the fader/meters. Carved
+    // from the bottom of what's left, shrinking the fader/meters below to
+    // accommodate (per-request - there was no free space here otherwise).
+    auto recordArea = area.removeFromBottom(24);
+    area.removeFromBottom(6);
+    armButton.setBounds(recordArea.removeFromLeft(recordArea.getWidth() / 2).reduced(2, 0));
+    recordButton.setBounds(recordArea.reduced(2, 0));
 
     auto leftMeterArea = area.removeFromLeft(16);
     area.removeFromLeft(4);

@@ -180,6 +180,16 @@ void ChannelProcessor::setBypassed(int slotIndex, bool shouldBeBypassed)
     if (onBypassChanged) onBypassChanged(slotIndex);
 }
 
+void ChannelProcessor::syncBypassIndicatorsFromMidi()
+{
+    for (int i = 0; i < totalSlotCount; ++i)
+    {
+        auto& slot = slots[(size_t) i];
+        if (auto* window = dynamic_cast<PluginEditorWindow*>(slot.editorWindow.get()))
+            window->setBypassedIndicator(slot.bypassed);
+    }
+}
+
 bool ChannelProcessor::isBypassed(int slotIndex) const
 {
     return slots[(size_t) slotIndex].bypassed;
@@ -197,23 +207,46 @@ void ChannelProcessor::prepareToPlay(double sampleRate, int blockSize)
 void ChannelProcessor::processBlock(juce::AudioBuffer<float>& buffer,
                                      juce::MidiBuffer& midi)
 {
-    // Channel volume via MIDI CC7: scanned unconditionally, even with
-    // nothing loaded in slot 0, since gain should be controllable regardless
-    // of what else the channel is doing. Same channel-matching rule as the
-    // plugin-forwarding filter below - "All" (midiChannel == 0) matches any
-    // channel, otherwise only messages on midiChannel itself. `midi` here is
-    // already this channel's own per-device buffer (MainComponent only
-    // hands it messages from the assigned MIDI device), so no separate
-    // device check is needed.
+    // Channel volume via MIDI CC7, per-slot bypass/activate via MIDI CC84-89
+    // (CC 84+slotIndex, value <64 = bypass, >=64 = active), and record
+    // arm/disarm via CC103 (<64 = disarm, >=64 = arm): scanned
+    // unconditionally, even with nothing loaded, since all three should be
+    // controllable regardless of what else the channel is doing. Same
+    // channel-matching rule as the plugin-forwarding filter below - "All"
+    // (midiChannel == 0) matches any channel, otherwise only messages on
+    // midiChannel itself. `midi` here is already this channel's own
+    // per-device buffer (MainComponent only hands it messages from the
+    // assigned MIDI device), so no separate device check is needed.
     for (auto meta : midi)
     {
         auto msg = meta.getMessage();
-        if (msg.isController() && msg.getControllerNumber() == 7
-            && (midiChannel == 0 || msg.getChannel() == midiChannel))
+        if (! msg.isController() || ! (midiChannel == 0 || msg.getChannel() == midiChannel))
+            continue;
+
+        int cc = msg.getControllerNumber();
+        if (cc == 7)
         {
             double dB = normalisedToGainDb(msg.getControllerValue() / 127.0);
             setGain(dB <= -96.0 ? 0.0f : (float) juce::Decibels::decibelsToGain(dB));
             gainChangedByMidi.store(true, std::memory_order_relaxed);
+        }
+        else if (cc >= 84 && cc < 84 + totalSlotCount)
+        {
+            // Written directly here rather than through setBypassed() - that
+            // touches juce::Component state (an open editor window's bypass
+            // bar) that must only ever be touched from the message thread.
+            // syncBypassIndicatorsFromMidi() finishes the job once
+            // bypassChangedByMidi is polled there.
+            slots[(size_t) (cc - 84)].bypassed = msg.getControllerValue() < 64;
+            bypassChangedByMidi.store(true, std::memory_order_relaxed);
+        }
+        else if (cc == 103)
+        {
+            // Record arm/disarm - ChannelProcessor can't act on this itself
+            // (no reference to RecordingManager or its own channel index),
+            // just reports the request; see consumeArmChangedByMidi().
+            pendingArmValueFromMidi.store(msg.getControllerValue() >= 64, std::memory_order_relaxed);
+            armChangedByMidi.store(true, std::memory_order_relaxed);
         }
     }
 

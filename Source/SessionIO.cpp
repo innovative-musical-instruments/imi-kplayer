@@ -207,9 +207,18 @@ bool SessionIO::saveSession(const juce::File& file,
     root->setProperty("tempoSyncEnabled", mainComponent.isTempoSyncEnabled());
     root->setProperty("tempoSyncDeviceIdentifier", mainComponent.getTempoSyncDeviceIdentifier());
 
+    root->setProperty("recordingsFolder", mainComponent.getRecordingsFolder().getFullPathName());
+    root->setProperty("recordingSilenceTimeoutSeconds", mainComponent.getRecordingSilenceTimeoutSeconds());
+    root->setProperty("masterArmed", mainComponent.isMasterArmed());
+
     juce::Array<juce::var> channelArray;
     for (int i = 0; i < mainComponent.getNumChannels(); ++i)
-        channelArray.add(channelToVar(mainComponent.getChannelProcessor(i)));
+    {
+        auto channelVar = channelToVar(mainComponent.getChannelProcessor(i));
+        if (auto* obj = channelVar.getDynamicObject())
+            obj->setProperty("armed", mainComponent.isChannelArmed(i));
+        channelArray.add(channelVar);
+    }
     root->setProperty("channels", channelArray);
 
     root->setProperty("masterChain", masterChainToVar(mainComponent.getMasterChainProcessor()));
@@ -268,6 +277,11 @@ bool SessionIO::loadSession(const juce::File& file,
     mainComponent.setGlobalTempo((double) parsed.getProperty("tempo", 120.0));
     mainComponent.setTempoSyncDeviceIdentifier(parsed.getProperty("tempoSyncDeviceIdentifier", juce::String()).toString());
     mainComponent.setTempoSyncEnabled((bool) parsed.getProperty("tempoSyncEnabled", false));
+
+    mainComponent.setRecordingsFolder(juce::File(parsed.getProperty("recordingsFolder", juce::String()).toString()));
+    mainComponent.setRecordingSilenceTimeoutSeconds((double) parsed.getProperty("recordingSilenceTimeoutSeconds", 60.0));
+    mainComponent.setMasterArmed((bool) parsed.getProperty("masterArmed", false));
+
     mainComponent.setWindowSize((int) parsed.getProperty("windowWidth", 0),
                                 (int) parsed.getProperty("windowHeight", 0));
     mainComponent.setInputSectionCollapsedState((bool) parsed.getProperty("inputSectionCollapsed", false));
@@ -286,8 +300,10 @@ bool SessionIO::loadSession(const juce::File& file,
         mainComponent.setChannelCount(count);
         for (int i = 0; i < count; ++i)
         {
-            applyChannelVar(mainComponent.getChannelProcessor(i), channelArray->getReference(i),
+            auto& channelVar = channelArray->getReference(i);
+            applyChannelVar(mainComponent.getChannelProcessor(i), channelVar,
                             pluginManager.getFormatManager(), sampleRate, blockSize, i);
+            mainComponent.setChannelArmed(i, (bool) channelVar.getProperty("armed", false));
             mainComponent.refreshChannelUI(i);
         }
     }

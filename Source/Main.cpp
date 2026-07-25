@@ -281,6 +281,15 @@ public:
         {
             sessionDirty = false;
             updateWindowTitle();
+
+            // Save/load both run synchronously, and can incidentally leave a
+            // plugin's parametersDirty flag set as a side effect of querying/
+            // restoring its state (some plugins fire their own change
+            // notification internally from getStateInformation()/
+            // setStateInformation()) - discard it here so the very next
+            // 300ms timer poll doesn't immediately re-mark the session dirty
+            // for a "change" that was really just this save/load itself.
+            mainComponent->discardIncidentalDirtyFlags();
         }
 
         void updateWindowTitle()
@@ -437,7 +446,11 @@ public:
             auto* settings = new SettingsComponent(deviceManager,
                                                     mainComponent->getNumChannels(),
                                                     MainComponent::maxChannels,
-                                                    [this](int newCount) { requestChannelCountChange(newCount); });
+                                                    [this](int newCount) { requestChannelCountChange(newCount); },
+                                                    mainComponent->getRecordingsFolder(),
+                                                    mainComponent->getRecordingSilenceTimeoutSeconds(),
+                                                    [this](juce::File folder) { mainComponent->setRecordingsFolder(folder); markDirty(); },
+                                                    [this](double seconds) { mainComponent->setRecordingSilenceTimeoutSeconds(seconds); markDirty(); });
             activeSettings = settings;
 
             juce::DialogWindow::LaunchOptions opts;

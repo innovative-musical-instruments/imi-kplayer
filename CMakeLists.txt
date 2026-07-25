@@ -100,6 +100,8 @@ target_sources(IMI_KPlayer PRIVATE
     Source/TempoSyncComponent.cpp
     Source/TempoSyncComponent.h
     Source/MidiClockTempoDetector.h
+    Source/RecordingManager.cpp
+    Source/RecordingManager.h
     Source/ConsoleFaderLookAndFeel.h
     Source/LoadingOverlayComponent.h
     Source/SessionIO.cpp
