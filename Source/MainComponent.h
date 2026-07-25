@@ -291,6 +291,11 @@ private:
 
     juce::MidiDeviceListConnection midiDeviceListConnection;
     void enableAllMidiInputs();
+    // Snapshot of device identifiers seen the last time enableAllMidiInputs()
+    // ran - lets it tell "just disappeared" apart from "was never here",
+    // which is what makes a later reconnect actually reopen the MIDI stream
+    // rather than silently no-op (see enableAllMidiInputs()'s own comment).
+    juce::StringArray previouslyAvailableMidiInputIds;
 
     void addChannel(int index);
     void refreshRecordingUI();

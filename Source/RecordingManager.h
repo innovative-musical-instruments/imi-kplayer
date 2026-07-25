@@ -115,6 +115,21 @@ private:
 
     std::unique_ptr<RecordingTrack> createTrack(const juce::File& file, double sampleRate, int numChannels);
 
+    // Returns folder/baseName.wav, or folder/"baseName (2).wav", (3), etc.
+    // if that's already taken - never returns a path that already exists.
+    // Needed because juce::File's underlying FileOutputStream opens an
+    // existing file O_RDWR and appends at the end rather than truncating,
+    // so reusing a path a previous segment already finalized would corrupt
+    // it (a stray RIFF/fmt/data header stamped mid-file) instead of losing
+    // data cleanly. This can happen two ways: re-arming a channel/master
+    // mid-take (a second segment for the same source in the same take
+    // folder), or two takes starting within the same wall-clock second
+    // (currentTakeFolder's name only has 1-second resolution, and
+    // juce::File::createDirectory() treats an already-existing directory as
+    // success, so the second take would otherwise silently reuse the first
+    // take's folder and filenames too).
+    static juce::File uniqueTakeFile(const juce::File& folder, const juce::String& baseName);
+
     // Writes numSamples of silence into a freshly-created (not yet
     // published/visible to the audio thread) track, so it starts at the
     // same sample-0 as every other file in the take - see setChannelArmed()/

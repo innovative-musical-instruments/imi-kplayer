@@ -29,8 +29,10 @@ public:
     // Multitrack recording (see RecordingManager) - MainComponent owns the
     // arm/recording-active truth; this component only reflects it via
     // setArmed()/setRecordingActive() and reports the user clicking the arm
-    // toggle. The toggle is disabled while recording is active - arm
-    // selection only applies to the *next* take, not the one in progress.
+    // toggle. The toggle stays clickable while recording is active - arming
+    // mid-take takes effect immediately (RecordingManager::setChannelArmed
+    // starts a new, silence-padded file segment from that point on rather
+    // than rejecting the click).
     std::function<void(bool armed)> onArmToggled;
 
     // deviceManager is needed to enumerate active audio input channels for

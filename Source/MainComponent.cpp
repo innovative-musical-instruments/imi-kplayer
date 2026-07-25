@@ -240,6 +240,30 @@ bool MainComponent::channelHasLoadedPlugin(int index) const
 
 void MainComponent::enableAllMidiInputs()
 {
+    juce::StringArray currentIds;
+    for (auto& input : juce::MidiInput::getAvailableDevices())
+        currentIds.add(input.identifier);
+
+    // A device that just disappeared (e.g. Kadabra OS quitting) needs to be
+    // explicitly disabled here, not left alone: AudioDeviceManager never
+    // notices the underlying hardware vanished, so isMidiInputDeviceEnabled()
+    // keeps reporting true for it - which means the *next* time it
+    // reconnects and we call setMidiInputDeviceEnabled(id, true) below,
+    // JUCE sees "already enabled" and silently skips reopening the native
+    // MIDI stream (see AudioDeviceManager::setMidiInputDeviceEnabled's
+    // enabled != isMidiInputDeviceEnabled(identifier) guard) - the device
+    // shows as connected again in every KPlayer UI (the identifier was never
+    // cleared) but no messages actually arrive, until something forces a
+    // genuine disable->enable transition (which is exactly what manually
+    // toggling the device's checkbox in Settings does by hand). Disabling
+    // it the moment it disappears keeps AudioDeviceManager's own state
+    // accurate immediately, so the ordinary enable call in the loop below
+    // is a real state change - and therefore a real reopen - the next time
+    // this same identifier shows back up.
+    for (auto& id : previouslyAvailableMidiInputIds)
+        if (! currentIds.contains(id))
+            deviceManager.setMidiInputDeviceEnabled(id, false);
+
     // addMidiInputDeviceCallback() removes any existing registration for the
     // same (identifier, callback) pair before re-adding, so it's safe to
     // call this repeatedly for devices that were already enabled.
@@ -248,6 +272,8 @@ void MainComponent::enableAllMidiInputs()
         deviceManager.setMidiInputDeviceEnabled(input.identifier, true);
         deviceManager.addMidiInputDeviceCallback(input.identifier, this);
     }
+
+    previouslyAvailableMidiInputIds = currentIds;
 }
 
 void MainComponent::refreshKadabraDeviceIdentifier()

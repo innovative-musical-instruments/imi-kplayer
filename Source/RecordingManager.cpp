@@ -41,7 +41,7 @@ void RecordingManager::setChannelArmed(int channelIndex, bool armed)
 
     if (armed)
     {
-        auto file = currentTakeFolder.getChildFile("Channel " + juce::String(channelIndex + 1) + ".wav");
+        auto file = uniqueTakeFile(currentTakeFolder, "Channel " + juce::String(channelIndex + 1));
         auto track = createTrack(file, recordingSampleRate, recordingNumChannelChannels);
         // A failure here (e.g. disk full mid-take) just means this one
         // source silently isn't captured - same failure mode as any other
@@ -78,7 +78,7 @@ void RecordingManager::setMasterArmed(bool armed)
 
     if (armed)
     {
-        auto file = currentTakeFolder.getChildFile("Master.wav");
+        auto file = uniqueTakeFile(currentTakeFolder, "Master");
         auto track = createTrack(file, recordingSampleRate, recordingNumMasterChannels);
         if (track != nullptr)
         {
@@ -90,6 +90,14 @@ void RecordingManager::setMasterArmed(bool armed)
     {
         retireTrack(masterTrackStorage, masterTrackPublished);
     }
+}
+
+juce::File RecordingManager::uniqueTakeFile(const juce::File& folder, const juce::String& baseName)
+{
+    auto candidate = folder.getChildFile(baseName + ".wav");
+    for (int suffix = 2; candidate.existsAsFile(); ++suffix)
+        candidate = folder.getChildFile(baseName + " (" + juce::String(suffix) + ").wav");
+    return candidate;
 }
 
 std::unique_ptr<RecordingManager::RecordingTrack> RecordingManager::createTrack(
@@ -214,7 +222,7 @@ juce::String RecordingManager::startRecording(double sampleRate, int numChannelC
         if (! channelArmed[i])
             continue;
 
-        auto file = takeFolder.getChildFile("Channel " + juce::String((int) i + 1) + ".wav");
+        auto file = uniqueTakeFile(takeFolder, "Channel " + juce::String((int) i + 1));
         auto track = createTrack(file, sampleRate, numChannelChannels);
         if (track == nullptr)
         {
@@ -228,7 +236,7 @@ juce::String RecordingManager::startRecording(double sampleRate, int numChannelC
 
     if (masterArmed)
     {
-        auto file = takeFolder.getChildFile("Master.wav");
+        auto file = uniqueTakeFile(takeFolder, "Master");
         auto track = createTrack(file, sampleRate, numMasterChannels);
         if (track == nullptr)
         {

@@ -28,8 +28,9 @@ public:
     // arm/recording-active truth and is the one global transport for every
     // armed channel and the master together; this component only reflects
     // that state via setArmed()/setRecordingActive() and reports user
-    // clicks. The arm toggle is disabled while recording is active, same as
-    // a channel's own arm button.
+    // clicks. The arm toggle stays clickable while recording is active, same
+    // as a channel's own arm button - arming mid-take takes effect
+    // immediately rather than being rejected.
     std::function<void(bool armed)> onMasterArmToggled;
     std::function<void()> onRecordButtonClicked;
 
