@@ -169,6 +169,19 @@ public:
     void setInputSectionCollapsedState(bool collapsed);
     void toggleInputSectionCollapsed();
 
+    // Identifier of the first connected MIDI device whose name contains
+    // "kadabra", or empty if none is connected right now - see the private
+    // kadabraDeviceIdentifier/kadabraDeviceLock below for the caching
+    // rationale. Exposed publicly (not just for this component's own
+    // internal use) so Main.cpp's MainWindow can gate the Kadabra recovery/
+    // starter-session feature (silentKadabraQuit()/
+    // tryAutoLoadKadabraSession()) on the same live detection.
+    juce::String getKadabraDeviceIdentifier() const
+    {
+        const juce::ScopedLock sl(kadabraDeviceLock);
+        return kadabraDeviceIdentifier;
+    }
+
 private:
     // Polls every loaded plugin's parametersDirty flag (set from any thread,
     // including the audio thread mid-automation - see ChannelProcessor's
@@ -234,11 +247,6 @@ private:
     mutable juce::CriticalSection kadabraDeviceLock;
     juce::String kadabraDeviceIdentifier;
     void refreshKadabraDeviceIdentifier();
-    juce::String getKadabraDeviceIdentifier() const
-    {
-        const juce::ScopedLock sl(kadabraDeviceLock);
-        return kadabraDeviceIdentifier;
-    }
 
     // Single global toggle (not per-channel) that collapses/expands the
     // Audio In/MIDI In/MIDI Ch rows on every channel strip at once - lives

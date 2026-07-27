@@ -46,6 +46,14 @@ public:
                                             deviceManager,
                                             pluginManager));
 
+            // Kadabra-connected-only recovery/starter auto-load (see
+            // MainWindow::tryAutoLoadKadabraSession()) - sequenced before
+            // the splash screen comes down since SessionIO::loadSession is
+            // synchronous and can take a while for a large rig, so the
+            // splash naturally covers that instead of the window sitting
+            // there frozen with no explanation.
+            mainWindow->tryAutoLoadKadabraSession();
+
             if (splashScreen != nullptr)
                 splashScreen->setProgress(1.0f);
             splashScreen.reset();
@@ -72,7 +80,7 @@ public:
         // it to a fresh message-loop tick avoids tearing down the app
         // while JUCE is still unwinding that stack.
         if (mainWindow != nullptr)
-            mainWindow->confirmDiscardUnsavedChanges([this]
+            mainWindow->silentKadabraQuit([this]
             {
                 juce::MessageManager::callAsync([this] { quit(); });
             });
@@ -108,7 +116,10 @@ public:
         juce::Component::SafePointer<SettingsComponent> activeSettings;
 
         // File > Recent - persisted to disk (mirrors PluginManager's
-        // ~/Library/Application Support/IMI/KPlayer/ convention) so it
+        // ~/Library/IMI/KPlayer/ convention - note juce::File::userApplicationDataDirectory
+        // resolves to plain ~/Library on macOS in this JUCE version, not
+        // ~/Library/Application Support as the name suggests; verified
+        // against juce_Files_mac.mm and the actual files on disk) so it
         // survives across launches, not just within one session.
         static constexpr int recentFilesBaseId = 1000;
         juce::RecentlyOpenedFilesList recentFiles;
@@ -117,6 +128,62 @@ public:
         {
             return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
                        .getChildFile("IMI").getChildFile("KPlayer").getChildFile("recent_sessions.txt");
+        }
+
+        // The common Kadabra space - installer-owned, shared between
+        // Starter.kplayer and recover.kplayer below, deliberately separate
+        // from the IMI-only root above (recent-files list/plugin cache,
+        // KPlayer-internal caching unrelated to Kadabra at all). Explicitly
+        // under ~/Library/Application Support on macOS, matching that
+        // platform's real convention - juce::File::userApplicationDataDirectory
+        // resolves to plain ~/Library on this JUCE version (see
+        // getRecentFilesStorageFile()'s comment above for why the IMI root
+        // doesn't have "Application Support" either), so it's appended by
+        // hand here, Mac-only: Windows has no equivalent subfolder, so
+        // %APPDATA% (that same call's own Windows mapping) is used as-is.
+        static juce::File getKadabraCommonDirectory()
+        {
+            auto base = juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory);
+           #if JUCE_MAC
+            base = base.getChildFile("Application Support");
+           #endif
+            return base.getChildFile("Kadabra").getChildFile("K-Player");
+        }
+
+        // Recovery snapshot - silently overwritten on every quit while a
+        // Kadabra MIDI port is connected (see silentKadabraQuit()) and
+        // silently loaded back on the next launch under the same condition
+        // (see tryAutoLoadKadabraSession()). (Caveat worth keeping in mind:
+        // this assumes the Kadabra installer only ever writes/overwrites
+        // Starter.kplayer by name in this folder, never wipes-and-recreates
+        // it wholesale on update/reinstall - confirm that with Tribal Tools
+        // if it's ever in question, since the latter would silently destroy
+        // this file too.)
+        static juce::File getRecoverSessionFile()
+        {
+            return getKadabraCommonDirectory().getChildFile("recover.kplayer");
+        }
+
+        // Read-only factory starter session, placed here by the Kadabra
+        // installer (a separate company/brand from IMI) - KPlayer only ever
+        // reads this file, never writes it. Used as the fallback when no
+        // recover.kplayer exists yet (first run, or a corrupted/missing
+        // recovery file).
+        static juce::File getStarterSessionFile()
+        {
+            return getKadabraCommonDirectory().getChildFile("Starter.kplayer");
+        }
+
+        // First MIDI input whose name contains "kadabra" is currently
+        // connected - same detection MainComponent already uses for its own
+        // auto-assign/tempo-sync behavior (getKadabraDeviceIdentifier()),
+        // reused here as the single condition gating both halves of the
+        // recovery feature (see silentKadabraQuit() and
+        // tryAutoLoadKadabraSession()), so a non-Kadabra session's state can
+        // never contaminate what a reconnected Kadabra sees.
+        bool isKadabraConnected() const
+        {
+            return mainComponent->getKadabraDeviceIdentifier().isNotEmpty();
         }
 
         void saveRecentFilesList()
@@ -299,6 +366,32 @@ public:
             setName(name + (sessionDirty ? " *" : ""));
         }
 
+        // Called instead of confirmDiscardUnsavedChanges() at quit time
+        // (see KPlayerApplication::systemRequestedQuit()). Kadabra connected
+        // means this quit may have been initiated by Kadabra OS through
+        // automation with nobody watching the screen - so it silently
+        // snapshots current state to recover.kplayer (regardless of the
+        // dirty flag, and without touching currentSessionFile's own file)
+        // and proceeds straight to quitting, never showing the Save/
+        // Discard/Cancel dialog. Not Kadabra connected: today's dialog,
+        // completely unchanged, and recover.kplayer isn't touched at all -
+        // keeps a non-Kadabra session's state from ever contaminating what a
+        // later-reconnected Kadabra sees.
+        void silentKadabraQuit(std::function<void()> onProceed)
+        {
+            if (isKadabraConnected())
+            {
+                mainComponent->setWindowSize(getWidth(), getHeight());
+                auto recoverFile = getRecoverSessionFile();
+                recoverFile.getParentDirectory().createDirectory();
+                SessionIO::saveSession(recoverFile, *mainComponent, deviceManager);
+                onProceed();
+                return;
+            }
+
+            confirmDiscardUnsavedChanges(onProceed);
+        }
+
         // Gates any action that would discard the current session (opening
         // another one, quitting) behind a Save/Discard/Cancel prompt when
         // there are unsaved changes. Runs onProceed immediately if the
@@ -355,16 +448,47 @@ public:
             });
         }
 
-        void loadSessionFile(const juce::File& file)
+        // trackAsCurrentFile=false loads the file's content without binding
+        // it as "the current file" - currentSessionFile stays untouched and
+        // it never enters the recent-files list, so the window title falls
+        // back to "Untitled Session" and the first manual Save behaves like
+        // Save As. Used for the recover/starter auto-load (see
+        // tryAutoLoadKadabraSession()) so neither internal file can ever be
+        // silently overwritten by an ordinary Save. Returns whether the load
+        // actually succeeded, so callers can fall back to another file.
+        bool loadSessionFile(const juce::File& file, bool trackAsCurrentFile = true)
         {
-            if (SessionIO::loadSession(file, *mainComponent, pluginManager, deviceManager))
+            if (! SessionIO::loadSession(file, *mainComponent, pluginManager, deviceManager))
+                return false;
+
+            if (trackAsCurrentFile)
             {
                 currentSessionFile = file;
-                clearDirty();
-                applyLoadedWindowSize();
                 recentFiles.addFile(file);
                 saveRecentFilesList();
             }
+            clearDirty();
+            applyLoadedWindowSize();
+            return true;
+        }
+
+        // Kadabra-connected-only: recover.kplayer if it exists and loads
+        // successfully, else Starter.kplayer if present, else today's
+        // default empty rig - unchanged for anyone without Kadabra
+        // connected. Called once at launch, right after this MainWindow (and
+        // its MainComponent) exists - see KPlayerApplication::initialise().
+        void tryAutoLoadKadabraSession()
+        {
+            if (! isKadabraConnected())
+                return;
+
+            auto recoverFile = getRecoverSessionFile();
+            if (recoverFile.existsAsFile() && loadSessionFile(recoverFile, false))
+                return;
+
+            auto starterFile = getStarterSessionFile();
+            if (starterFile.existsAsFile())
+                loadSessionFile(starterFile, false);
         }
 
         // A saved window size is 0x0 for a fresh session or a file saved
