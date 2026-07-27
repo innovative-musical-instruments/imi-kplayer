@@ -25,7 +25,14 @@ SettingsComponent::SettingsComponent(juce::AudioDeviceManager& dm,
         false,// stereo pair
         false // hide advanced options
     );
-    addAndMakeVisible(selector.get());
+    // Initial size is just a starting point for its own self-sizing layout
+    // pass (width drives its internal proportional layout, height is
+    // immediately overridden to fit its actual content - see the
+    // audioSettingsViewport comment in the header) - not a final size.
+    selector->setSize(460, 400);
+    audioSettingsViewport.setViewedComponent(selector.get(), false);
+    audioSettingsViewport.setScrollBarsShown(true, false);
+    addAndMakeVisible(audioSettingsViewport);
 
     channelCountLabel.setText("Channels", juce::dontSendNotification);
     addAndMakeVisible(channelCountLabel);
@@ -68,7 +75,7 @@ SettingsComponent::SettingsComponent(juce::AudioDeviceManager& dm,
     };
     addAndMakeVisible(silenceTimeoutSlider);
 
-    setSize(500, 530);
+    setSize(540, 600);
 }
 
 SettingsComponent::~SettingsComponent() {}
@@ -96,7 +103,15 @@ void SettingsComponent::resized()
     silenceTimeoutSlider.setBounds(silenceRow);
 
     area.removeFromTop(10);
-    selector->setBounds(area);
+    audioSettingsViewport.setBounds(area);
+
+    // Width drives the selector's internal proportional layout and needs
+    // updating on every pass (e.g. the dialog got resized); height is its
+    // own self-sizing business (see the audioSettingsViewport comment in
+    // the header) - pass its current height back in as a no-op starting
+    // point rather than guessing one here.
+    auto contentWidth = audioSettingsViewport.getWidth() - audioSettingsViewport.getScrollBarThickness();
+    selector->setSize(juce::jmax(1, contentWidth), selector->getHeight());
 }
 
 void SettingsComponent::updateRecordingsFolderLabel()

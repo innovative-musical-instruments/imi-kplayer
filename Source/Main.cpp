@@ -460,8 +460,14 @@ public:
                 getLookAndFeel().findColour(juce::ResizableWindow::backgroundColourId);
             opts.escapeKeyTriggersCloseButton = true;
             opts.useNativeTitleBar = true;
-            opts.resizable = false;
-            opts.launchAsync();
+            // Resizable, not just fixed-size - the audio/MIDI selector inside
+            // (see SettingsComponent's audioSettingsViewport) already scrolls
+            // to reach every control regardless of window size, but letting
+            // the user grow the window too means they don't have to scroll
+            // at all on setups with a lot of enumerated MIDI ports.
+            opts.resizable = true;
+            if (auto* dialogWindow = opts.launchAsync())
+                dialogWindow->setResizeLimits(420, 400, 900, 1200);
         }
 
         // The About box draws its own fake title bar (traffic lights /

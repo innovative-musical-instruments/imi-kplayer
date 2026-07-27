@@ -34,6 +34,17 @@ private:
     std::function<void(double)> onSilenceTimeoutChanged;
 
     std::unique_ptr<juce::AudioDeviceSelectorComponent> selector;
+    // AudioDeviceSelectorComponent self-sizes to its true content height on
+    // every layout pass (see its resized(), which ends with
+    // setSize(getWidth(), <natural content height>)) - that height grows
+    // with the number of enumerated audio channels and MIDI ports and can
+    // easily exceed whatever fixed space this dialog has. Housing it in a
+    // Viewport (which auto-tracks the viewed component's size via its own
+    // ComponentListener) means every control - e.g. a MIDI input far down
+    // an alphabetically-sorted "Active MIDI inputs" list - stays reachable
+    // by scrolling instead of being silently clipped off the bottom of a
+    // fixed-height dialog.
+    juce::Viewport audioSettingsViewport;
     juce::Label  channelCountLabel;
     juce::Slider channelCountSlider;
 
