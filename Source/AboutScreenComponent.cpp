@@ -284,7 +284,7 @@ void AboutScreenComponent::paint(juce::Graphics& g)
     auto versionFont = bodyFont(12.0f);
     g.setColour(kVersionColour);
     g.setFont(versionFont);
-    g.drawText("Version 0.9.0",
+    g.drawText("Version " JUCE_APPLICATION_VERSION_STRING,
               titleRowBounds.withX(titleRowBounds.getX() + kplayerWidth + 10.0f),
               juce::Justification::centredLeft);
 
