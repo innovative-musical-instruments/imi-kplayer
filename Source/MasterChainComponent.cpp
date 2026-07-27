@@ -10,10 +10,12 @@ MasterChainComponent::MasterChainComponent(MasterChainProcessor& p)
     titleLabel.setColour(juce::Label::textColourId, juce::Colour(0xffaaaaaa));
     addAndMakeVisible(titleLabel);
 
+    slotButtonLookAndFeel = std::make_unique<SlotButtonLookAndFeel>();
     for (int i = 0; i < numSlots; ++i)
     {
         auto& button = slotButtons[(size_t) i];
         button.onClick = [this, i] { showPluginSlotMenu(i); };
+        button.setLookAndFeel(slotButtonLookAndFeel.get());
         addAndMakeVisible(button);
         updateSlotButton(i);
     }
@@ -48,6 +50,7 @@ MasterChainComponent::MasterChainComponent(MasterChainProcessor& p)
     volumeRange.interval = 0.1;
     volumeSlider.setNormalisableRange(volumeRange);
     volumeSlider.setValue(0.0, juce::dontSendNotification);
+    volumeSlider.setDoubleClickReturnValue(true, 0.0);
     volumeSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 16);
     volumeSlider.setTextValueSuffix(" dB");
     volumeSlider.setLookAndFeel(volumeFaderLookAndFeel.get());
@@ -80,20 +83,14 @@ MasterChainComponent::MasterChainComponent(MasterChainProcessor& p)
 MasterChainComponent::~MasterChainComponent()
 {
     volumeSlider.setLookAndFeel(nullptr);
+    for (auto& button : slotButtons)
+        button.setLookAndFeel(nullptr);
 }
 
 void MasterChainComponent::setVolume(float linearGain)
 {
     volumeSlider.setValue(juce::Decibels::gainToDecibels(linearGain, -60.0f),
                           juce::dontSendNotification);
-}
-
-void MasterChainComponent::setTopSpacerHeight(int height)
-{
-    if (topSpacerHeight == height)
-        return;
-    topSpacerHeight = height;
-    resized();
 }
 
 void MasterChainComponent::setArmed(bool shouldBeArmed)
@@ -204,7 +201,7 @@ void MasterChainComponent::updateSlotButton(int slotIndex)
     }
     else
     {
-        button.setButtonText(prefix + "- empty -");
+        button.setButtonText(prefix.trim());
         button.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff2a2a3e));
         button.setColour(juce::TextButton::textColourOffId, juce::Colour(0xffaaaaaa));
     }
@@ -226,9 +223,6 @@ void MasterChainComponent::paint(juce::Graphics& g)
 void MasterChainComponent::resized()
 {
     auto area = getLocalBounds().reduced(6);
-
-    if (topSpacerHeight > 0)
-        area.removeFromTop(topSpacerHeight);
 
     titleLabel.setBounds(area.removeFromTop(16));
     area.removeFromTop(6);

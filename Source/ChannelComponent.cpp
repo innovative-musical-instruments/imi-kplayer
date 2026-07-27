@@ -27,9 +27,10 @@ ChannelComponent::ChannelComponent(ChannelProcessor& p, juce::AudioDeviceManager
 {
     // Gain caps are twice as tall as the base size; pan caps are half as
     // wide - both cosmetic-only, per user request, not a track-length change.
-    gainFaderLookAndFeel = std::make_unique<ConsoleFaderLookAndFeel>(2.0f, 1.0f);
-    panFaderLookAndFeel  = std::make_unique<ConsoleFaderLookAndFeel>(0.5f, 1.0f);
-    selectorLookAndFeel  = std::make_unique<SelectorLookAndFeel>();
+    gainFaderLookAndFeel  = std::make_unique<ConsoleFaderLookAndFeel>(2.0f, 1.0f);
+    panFaderLookAndFeel   = std::make_unique<ConsoleFaderLookAndFeel>(0.5f, 1.0f);
+    selectorLookAndFeel   = std::make_unique<SelectorLookAndFeel>();
+    slotButtonLookAndFeel = std::make_unique<SlotButtonLookAndFeel>();
 
     channelNameLabel.setFont(juce::Font(13.0f, juce::Font::bold));
     channelNameLabel.setJustificationType(juce::Justification::centred);
@@ -58,6 +59,7 @@ ChannelComponent::ChannelComponent(ChannelProcessor& p, juce::AudioDeviceManager
     {
         auto& button = slotButtons[(size_t) i];
         button.onClick = [this, i] { showPluginSlotMenu(i); };
+        button.setLookAndFeel(slotButtonLookAndFeel.get());
         addAndMakeVisible(button);
         updateSlotButton(i);
     }
@@ -135,21 +137,22 @@ ChannelComponent::ChannelComponent(ChannelProcessor& p, juce::AudioDeviceManager
     addAndMakeVisible(gainLabel);
 
     gainSlider.setSliderStyle(juce::Slider::LinearVertical);
-    // Quadratic taper: dB(t) = -96 * t^2, t = fraction of travel down from the
-    // top (unity gain). Gives -6dB at a quarter down, -24dB at halfway, so
-    // the musically useful range near unity gets far more of the fader's
-    // travel than a plain linear-dB mapping would. See
-    // docs/KPlayer_Refinement_Spec_2026-07-11.md section 1.3. The curve
+    // Quadratic taper: dB(t) = 6 - 102 * t^2, t = fraction of travel down
+    // from the top (+6dB headroom). Gives ~0dB just past the top of travel,
+    // -24dB around halfway, so the musically useful range near unity gets
+    // far more of the fader's travel than a plain linear-dB mapping would.
+    // See docs/KPlayer_Refinement_Spec_2026-07-11.md section 1.3. The curve
     // itself lives on ChannelProcessor (shared with MIDI CC7 gain control)
     // so a hardware fader move lands on the exact same mapping as dragging
     // this slider to the equivalent position.
     juce::NormalisableRange<double> gainRange(
-        -96.0, 0.0,
+        -96.0, 6.0,
         [](double, double, double normalised) { return ChannelProcessor::normalisedToGainDb(normalised); },
         [](double, double, double value) { return ChannelProcessor::gainDbToNormalised(value); });
     gainRange.interval = 0.1;
     gainSlider.setNormalisableRange(gainRange);
     gainSlider.setValue(0.0, juce::dontSendNotification);
+    gainSlider.setDoubleClickReturnValue(true, 0.0);
     gainSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 16);
     gainSlider.setTextValueSuffix(" dB");
     gainSlider.addListener(this);
@@ -163,9 +166,17 @@ ChannelComponent::ChannelComponent(ChannelProcessor& p, juce::AudioDeviceManager
     addAndMakeVisible(panLabel);
 
     panSlider.setSliderStyle(juce::Slider::LinearHorizontal);
-    panSlider.setRange(-1.0, 1.0, 0.01);
+    // Displayed range is -50..+50 (matching MIDI CC10's own -50/0/+50
+    // mapping - see ChannelProcessor::processBlock), while the underlying
+    // ChannelProcessor::pan stays -1..1 internally (used directly by the
+    // constant-power pan law in applyGainAndPan, and already the session
+    // file's on-disk representation) - converted at this UI boundary only,
+    // in sliderValueChanged()/refresh().
+    panSlider.setRange(-50.0, 50.0, 0.1);
     panSlider.setValue(0.0, juce::dontSendNotification);
+    panSlider.setDoubleClickReturnValue(true, 0.0);
     panSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 16);
+    panSlider.setTooltip("cc10");
     panSlider.addListener(this);
     panSlider.setLookAndFeel(panFaderLookAndFeel.get());
     addAndMakeVisible(panSlider);
@@ -219,6 +230,8 @@ ChannelComponent::~ChannelComponent()
     audioInputBox.setLookAndFeel(nullptr);
     midiDeviceBox.setLookAndFeel(nullptr);
     midiChannelBox.setLookAndFeel(nullptr);
+    for (auto& button : slotButtons)
+        button.setLookAndFeel(nullptr);
 }
 
 void ChannelComponent::showPluginSlotMenu(int slotIndex)
@@ -291,7 +304,7 @@ void ChannelComponent::updateSlotButton(int slotIndex)
     }
     else
     {
-        button.setButtonText(prefix + "- empty -");
+        button.setButtonText(prefix.trim());
         button.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff2a2a3e));
         button.setColour(juce::TextButton::textColourOffId, juce::Colour(0xffaaaaaa));
     }
@@ -306,7 +319,7 @@ void ChannelComponent::refresh()
 
     float gainDb = juce::Decibels::gainToDecibels(processor.getGain(), -96.0f);
     gainSlider.setValue(gainDb, juce::dontSendNotification);
-    panSlider.setValue((double) processor.getPan(), juce::dontSendNotification);
+    panSlider.setValue((double) processor.getPan() * 50.0, juce::dontSendNotification);
 
     int midiChannel = processor.getMidiChannel();
     midiChannelBox.setSelectedId(midiChannel <= 0 ? 1 : midiChannel + 1, juce::dontSendNotification);
@@ -412,7 +425,7 @@ void ChannelComponent::sliderValueChanged(juce::Slider* slider)
     }
     else if (slider == &panSlider)
     {
-        processor.setPan((float)panSlider.getValue());
+        processor.setPan((float) (panSlider.getValue() / 50.0));
     }
 
     if (onDirty) onDirty();
@@ -545,21 +558,6 @@ void ChannelComponent::paint(juce::Graphics& g)
     auto dividerBounds = getLocalBounds().reduced(6);
     g.drawHorizontalLine(inputSectionDividerY, (float) dividerBounds.getX(), (float) dividerBounds.getRight());
     g.drawHorizontalLine(pluginsSectionDividerY, (float) dividerBounds.getX(), (float) dividerBounds.getRight());
-}
-
-int ChannelComponent::insertSectionStartY(bool inputSectionCollapsed)
-{
-    int y = 6;             // getLocalBounds().reduced(6) top inset
-    y += 18 + 6;            // channelNameLabel + gap
-
-    if (! inputSectionCollapsed)
-        y += 16 + 24 + 8    // audioInLabel, audioInputBox, gap
-           + 16 + 24 + 8    // midiInLabel, midiDeviceBox, gap
-           + 16 + 24;       // midiLabel, midiChannelBox
-
-    y += 6 + 7;             // gap before/after inputSectionDividerY
-    y += 16 + 26 + 10 + 16; // pluginLabel, slotButtons[0], gap, insertsLabel
-    return y;
 }
 
 void ChannelComponent::resized()

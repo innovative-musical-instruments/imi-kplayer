@@ -6,6 +6,7 @@
 #include "PeakMeterComponent.h"
 #include "ConsoleFaderLookAndFeel.h"
 #include "SelectorLookAndFeel.h"
+#include "SlotButtonLookAndFeel.h"
 
 class ChannelComponent : public juce::Component,
                          public juce::Slider::Listener,
@@ -51,16 +52,6 @@ public:
     void resized() override;
     void refresh();
 
-    // Vertical offset (from a channel strip's own top edge) at which the
-    // first *insert* slot button begins (i.e. slotButtons[1], right after
-    // the "Inserts" label - not slot 0, the instrument slot, which the
-    // master chain has no equivalent of). MainComponent uses this to line
-    // up the master chain's own insert slots with the channels' - only
-    // meaningful for the non-collapsed input section (see MainComponent's
-    // caller for why). Must be kept in sync with resized()'s row math below
-    // if either changes.
-    static int insertSectionStartY(bool inputSectionCollapsed);
-
     // Global collapse toggle (all channels move together, driven from
     // MainComponent) - hides the Audio In/MIDI In/MIDI Ch rows, leaving the
     // channel name visible. Purely a view preference, not session state.
@@ -94,6 +85,7 @@ private:
     std::unique_ptr<ConsoleFaderLookAndFeel> gainFaderLookAndFeel;
     std::unique_ptr<ConsoleFaderLookAndFeel> panFaderLookAndFeel;
     std::unique_ptr<SelectorLookAndFeel> selectorLookAndFeel;
+    std::unique_ptr<SlotButtonLookAndFeel> slotButtonLookAndFeel;
 
     juce::Label channelNameLabel;
     juce::Label pluginLabel;

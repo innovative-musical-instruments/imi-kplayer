@@ -320,6 +320,15 @@ void MainComponent::timerCallback()
             anyDirty = true;
         }
 
+        // A MIDI CC10 message just changed this channel's pan (see
+        // ChannelProcessor::processBlock) - same refresh-and-mark-dirty
+        // treatment as CC7 gain above.
+        if (processor->consumePanChangedByMidi())
+        {
+            channelComponents[i]->refresh();
+            anyDirty = true;
+        }
+
         // A MIDI CC84-89 message just bypassed/activated a slot (see
         // ChannelProcessor::processBlock) - sync any open editor window's
         // bypass bar and the slot buttons to match, and mark dirty the same
@@ -740,16 +749,7 @@ void MainComponent::resized()
     tempoSyncComponent.setBounds(masterChainArea.removeFromTop(TempoSyncComponent::preferredHeight));
     masterChainArea.removeFromTop(6);
 
-    // Align the master chain's own insert slots with the channel strips'
-    // (see ChannelComponent::insertSectionStartY - computed for the
-    // non-collapsed input-section case only, per that method's own comment).
-    // masterOwnOffsetToSlots mirrors MasterChainComponent::resized()'s own
-    // row math up to its slot loop (reduced(6) + titleLabel + gap).
-    static constexpr int masterOwnOffsetToSlots = 6 + 16 + 6;
-    int targetSlotsY = area.getY() + ChannelComponent::insertSectionStartY(false);
-    int spacer = targetSlotsY - masterChainArea.getY() - masterOwnOffsetToSlots;
     masterChainComponent.setBounds(masterChainArea);
-    masterChainComponent.setTopSpacerHeight(juce::jmax(0, spacer));
 
     area.removeFromRight(20);
 

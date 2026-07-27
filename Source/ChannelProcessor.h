@@ -72,18 +72,20 @@ public:
     // docs/KPlayer_Refinement_Spec_2026-07-11.md section 1.3) - shared here
     // so a MIDI CC7 gain change (see processBlock) lands on the exact same
     // curve as dragging the fader to the equivalent position, not a second,
-    // independently-tuned one. Both fixed to the -96dB..0dB range already
-    // used everywhere gain is expressed in dB (e.g. getGain()'s callers via
-    // Decibels::gainToDecibels(..., -96.0f)).
+    // independently-tuned one. Fixed to the -96dB..+6dB range - same shape
+    // and headroom as the master fader's own curve (MasterChainComponent's
+    // volumeRange), just expressed as the two static functions here instead
+    // of an inline NormalisableRange, since this side also needs to be
+    // reachable from MIDI CC7 handling below.
     static double normalisedToGainDb(double normalised)
     {
         double t = 1.0 - normalised;
-        return -96.0 * t * t;
+        return 6.0 - 102.0 * t * t;
     }
 
     static double gainDbToNormalised(double dB)
     {
-        double t = std::sqrt(juce::jlimit(0.0, 1.0, -dB / 96.0));
+        double t = std::sqrt(juce::jlimit(0.0, 1.0, (6.0 - dB) / 102.0));
         return 1.0 - t;
     }
     void  setPan(float p)       { pan = juce::jlimit(-1.0f, 1.0f, p); }
@@ -156,6 +158,12 @@ public:
     // to match and marks the session dirty (same as a manual fader drag).
     bool consumeGainChangedByMidi() { return gainChangedByMidi.exchange(false, std::memory_order_relaxed); }
 
+    // Same pattern as consumeGainChangedByMidi() above, but for MIDI CC10
+    // setting this channel's pan (see processBlock) - CC7 and CC10 are
+    // handled independently of each other, gain-only and pan-only
+    // respectively.
+    bool consumePanChangedByMidi() { return panChangedByMidi.exchange(false, std::memory_order_relaxed); }
+
     // Set (from the audio thread) whenever an incoming MIDI CC84-89 message
     // bypasses/activates a slot (see processBlock) - same message-thread
     // Timer poll pattern as consumeGainChangedByMidi() above. This only
@@ -200,6 +208,7 @@ private:
 
     std::atomic<bool> parametersDirty { false };
     std::atomic<bool> gainChangedByMidi { false };
+    std::atomic<bool> panChangedByMidi { false };
     std::atomic<bool> bypassChangedByMidi { false };
     std::atomic<bool> armChangedByMidi { false };
     std::atomic<bool> pendingArmValueFromMidi { false };

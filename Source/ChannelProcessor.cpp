@@ -207,14 +207,15 @@ void ChannelProcessor::prepareToPlay(double sampleRate, int blockSize)
 void ChannelProcessor::processBlock(juce::AudioBuffer<float>& buffer,
                                      juce::MidiBuffer& midi)
 {
-    // Channel volume via MIDI CC7, per-slot bypass/activate via MIDI CC84-89
-    // (CC 84+slotIndex, value <64 = bypass, >=64 = active), and record
-    // arm/disarm via CC103 (<64 = disarm, >=64 = arm): scanned
-    // unconditionally, even with nothing loaded, since all three should be
-    // controllable regardless of what else the channel is doing. Same
-    // channel-matching rule as the plugin-forwarding filter below - "All"
-    // (midiChannel == 0) matches any channel, otherwise only messages on
-    // midiChannel itself. `midi` here is already this channel's own
+    // Channel volume via MIDI CC7, pan via MIDI CC10 (handled independently
+    // of CC7 - gain-only and pan-only respectively), per-slot bypass/
+    // activate via MIDI CC84-89 (CC 84+slotIndex, value <64 = bypass, >=64 =
+    // active), and record arm/disarm via CC103 (<64 = disarm, >=64 = arm):
+    // scanned unconditionally, even with nothing loaded, since all of these
+    // should be controllable regardless of what else the channel is doing.
+    // Same channel-matching rule as the plugin-forwarding filter below -
+    // "All" (midiChannel == 0) matches any channel, otherwise only messages
+    // on midiChannel itself. `midi` here is already this channel's own
     // per-device buffer (MainComponent only hands it messages from the
     // assigned MIDI device), so no separate device check is needed.
     for (auto meta : midi)
@@ -229,6 +230,20 @@ void ChannelProcessor::processBlock(juce::AudioBuffer<float>& buffer,
             double dB = normalisedToGainDb(msg.getControllerValue() / 127.0);
             setGain(dB <= -96.0 ? 0.0f : (float) juce::Decibels::decibelsToGain(dB));
             gainChangedByMidi.store(true, std::memory_order_relaxed);
+        }
+        else if (cc == 10)
+        {
+            // Standard MIDI pan curve, split at the CC's own centre point:
+            // 0 = full left, 63 and 64 both = centre (the two middle values
+            // of an even 128-value range), 127 = full right. Expressed
+            // directly in ChannelProcessor's -1..1 pan representation - the
+            // UI's -50..+50 slider scale (see ChannelComponent) is just that
+            // range times 50, converted at the UI boundary only.
+            int value = msg.getControllerValue();
+            float p = value <= 63 ? (-1.0f + (float) value / 63.0f)
+                                   : ((float) (value - 64) / 63.0f);
+            setPan(p);
+            panChangedByMidi.store(true, std::memory_order_relaxed);
         }
         else if (cc >= 84 && cc < 84 + totalSlotCount)
         {

@@ -6,6 +6,7 @@
 #include "MasterChainProcessor.h"
 #include "PeakMeterComponent.h"
 #include "ConsoleFaderLookAndFeel.h"
+#include "SlotButtonLookAndFeel.h"
 
 // The master bus strip: the insert-slot buttons (same load/replace/remove/
 // bypass popup-menu pattern as ChannelComponent's insert slots, applied
@@ -50,14 +51,6 @@ public:
                               std::atomic<bool>* clipFlagLeft,
                               std::atomic<bool>* clipFlagRight);
 
-    // Extra empty space reserved above titleLabel, so the insert-slot
-    // buttons below it can be pushed down to align with the channel strips'
-    // own insert slots (which sit below a taller "Input section" that the
-    // master column has nothing equivalent to) - set by MainComponent's
-    // resized(), which is the only place that can see both column layouts
-    // at once.
-    void setTopSpacerHeight(int height);
-
     void setArmed(bool shouldBeArmed);
     void setRecordingActive(bool active);
 
@@ -67,10 +60,9 @@ private:
 
     MasterChainProcessor& processor;
 
-    int topSpacerHeight = 0;
-
     juce::Label titleLabel;
     std::array<juce::TextButton, numSlots> slotButtons;
+    std::unique_ptr<SlotButtonLookAndFeel> slotButtonLookAndFeel;
 
     std::unique_ptr<ConsoleFaderLookAndFeel> volumeFaderLookAndFeel;
     juce::Label      volumeLabel;
