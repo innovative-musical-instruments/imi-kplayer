@@ -30,13 +30,16 @@ ID Application cert and notarization credentials already stored in Keychain
 (`xcrun notarytool store-credentials "kplayer-notary" ...`, a one-time,
 human-only, interactive step — never something to script or automate).
 
-**Windows:** not yet established in this file — CMakeLists.txt has the
-`C:/SDKs/JUCE` path wired up but the actual generator/build commands haven't
-been verified from a Windows Claude Code session yet. Whoever runs this
-first should figure out the working command (likely `cmake -B build -G
-"Visual Studio <version>"` then `cmake --build build --config Debug`, but
-confirm rather than assume) and update this section with what actually
-worked.
+**Windows:**
+```
+cmake -B build -G "Visual Studio 18 2026"
+cmake --build build --config Debug
+```
+App lands at `build/IMI_KPlayer_artefacts/Debug/Kadabra K-Player.exe`.
+Confirmed working with Visual Studio Community 2026 (v18) and CMake 4.3.4.
+The generator name tracks whatever VS version is installed — check `cmake
+--help` for the exact string if this stops matching (e.g. "Visual Studio 17
+2022" on a VS2022 machine).
 
 ## Architecture — where to look
 
