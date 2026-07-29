@@ -17,17 +17,6 @@ bool ChannelProcessor::loadPlugin(int slotIndex,
 {
     jassert(slotIndex >= 0 && slotIndex < totalSlotCount);
 
-    // Insert slots are audio-effect-only per spec - enforced here at the
-    // engine level so any caller (not just the plugin browser's filtered
-    // list) is held to it.
-    if (slotIndex != slot0Index && desc.isInstrument)
-    {
-        juce::Logger::outputDebugString(
-            "Refusing to load instrument \"" + desc.name + "\" into insert slot "
-            + juce::String(slotIndex) + " - insert slots are audio-effect-only");
-        return false;
-    }
-
     auto& slot = slots[(size_t) slotIndex];
 
     juce::String errorMessage;

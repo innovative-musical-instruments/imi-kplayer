@@ -17,14 +17,6 @@ bool MasterChainProcessor::loadPlugin(int slotIndex,
 {
     jassert(slotIndex >= 0 && slotIndex < numSlots);
 
-    if (desc.isInstrument)
-    {
-        juce::Logger::outputDebugString(
-            "Refusing to load instrument \"" + desc.name + "\" into master chain slot "
-            + juce::String(slotIndex) + " - the master chain is audio-effect-only");
-        return false;
-    }
-
     auto& slot = slots[(size_t) slotIndex];
 
     juce::String errorMessage;

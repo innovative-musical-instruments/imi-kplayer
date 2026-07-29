@@ -6,13 +6,15 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "KPlayerAudioPlayHead.h"
 
-// The master bus insert chain (Increment 3 item 7): 5 audio-effect-only
-// slots applied once to the post-sum stereo signal, after every channel's
-// own processing. Deliberately not a ChannelProcessor reused wholesale -
-// ChannelProcessor::processBlock clears its buffer when slot 0 (the
-// instrument slot) is empty, which is correct for a channel with nothing
-// loaded but would silently wipe the master sum every block here, since
-// the master chain has no instrument slot at all.
+// The master bus insert chain (Increment 3 item 7): 5 slots applied once to
+// the post-sum stereo signal, after every channel's own processing.
+// Instrument plugins are allowed here too (the user's choice) but since the
+// master chain has no "instrument slot" concept, a loaded instrument won't
+// receive MIDI and will just see whatever the post-sum signal passes
+// through, if anything. Deliberately not a ChannelProcessor reused
+// wholesale - ChannelProcessor::processBlock clears its buffer when slot 0
+// (the instrument slot) is empty, which is correct for a channel with
+// nothing loaded but would silently wipe the master sum every block here.
 //
 // Implements AudioProcessorListener for the same reason as ChannelProcessor
 // - see its header comment for the full rationale and the thread-safety
@@ -26,8 +28,8 @@ public:
     MasterChainProcessor();
     ~MasterChainProcessor();
 
-    // All master-chain slots are audio-effect-only - unlike a channel's
-    // slot 0, there's no instrument exception here.
+    // Instruments are allowed in any master-chain slot - see the class
+    // comment above for the caveat about MIDI/audio passthrough.
     bool loadPlugin(int slotIndex,
                     const juce::PluginDescription& desc,
                     juce::AudioPluginFormatManager& formatManager,

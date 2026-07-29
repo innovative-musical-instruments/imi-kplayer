@@ -9,7 +9,10 @@
 #include "KPlayerAudioPlayHead.h"
 
 // A channel's plugin chain is slot 0 (instrument OR audio-effect plugin,
-// per the MVP spec) followed by 5 insert slots (audio-effect plugins only).
+// per the MVP spec) followed by 5 insert slots. Insert slots also accept
+// instrument plugins (not just audio effects) - loading one there is the
+// user's choice and may produce no audio if the plugin doesn't pass its
+// input through, since only slot 0 feeds a channel with no external input.
 //
 // Implements AudioProcessorListener purely to catch parameter/state changes
 // made *inside* a loaded plugin's own editor (turning a knob doesn't touch
@@ -28,9 +31,8 @@ public:
     ~ChannelProcessor();
 
     // slotIndex: 0 = instrument/effect slot, 1..numInsertSlots = insert slots.
-    // Loading an instrument (PluginDescription::isInstrument) into an insert
-    // slot is rejected here at the engine level, not just filtered out of
-    // the plugin browser's list - insert slots are audio-effect-only.
+    // Instruments are allowed in insert slots too - see the class comment
+    // above for the caveat about audio passthrough.
     // initialState, if non-null, is applied via setStateInformation() right
     // after the plugin is prepared - used to restore a saved session's
     // per-plugin state (preset/patch) as part of instantiation.

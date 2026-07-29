@@ -9,7 +9,7 @@ public:
     using PluginSelectedCallback = std::function<void(const juce::PluginDescription&)>;
 
     // allowInstruments: pass false to filter instrument plugins out of the
-    // list (used for insert slots, which are audio-effect-only per spec).
+    // list. All channel and master-chain slots currently pass true.
     PluginBrowserComponent(PluginManager& pluginManager,
                            PluginSelectedCallback callback,
                            bool allowInstruments = true);

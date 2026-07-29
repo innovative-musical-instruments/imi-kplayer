@@ -480,9 +480,10 @@ void MainComponent::showPluginBrowser(int channelIndex, int slotIndex, bool isRe
     if (!pluginsReady)
         return;
 
-    // Slot 0 accepts instruments or audio effects; insert slots 1-5 are
-    // audio-effect-only per spec, so instruments are filtered out for them.
-    bool allowInstruments = (slotIndex == ChannelProcessor::slot0Index);
+    // All channel slots (0 and insert slots 1-5) accept instrument plugins;
+    // loading one into an insert slot is the user's choice and may produce
+    // no audio if the plugin doesn't pass its input through.
+    bool allowInstruments = true;
 
     PluginBrowserComponent::showAsCallOut(
         pluginManager,
@@ -536,7 +537,8 @@ void MainComponent::showMasterChainPluginBrowser(int slotIndex, bool isReplace)
     if (!pluginsReady)
         return;
 
-    // Master chain slots are audio-effect-only, unlike a channel's slot 0.
+    // Master chain slots also accept instrument plugins now - the user's
+    // choice, even though the master chain has no MIDI routing to feed one.
     PluginBrowserComponent::showAsCallOut(
         pluginManager,
         [this, slotIndex, isReplace](const juce::PluginDescription& desc)
@@ -574,7 +576,7 @@ void MainComponent::showMasterChainPluginBrowser(int slotIndex, bool isReplace)
             }
         },
         masterChainComponent,
-        false
+        true
     );
 }
 
