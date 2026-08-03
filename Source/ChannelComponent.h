@@ -49,6 +49,14 @@ public:
     std::function<void(const juce::File& takeFile)> onMidiTakeSelected;
     std::function<void()> onMidiTakeDeselected;
 
+    // Audio Take playback (Increment C) - same shape as
+    // onMidiTakeSelected/onMidiTakeDeselected above, but for the Audio
+    // Input Selector's own "Recorded Takes" section.
+    // setAudioTakeIdentifier()/setAudioInputChannelIndex() are still called
+    // directly by this component either way (see comboBoxChanged).
+    std::function<void(const juce::File& takeFile)> onAudioTakeSelected;
+    std::function<void()> onAudioTakeDeselected;
+
     // deviceManager is needed to enumerate active audio input channels for
     // the audio-input selector (Increment 3 item 8) and to be notified when
     // the active device/channel set changes (AudioDeviceManager is a
@@ -76,6 +84,10 @@ public:
     // after a recording finishes (new Take files may now exist). Safe to
     // call at any time otherwise, same as refreshMidiDeviceList().
     void refreshTakeList();
+
+    // Same as refreshTakeList() above, but for the Audio Input Selector's
+    // "Recorded Takes" section (Increment C).
+    void refreshAudioTakeList();
 
     // Global collapse toggle (all channels move together, driven from
     // MainComponent) - hides the Audio In/MIDI In/MIDI Ch rows, leaving the
@@ -106,6 +118,18 @@ private:
     int midiDeviceItemIdFor(const juce::String& identifier) const;
     void updateMidiDeviceWarning();
     void refreshAudioInputList();
+    // Same rebuild-from-scratch treatment as rebuildMidiInputBox() above,
+    // for audioInputBox (None + live hardware channels + Recorded Takes) -
+    // called by both refreshAudioInputList() (device hotplug) and
+    // refreshAudioTakeList() (new Take files on disk).
+    void rebuildAudioInputBox();
+    // Item id for a given (channelIndex, takeIdentifier) selection state -
+    // live hardware channels are 2..availableAudioInputNames.size()+1
+    // (keyed by audioInputChannelIndex, not a stable identifier, see
+    // availableAudioInputNames' own comment below), Take entries are
+    // takeIdBase..takeIdBase+availableChannelAudioTakes.size()-1 (keyed by
+    // processor.getAudioTakeIdentifier()), "None"/not-found is 1.
+    int audioInputItemIdFor(int channelIndex, const juce::String& takeIdentifier) const;
     void updateAudioInputWarning();
     void updateChannelNameLabel();
 
@@ -134,6 +158,11 @@ private:
     juce::Label    audioInLabel;
     juce::ComboBox audioInputBox;
     juce::StringArray availableAudioInputNames;
+
+    // Audio Take entries in audioInputBox (Increment C) - item ids
+    // takeIdBase..takeIdBase+availableChannelAudioTakes.size()-1, in the
+    // same order as this array. See rebuildAudioInputBox().
+    juce::Array<juce::File> availableChannelAudioTakes;
 
     juce::Label      midiInLabel;
     juce::ComboBox   midiDeviceBox;

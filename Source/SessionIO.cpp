@@ -96,6 +96,7 @@ namespace
         // v1->v2 migration reserved as a placeholder (that array shape
         // turned out not to fit; it's left in the schema inert/unused).
         obj->setProperty("audioInputChannel", processor.getAudioInputChannelIndex());
+        obj->setProperty("audioTakeIdentifier", processor.getAudioTakeIdentifier());
 
         obj->setProperty("slot0Plugin", pluginSlotToVar(processor, ChannelProcessor::slot0Index));
 
@@ -135,6 +136,7 @@ namespace
         processor.setMidiChannel((int) v.getProperty("midiChannel", 0));
         processor.setMidiDeviceIdentifier(v.getProperty("midiDeviceIdentifier", juce::String()).toString());
         processor.setAudioInputChannelIndex((int) v.getProperty("audioInputChannel", -1));
+        processor.setAudioTakeIdentifier(v.getProperty("audioTakeIdentifier", juce::String()).toString());
 
         // Loading a session onto an already-populated channel replaces
         // whatever was there.
@@ -314,6 +316,9 @@ bool SessionIO::loadSession(const juce::File& file,
             // selection in the combo box.
             mainComponent.refreshChannelTakeList(i);
             mainComponent.resolveMidiTakeSelectionForChannel(i);
+            // Same treatment for a saved audioTakeIdentifier (Increment C).
+            mainComponent.refreshChannelAudioTakeList(i);
+            mainComponent.resolveAudioTakeSelectionForChannel(i);
             mainComponent.refreshChannelUI(i);
         }
     }

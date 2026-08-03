@@ -104,6 +104,23 @@ public:
     void setAudioInputChannelIndex(int index) { audioInputChannelIndex = index; }
     int  getAudioInputChannelIndex() const    { return audioInputChannelIndex; }
 
+    // Audio Take selection (Increment C, see
+    // docs/kplayer-take-recording-playback-spec.md) - a "take:"-prefixed
+    // identifier (see RecordingManager::isTakeIdentifier) referencing a
+    // recorded Channel-N.wav to play back through this channel's insert
+    // chain instead of live hardware input. Mutually exclusive with
+    // audioInputChannelIndex above by UI-layer convention (ChannelComponent
+    // clears one whenever the other is set) rather than by construction -
+    // this field can't just reuse the int one since a file reference can't
+    // fit in a plain index. Read on the audio thread each block (same
+    // "which source feeds this channel" decision as
+    // getMidiDeviceIdentifier() below), so it gets the same
+    // CriticalSection-guarded juce::String pattern for the same reason -
+    // juce::String's ref-counting isn't safe to touch unsynchronized across
+    // threads.
+    void setAudioTakeIdentifier(const juce::String& identifier);
+    juce::String getAudioTakeIdentifier() const;
+
     void   setTempo(double bpm) { playHead.setBpm(bpm); }
     double getTempo() const     { return playHead.getBpm(); }
 
@@ -241,6 +258,16 @@ private:
     int   midiChannel = 0;
     int   audioInputChannelIndex = -1;
 
+    // Mirrors whether audioTakeIdentifier is currently non-empty, but as a
+    // plain bool so processBlock() (audio thread) can check it without
+    // locking audioTakeLock every block - same accepted-tradeoff, single-
+    // writer plain-field convention already used for audioInputChannelIndex
+    // above (see processBlock()'s slot-0-empty passthrough check, which
+    // this extends to also cover an Audio Take source). Only ever written
+    // from setAudioTakeIdentifier() on the message thread; a torn read is
+    // impossible for a plain bool, so no lock is needed on this side.
+    bool hasAudioTakeSelected = false;
+
     juce::Uuid id;
     juce::String name;
     int channelNumber = 0;
@@ -254,6 +281,9 @@ private:
 
     mutable juce::CriticalSection midiDeviceLock;
     juce::String midiDeviceIdentifier;
+
+    mutable juce::CriticalSection audioTakeLock;
+    juce::String audioTakeIdentifier;
 
     void applyGainAndPan(juce::AudioBuffer<float>& buffer);
 

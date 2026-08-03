@@ -260,12 +260,13 @@ void ChannelProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     {
         // Normally nothing loaded in slot 0 means silence - there's no
         // instrument to generate audio. But if this channel has a live
-        // audio input assigned, let it pass straight through to the insert
-        // chain/fader instead of wiping it here, covering the "live
-        // vocals/mixing, no instrument loaded" case from the audio-input
-        // spec (Increment 3 item 8) - vocoding through a loaded instrument
-        // already works via the branches below since they never clear.
-        if (audioInputChannelIndex < 0)
+        // audio input or an Audio Take (Increment C) assigned, let it pass
+        // straight through to the insert chain/fader instead of wiping it
+        // here, covering the "live vocals/mixing, no instrument loaded"
+        // case from the audio-input spec (Increment 3 item 8) - vocoding
+        // through a loaded instrument already works via the branches below
+        // since they never clear.
+        if (audioInputChannelIndex < 0 && ! hasAudioTakeSelected)
             buffer.clear();
     }
     else if (midiChannel > 0)
@@ -372,4 +373,17 @@ juce::String ChannelProcessor::getMidiDeviceIdentifier() const
 {
     const juce::ScopedLock sl(midiDeviceLock);
     return midiDeviceIdentifier;
+}
+
+void ChannelProcessor::setAudioTakeIdentifier(const juce::String& identifier)
+{
+    const juce::ScopedLock sl(audioTakeLock);
+    audioTakeIdentifier = identifier;
+    hasAudioTakeSelected = identifier.isNotEmpty();
+}
+
+juce::String ChannelProcessor::getAudioTakeIdentifier() const
+{
+    const juce::ScopedLock sl(audioTakeLock);
+    return audioTakeIdentifier;
 }

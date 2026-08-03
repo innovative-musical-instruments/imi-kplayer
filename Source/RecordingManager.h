@@ -58,6 +58,11 @@ public:
     // "Recorded Takes" section of its MIDI Input Selector.
     juce::Array<juce::File> findChannelMidiTakes(int channelIndex) const;
 
+    // Same as findChannelMidiTakes() above, but for Audio Takes (Increment
+    // C) - the existing "Channel <N>.wav" recorded-audio files, not new
+    // capture work.
+    juce::Array<juce::File> findChannelAudioTakes(int channelIndex) const;
+
     // MIDI Take identifiers (Increment B): a channel's MIDI Input Selector
     // reuses ChannelProcessor's existing midiDeviceIdentifier string field
     // to also reference a Take file, distinguished by this prefix - avoids
@@ -204,6 +209,10 @@ private:
         std::unique_ptr<juce::AudioFormatWriter::ThreadedWriter> writer;
         std::unique_ptr<MidiCapture> midiCapture;
     };
+
+    // Shared scan behind findChannelMidiTakes()/findChannelAudioTakes() -
+    // same take-folder walk, just a different file extension.
+    juce::Array<juce::File> findChannelTakeFiles(int channelIndex, const juce::String& extension) const;
 
     std::unique_ptr<RecordingTrack> createTrack(const juce::File& file, double sampleRate, int numChannels);
 

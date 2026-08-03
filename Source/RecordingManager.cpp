@@ -16,7 +16,7 @@ RecordingManager::~RecordingManager()
     backgroundThread.stopThread(2000);
 }
 
-juce::Array<juce::File> RecordingManager::findChannelMidiTakes(int channelIndex) const
+juce::Array<juce::File> RecordingManager::findChannelTakeFiles(int channelIndex, const juce::String& extension) const
 {
     juce::Array<juce::File> result;
     if (! recordingsFolder.isDirectory())
@@ -31,10 +31,20 @@ juce::Array<juce::File> RecordingManager::findChannelMidiTakes(int channelIndex)
 
     for (int i = takeFolders.size(); --i >= 0;) // newest-first
         for (const auto& entry : juce::RangedDirectoryIterator(takeFolders.getReference(i), false,
-                                                                baseName + "*.mid", juce::File::findFiles))
+                                                                baseName + "*." + extension, juce::File::findFiles))
             result.add(entry.getFile());
 
     return result;
+}
+
+juce::Array<juce::File> RecordingManager::findChannelMidiTakes(int channelIndex) const
+{
+    return findChannelTakeFiles(channelIndex, "mid");
+}
+
+juce::Array<juce::File> RecordingManager::findChannelAudioTakes(int channelIndex) const
+{
+    return findChannelTakeFiles(channelIndex, "wav");
 }
 
 juce::String RecordingManager::encodeTakeIdentifier(const juce::File& takeFile) const

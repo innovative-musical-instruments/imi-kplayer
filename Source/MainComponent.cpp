@@ -181,12 +181,15 @@ void MainComponent::addChannel(int index)
     component->onArmToggled    = [this, index](bool armed) { setChannelArmed(index, armed); notifyDirty(); };
     component->onMidiTakeSelected   = [this, index](const juce::File& file) { loadMidiTakeForChannel(index, file); };
     component->onMidiTakeDeselected = [this, index] { unloadMidiTakeForChannel(index); };
+    component->onAudioTakeSelected   = [this, index](const juce::File& file) { loadAudioTakeForChannel(index, file); };
+    component->onAudioTakeDeselected = [this, index] { unloadAudioTakeForChannel(index); };
     component->setInputSectionCollapsed(inputSectionCollapsed);
     channelRackContent.addAndMakeVisible(component.get());
 
     channelProcessors.push_back(std::move(processor));
     channelComponents.push_back(std::move(component));
     midiTakePlayers.push_back(std::make_unique<MidiTakePlayer>());
+    audioTakePlayers.push_back(std::make_unique<AudioTakePlayer>());
 }
 
 void MainComponent::setChannelCount(int newCount)
@@ -213,6 +216,7 @@ void MainComponent::setChannelCount(int newCount)
         channelComponents.resize((size_t) newCount);
         channelProcessors.resize((size_t) newCount);
         midiTakePlayers.resize((size_t) newCount);
+        audioTakePlayers.resize((size_t) newCount);
     }
 
     recordingManager.setChannelCount(newCount);
@@ -476,6 +480,32 @@ void MainComponent::resolveMidiTakeSelectionForChannel(int index)
         unloadMidiTakeForChannel(index);
 }
 
+void MainComponent::loadAudioTakeForChannel(int index, const juce::File& file)
+{
+    if (index < 0 || index >= (int) audioTakePlayers.size())
+        return;
+    audioTakePlayers[(size_t) index]->loadTake(file);
+}
+
+void MainComponent::unloadAudioTakeForChannel(int index)
+{
+    if (index < 0 || index >= (int) audioTakePlayers.size())
+        return;
+    audioTakePlayers[(size_t) index]->unload();
+}
+
+void MainComponent::resolveAudioTakeSelectionForChannel(int index)
+{
+    if (index < 0 || index >= (int) channelProcessors.size())
+        return;
+
+    auto identifier = channelProcessors[(size_t) index]->getAudioTakeIdentifier();
+    if (RecordingManager::isTakeIdentifier(identifier))
+        loadAudioTakeForChannel(index, recordingManager.decodeTakeIdentifier(identifier));
+    else
+        unloadAudioTakeForChannel(index);
+}
+
 void MainComponent::setMasterArmed(bool armed)
 {
     // See setChannelArmed() above for why this doesn't self-mark dirty.
@@ -489,11 +519,14 @@ juce::String MainComponent::toggleRecording()
     {
         recordingManager.stopRecording();
         refreshRecordingUI();
-        // New MIDI Take files may now exist (RecordingManager finalizes
-        // them synchronously inside stopRecording(), before returning here)
-        // - let every channel's MIDI Input Selector pick them up.
+        // New MIDI/Audio Take files may now exist (RecordingManager
+        // finalizes them synchronously inside stopRecording(), before
+        // returning here) - let every channel's Input Selectors pick them up.
         for (int i = 0; i < (int) channelComponents.size(); ++i)
+        {
             refreshChannelTakeList(i);
+            refreshChannelAudioTakeList(i);
+        }
         return {};
     }
 
@@ -724,16 +757,29 @@ void MainComponent::audioDeviceIOCallbackWithContext(
         auto& channel = channelProcessors[(size_t) channelIndex];
         channelScratch.clear();
 
-        // Audio input routing (Increment 3 item 8): feed the selected
-        // hardware input channel into both scratch channels before the
-        // plugin chain runs, alongside MIDI - a plugin that doesn't care
-        // about audio input just sees silence (same as before this
-        // feature), and slot 0's input bus is now always enabled to
-        // receive it (see ChannelProcessor::loadPlugin).
-        int inputIndex = channel->getAudioInputChannelIndex();
-        if (inputIndex >= 0 && inputIndex < numInputChannels && inputChannelData[inputIndex] != nullptr)
-            for (int ch = 0; ch < channelScratch.getNumChannels(); ++ch)
-                channelScratch.copyFrom(ch, 0, inputChannelData[inputIndex], numSamples);
+        // Audio input routing (Increment 3 item 8, extended by Increment C
+        // for Audio Take playback): feed either a recorded Audio Take or
+        // the selected hardware input channel into both scratch channels
+        // before the plugin chain runs, alongside MIDI - a plugin that
+        // doesn't care about audio input just sees silence (same as before
+        // this feature), and slot 0's input bus is now always enabled to
+        // receive it (see ChannelProcessor::loadPlugin). An Audio Take is
+        // fully reprocessed by this channel's insert chain from this point
+        // on - not a bypass path, see spec section 3.
+        auto audioTakeIdentifier = channel->getAudioTakeIdentifier();
+        if (RecordingManager::isTakeIdentifier(audioTakeIdentifier))
+        {
+            audioTakePlayers[(size_t) channelIndex]->renderBlock(transportBlockStart, numSamples, transportIsPlaying,
+                                                                  channelScratch.getArrayOfWritePointers(),
+                                                                  channelScratch.getNumChannels());
+        }
+        else
+        {
+            int inputIndex = channel->getAudioInputChannelIndex();
+            if (inputIndex >= 0 && inputIndex < numInputChannels && inputChannelData[inputIndex] != nullptr)
+                for (int ch = 0; ch < channelScratch.getNumChannels(); ++ch)
+                    channelScratch.copyFrom(ch, 0, inputChannelData[inputIndex], numSamples);
+        }
 
         // Each channel gets its own *copy* of its device's MIDI buffer -
         // JUCE plugins can mutate the buffer they're given, and per spec

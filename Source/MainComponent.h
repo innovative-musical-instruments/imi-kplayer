@@ -17,6 +17,7 @@
 #include "MidiClockTempoDetector.h"
 #include "RecordingManager.h"
 #include "MidiTakePlayer.h"
+#include "AudioTakePlayer.h"
 #include "SessionTransport.h"
 
 class MainComponent : public juce::Component,
@@ -105,6 +106,11 @@ public:
     // it doesn't go through onMidiTakeSelected/onMidiTakeDeselected below.
     void resolveMidiTakeSelectionForChannel(int index);
     void refreshChannelTakeList(int index) { channelComponents[(size_t) index]->refreshTakeList(); }
+
+    // Same as the two above, but for Audio Take selection/playback
+    // (Increment C, audioTakeIdentifier rather than midiDeviceIdentifier).
+    void resolveAudioTakeSelectionForChannel(int index);
+    void refreshChannelAudioTakeList(int index) { channelComponents[(size_t) index]->refreshAudioTakeList(); }
 
     // Fired whenever recording starts/stops/auto-stops, so the channel-strip
     // and master-column UI can refresh their arm/recording-active visuals
@@ -227,9 +233,15 @@ private:
     // playhead every player renders against - see its own header for the
     // full design.
     std::vector<std::unique_ptr<MidiTakePlayer>> midiTakePlayers;
+    // Audio Take playback (Increment C) - same parallel-vector treatment as
+    // midiTakePlayers above, driven by the same sessionTransport so a
+    // channel's MIDI and Audio Takes from the same take stay in lockstep.
+    std::vector<std::unique_ptr<AudioTakePlayer>> audioTakePlayers;
     SessionTransport sessionTransport;
     void loadMidiTakeForChannel(int index, const juce::File& file);
     void unloadMidiTakeForChannel(int index);
+    void loadAudioTakeForChannel(int index, const juce::File& file);
+    void unloadAudioTakeForChannel(int index);
 
     juce::Component channelRackContent;
     juce::Viewport  channelViewport;

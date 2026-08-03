@@ -72,10 +72,8 @@ ChannelComponent::ChannelComponent(ChannelProcessor& p, juce::AudioDeviceManager
     addAndMakeVisible(audioInLabel);
 
     availableAudioInputNames = getActiveAudioInputChannelNames(deviceManager);
-    audioInputBox.addItem("None", 1);
-    for (int i = 0; i < availableAudioInputNames.size(); ++i)
-        audioInputBox.addItem(availableAudioInputNames[i], i + 2);
-    audioInputBox.setSelectedId(1, juce::dontSendNotification);
+    availableChannelAudioTakes = recordingManager.findChannelAudioTakes(channelNumber - 1);
+    rebuildAudioInputBox();
     audioInputBox.addListener(this);
     audioInputBox.setLookAndFeel(selectorLookAndFeel.get());
     addAndMakeVisible(audioInputBox);
@@ -324,9 +322,8 @@ void ChannelComponent::refresh()
 
     midiDeviceBox.setSelectedId(midiDeviceItemIdFor(processor.getMidiDeviceIdentifier()), juce::dontSendNotification);
 
-    int audioInputIndex = processor.getAudioInputChannelIndex();
     audioInputBox.setSelectedId(
-        (audioInputIndex >= 0 && audioInputIndex < availableAudioInputNames.size()) ? audioInputIndex + 2 : 1,
+        audioInputItemIdFor(processor.getAudioInputChannelIndex(), processor.getAudioTakeIdentifier()),
         juce::dontSendNotification);
 
     muteButton.setToggleState(processor.isMuted(), juce::dontSendNotification);
@@ -456,7 +453,35 @@ void ChannelComponent::comboBoxChanged(juce::ComboBox* combo)
     else if (combo == &audioInputBox)
     {
         int selected = audioInputBox.getSelectedId();
-        processor.setAudioInputChannelIndex(selected <= 1 ? -1 : selected - 2);
+        if (selected >= takeIdBase)
+        {
+            int index = selected - takeIdBase;
+            if (index >= 0 && index < availableChannelAudioTakes.size())
+            {
+                auto takeFile = availableChannelAudioTakes.getReference(index);
+                processor.setAudioInputChannelIndex(-1);
+                processor.setAudioTakeIdentifier(recordingManager.encodeTakeIdentifier(takeFile));
+
+                // A loaded slot-0 instrument would otherwise synthesize from
+                // MIDI (or sit silent) and never touch this incoming audio,
+                // masking the Take with no visible explanation - one-time
+                // convenience bypass so the Take is audible by default. Only
+                // ever auto-*bypasses*, never auto-unbypasses: the user is
+                // free to unbypass afterward to feed the Take into the
+                // instrument instead (e.g. as a vocoder modulator/carrier),
+                // and that choice is never undone by this selector again.
+                if (processor.hasPlugin(ChannelProcessor::slot0Index))
+                    processor.setBypassed(ChannelProcessor::slot0Index, true);
+
+                if (onAudioTakeSelected) onAudioTakeSelected(takeFile);
+            }
+        }
+        else
+        {
+            processor.setAudioInputChannelIndex(selected <= 1 ? -1 : selected - 2);
+            processor.setAudioTakeIdentifier({});
+            if (onAudioTakeDeselected) onAudioTakeDeselected();
+        }
         updateAudioInputWarning();
     }
 
@@ -558,32 +583,81 @@ void ChannelComponent::refreshAudioInputList()
         return;
 
     availableAudioInputNames = freshNames;
+    rebuildAudioInputBox();
+}
+
+void ChannelComponent::refreshAudioTakeList()
+{
+    auto freshTakes = recordingManager.findChannelAudioTakes(channelNumber - 1);
+    if (freshTakes == availableChannelAudioTakes)
+        return;
+
+    availableChannelAudioTakes = freshTakes;
+    rebuildAudioInputBox();
+}
+
+void ChannelComponent::rebuildAudioInputBox()
+{
+    auto channelIndex   = processor.getAudioInputChannelIndex();
+    auto takeIdentifier = processor.getAudioTakeIdentifier();
 
     audioInputBox.clear(juce::dontSendNotification);
     audioInputBox.addItem("None", 1);
     for (int i = 0; i < availableAudioInputNames.size(); ++i)
         audioInputBox.addItem(availableAudioInputNames[i], i + 2);
 
+    if (! availableChannelAudioTakes.isEmpty())
+    {
+        audioInputBox.addSeparator();
+        audioInputBox.addSectionHeading("Recorded Takes");
+        for (int i = 0; i < availableChannelAudioTakes.size(); ++i)
+            audioInputBox.addItem("Take " + availableChannelAudioTakes.getReference(i).getParentDirectory().getFileName(),
+                                  takeIdBase + i);
+    }
+
+    audioInputBox.setSelectedId(audioInputItemIdFor(channelIndex, takeIdentifier), juce::dontSendNotification);
+}
+
+int ChannelComponent::audioInputItemIdFor(int channelIndex, const juce::String& takeIdentifier) const
+{
+    if (RecordingManager::isTakeIdentifier(takeIdentifier))
+    {
+        auto takeFile = recordingManager.decodeTakeIdentifier(takeIdentifier);
+        for (int i = 0; i < availableChannelAudioTakes.size(); ++i)
+            if (availableChannelAudioTakes.getReference(i) == takeFile)
+                return takeIdBase + i;
+        return 1; // selected take no longer found on disk - falls back to "None" visually, see updateAudioInputWarning()
+    }
+
     // The stored value is a plain index into the active-channel list, not
     // a stable identifier (individual audio channels don't have one, unlike
     // MIDI devices) - just reflect whatever it now points at, or "None" if
     // out of range; updateAudioInputWarning() flags the mismatch visually
     // rather than silently reassigning it.
-    int index = processor.getAudioInputChannelIndex();
-    audioInputBox.setSelectedId(
-        (index >= 0 && index < availableAudioInputNames.size()) ? index + 2 : 1,
-        juce::dontSendNotification);
+    return (channelIndex >= 0 && channelIndex < availableAudioInputNames.size()) ? channelIndex + 2 : 1;
 }
 
 void ChannelComponent::updateAudioInputWarning()
 {
-    int index = processor.getAudioInputChannelIndex();
-    bool missing = index >= 0 && index >= availableAudioInputNames.size();
+    auto takeIdentifier = processor.getAudioTakeIdentifier();
+    bool missing = false;
+    juce::String tooltip;
+
+    if (RecordingManager::isTakeIdentifier(takeIdentifier))
+    {
+        missing = ! recordingManager.decodeTakeIdentifier(takeIdentifier).existsAsFile();
+        tooltip = "This channel's recorded Take is missing on disk";
+    }
+    else
+    {
+        int index = processor.getAudioInputChannelIndex();
+        missing = index >= 0 && index >= availableAudioInputNames.size();
+        tooltip = "This channel's audio input is not currently active";
+    }
 
     audioInputBox.setColour(juce::ComboBox::textColourId,
                             missing ? juce::Colours::orange : juce::Colours::white);
-    audioInputBox.setTooltip(missing ? "This channel's audio input is not currently active"
-                                     : juce::String());
+    audioInputBox.setTooltip(missing ? tooltip : juce::String());
 }
 
 void ChannelComponent::paint(juce::Graphics& g)

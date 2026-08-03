@@ -104,7 +104,10 @@ target_sources(IMI_KPlayer PRIVATE
     Source/RecordingManager.h
     Source/MidiTakePlayer.cpp
     Source/MidiTakePlayer.h
+    Source/AudioTakePlayer.cpp
+    Source/AudioTakePlayer.h
     Source/SessionTransport.h
+    Source/TransportButtonLookAndFeel.h
     Source/ConsoleFaderLookAndFeel.h
     Source/LoadingOverlayComponent.h
     Source/SessionIO.cpp
