@@ -7,6 +7,7 @@
 #include "ConsoleFaderLookAndFeel.h"
 #include "SelectorLookAndFeel.h"
 #include "SlotButtonLookAndFeel.h"
+#include "RecordingManager.h"
 
 class ChannelComponent : public juce::Component,
                          public juce::Slider::Listener,
@@ -36,21 +37,45 @@ public:
     // than rejecting the click).
     std::function<void(bool armed)> onArmToggled;
 
+    // MIDI Take playback (Increment B, see
+    // docs/kplayer-take-recording-playback-spec.md): fired when the user
+    // picks/leaves a "Recorded Takes" entry in the MIDI Input Selector.
+    // ChannelComponent itself has no reference to MainComponent's
+    // per-channel MidiTakePlayer array, so loading/unloading the actual
+    // player is MainComponent's job - this just reports the user's choice,
+    // same shape as onArmToggled above. setMidiDeviceIdentifier() is still
+    // called directly by this component either way (see comboBoxChanged),
+    // matching how a live-device selection is handled.
+    std::function<void(const juce::File& takeFile)> onMidiTakeSelected;
+    std::function<void()> onMidiTakeDeselected;
+
     // deviceManager is needed to enumerate active audio input channels for
     // the audio-input selector (Increment 3 item 8) and to be notified when
     // the active device/channel set changes (AudioDeviceManager is a
     // ChangeBroadcaster) - mirrors why SettingsComponent takes one too.
+    // recordingManager is needed to enumerate this channel's own recorded
+    // MIDI Takes (RecordingManager::findChannelMidiTakes) for the same
+    // selector's "Recorded Takes" section, and to encode/decode the take:
+    // identifiers stored via ChannelProcessor::setMidiDeviceIdentifier - see
+    // RecordingManager::encodeTakeIdentifier/decodeTakeIdentifier.
     // channelNumber is the fixed, 1-based, non-editable position shown as
     // "Channel N" (or the "N." prefix once a custom name is set, item 1.1)
     // - derived from the channel's position in MainComponent's vectors,
     // which channels are only ever appended to or truncated from the tail
     // of, so a given channel's number never changes after construction.
-    ChannelComponent(ChannelProcessor& processor, juce::AudioDeviceManager& deviceManager, int channelNumber);
+    ChannelComponent(ChannelProcessor& processor, juce::AudioDeviceManager& deviceManager,
+                     RecordingManager& recordingManager, int channelNumber);
     ~ChannelComponent() override;
 
     void paint(juce::Graphics&) override;
     void resized() override;
     void refresh();
+
+    // Re-scans this channel's Takes from disk and rebuilds the MIDI Input
+    // Selector's "Recorded Takes" section - called by MainComponent right
+    // after a recording finishes (new Take files may now exist). Safe to
+    // call at any time otherwise, same as refreshMidiDeviceList().
+    void refreshTakeList();
 
     // Global collapse toggle (all channels move together, driven from
     // MainComponent) - hides the Audio In/MIDI In/MIDI Ch rows, leaving the
@@ -68,9 +93,16 @@ public:
 
 private:
     void refreshMidiDeviceList();
-    // Shared by the constructor and refreshMidiDeviceList(): the midiDeviceBox
-    // item id (1 = "None", 2.. = availableMidiInputs index) matching a given
-    // device identifier, or 1 if it's empty/not found.
+    // Rebuilds midiDeviceBox from scratch (None + live devices + the
+    // Recorded Takes section) and restores the selection matching
+    // processor.getMidiDeviceIdentifier() - the one place that touches the
+    // combo box's contents, called by both refreshMidiDeviceList() (live
+    // device hotplug) and refreshTakeList() (new Take files on disk) so the
+    // two sections never get rebuilt out of step with each other.
+    void rebuildMidiInputBox();
+    // Item id for a given identifier - live devices are 2..availableMidiInputs.size()+1,
+    // Take entries are takeIdBase..takeIdBase+availableChannelTakes.size()-1,
+    // "None"/not-found is 1.
     int midiDeviceItemIdFor(const juce::String& identifier) const;
     void updateMidiDeviceWarning();
     void refreshAudioInputList();
@@ -79,6 +111,7 @@ private:
 
     ChannelProcessor& processor;
     juce::AudioDeviceManager& deviceManager;
+    RecordingManager& recordingManager;
     int channelNumber = 1;
     bool inputCollapsed = false;
 
@@ -106,6 +139,12 @@ private:
     juce::ComboBox   midiDeviceBox;
     juce::Array<juce::MidiDeviceInfo> availableMidiInputs;
     juce::MidiDeviceListConnection midiDeviceListConnection;
+
+    // MIDI Take entries in midiDeviceBox (Increment B) - item ids
+    // takeIdBase..takeIdBase+availableChannelTakes.size()-1, in the same
+    // order as this array. See rebuildMidiInputBox().
+    static constexpr int takeIdBase = 10000;
+    juce::Array<juce::File> availableChannelTakes;
 
     juce::ComboBox   midiChannelBox;
     juce::Slider     gainSlider;

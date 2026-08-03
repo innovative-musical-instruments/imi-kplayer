@@ -304,6 +304,16 @@ bool SessionIO::loadSession(const juce::File& file,
             applyChannelVar(mainComponent.getChannelProcessor(i), channelVar,
                             pluginManager.getFormatManager(), sampleRate, blockSize, i);
             mainComponent.setChannelArmed(i, (bool) channelVar.getProperty("armed", false));
+            // A saved midiDeviceIdentifier may reference a Take (see
+            // RecordingManager::isTakeIdentifier) - applyChannelVar() above
+            // set it directly on ChannelProcessor, bypassing
+            // ChannelComponent's onMidiTakeSelected/onMidiTakeDeselected, so
+            // the corresponding MidiTakePlayer needs loading explicitly.
+            // refreshChannelTakeList() picks up this session's recordingsFolder
+            // (already set above) before refreshChannelUI() reflects the
+            // selection in the combo box.
+            mainComponent.refreshChannelTakeList(i);
+            mainComponent.resolveMidiTakeSelectionForChannel(i);
             mainComponent.refreshChannelUI(i);
         }
     }

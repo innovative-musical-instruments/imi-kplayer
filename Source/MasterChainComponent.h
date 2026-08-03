@@ -7,6 +7,7 @@
 #include "PeakMeterComponent.h"
 #include "ConsoleFaderLookAndFeel.h"
 #include "SlotButtonLookAndFeel.h"
+#include "TransportButtonLookAndFeel.h"
 
 // The master bus strip: the insert-slot buttons (same load/replace/remove/
 // bypass popup-menu pattern as ChannelComponent's insert slots, applied
@@ -34,6 +35,17 @@ public:
     // immediately rather than being rejected.
     std::function<void(bool armed)> onMasterArmToggled;
     std::function<void()> onRecordButtonClicked;
+
+    // Minimal session transport for MIDI Take playback (Increment B, see
+    // docs/kplayer-take-recording-playback-spec.md and SessionTransport's
+    // own header for the full design) - independent of the arm/record
+    // controls above. Not MIDI-remote-controllable in this increment
+    // (unlike arm/record's CC104/102), so the Play/Pause button's visual
+    // state is purely self-managed here and reported outward, same shape as
+    // armButton's own onClick below - no external setter needed since
+    // nothing else can change it out from under the button.
+    std::function<void()> onPlayPauseClicked;
+    std::function<void()> onRtzClicked;
 
     explicit MasterChainComponent(MasterChainProcessor& processor);
     ~MasterChainComponent() override;
@@ -75,6 +87,12 @@ private:
     bool armed = false;
     bool recordingActive = false;
     void updateArmAndRecordButtons();
+
+    juce::TextButton playPauseButton;
+    juce::TextButton rtzButton;
+    std::unique_ptr<TransportButtonLookAndFeel> transportButtonLookAndFeel;
+    bool transportPlaying = false;
+    void updateTransportButtons();
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MasterChainComponent)
 };

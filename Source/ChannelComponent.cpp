@@ -22,8 +22,9 @@ namespace
     }
 }
 
-ChannelComponent::ChannelComponent(ChannelProcessor& p, juce::AudioDeviceManager& dm, int channelNum)
-    : processor(p), deviceManager(dm), channelNumber(channelNum)
+ChannelComponent::ChannelComponent(ChannelProcessor& p, juce::AudioDeviceManager& dm,
+                                   RecordingManager& rm, int channelNum)
+    : processor(p), deviceManager(dm), recordingManager(rm), channelNumber(channelNum)
 {
     // Gain caps are twice as tall as the base size; pan caps are half as
     // wide - both cosmetic-only, per user request, not a track-length change.
@@ -88,16 +89,13 @@ ChannelComponent::ChannelComponent(ChannelProcessor& p, juce::AudioDeviceManager
     addAndMakeVisible(midiInLabel);
 
     availableMidiInputs = juce::MidiInput::getAvailableDevices();
-    midiDeviceBox.addItem("None", 1);
-    for (int i = 0; i < availableMidiInputs.size(); ++i)
-        midiDeviceBox.addItem(availableMidiInputs[i].name, i + 2);
-
+    availableChannelTakes = recordingManager.findChannelMidiTakes(channelNumber - 1);
     // Reflects whatever's already on the processor rather than deciding a
     // default itself - MainComponent::addChannel() decides that (it alone
     // can see every other channel's current MIDI device/channel, needed to
     // find the next free Kadabra channel) before constructing this component,
     // and a session load overrides it again afterward the same way.
-    midiDeviceBox.setSelectedId(midiDeviceItemIdFor(processor.getMidiDeviceIdentifier()), juce::dontSendNotification);
+    rebuildMidiInputBox();
     midiDeviceBox.addListener(this);
     midiDeviceBox.setLookAndFeel(selectorLookAndFeel.get());
     addAndMakeVisible(midiDeviceBox);
@@ -324,17 +322,7 @@ void ChannelComponent::refresh()
     int midiChannel = processor.getMidiChannel();
     midiChannelBox.setSelectedId(midiChannel <= 0 ? 1 : midiChannel + 1, juce::dontSendNotification);
 
-    auto deviceId = processor.getMidiDeviceIdentifier();
-    int deviceItemId = 1;
-    for (int i = 0; i < availableMidiInputs.size(); ++i)
-    {
-        if (availableMidiInputs[i].identifier == deviceId)
-        {
-            deviceItemId = i + 2;
-            break;
-        }
-    }
-    midiDeviceBox.setSelectedId(deviceItemId, juce::dontSendNotification);
+    midiDeviceBox.setSelectedId(midiDeviceItemIdFor(processor.getMidiDeviceIdentifier()), juce::dontSendNotification);
 
     int audioInputIndex = processor.getAudioInputChannelIndex();
     audioInputBox.setSelectedId(
@@ -444,12 +432,24 @@ void ChannelComponent::comboBoxChanged(juce::ComboBox* combo)
         if (selected <= 1)
         {
             processor.setMidiDeviceIdentifier({});
+            if (onMidiTakeDeselected) onMidiTakeDeselected();
+        }
+        else if (selected >= takeIdBase)
+        {
+            int index = selected - takeIdBase;
+            if (index >= 0 && index < availableChannelTakes.size())
+            {
+                auto takeFile = availableChannelTakes.getReference(index);
+                processor.setMidiDeviceIdentifier(recordingManager.encodeTakeIdentifier(takeFile));
+                if (onMidiTakeSelected) onMidiTakeSelected(takeFile);
+            }
         }
         else
         {
             int index = selected - 2;
             if (index >= 0 && index < availableMidiInputs.size())
                 processor.setMidiDeviceIdentifier(availableMidiInputs[index].identifier);
+            if (onMidiTakeDeselected) onMidiTakeDeselected();
         }
         updateMidiDeviceWarning();
     }
@@ -469,19 +469,52 @@ void ChannelComponent::refreshMidiDeviceList()
     if (freshDevices == availableMidiInputs)
         return;
 
-    auto currentIdentifier = processor.getMidiDeviceIdentifier();
     availableMidiInputs = freshDevices;
+    rebuildMidiInputBox();
+}
+
+void ChannelComponent::refreshTakeList()
+{
+    auto freshTakes = recordingManager.findChannelMidiTakes(channelNumber - 1);
+    if (freshTakes == availableChannelTakes)
+        return;
+
+    availableChannelTakes = freshTakes;
+    rebuildMidiInputBox();
+}
+
+void ChannelComponent::rebuildMidiInputBox()
+{
+    auto currentIdentifier = processor.getMidiDeviceIdentifier();
 
     midiDeviceBox.clear(juce::dontSendNotification);
     midiDeviceBox.addItem("None", 1);
     for (int i = 0; i < availableMidiInputs.size(); ++i)
         midiDeviceBox.addItem(availableMidiInputs[i].name, i + 2);
 
+    if (! availableChannelTakes.isEmpty())
+    {
+        midiDeviceBox.addSeparator();
+        midiDeviceBox.addSectionHeading("Recorded Takes");
+        for (int i = 0; i < availableChannelTakes.size(); ++i)
+            midiDeviceBox.addItem("Take " + availableChannelTakes.getReference(i).getParentDirectory().getFileName(),
+                                  takeIdBase + i);
+    }
+
     midiDeviceBox.setSelectedId(midiDeviceItemIdFor(currentIdentifier), juce::dontSendNotification);
 }
 
 int ChannelComponent::midiDeviceItemIdFor(const juce::String& identifier) const
 {
+    if (RecordingManager::isTakeIdentifier(identifier))
+    {
+        auto takeFile = recordingManager.decodeTakeIdentifier(identifier);
+        for (int i = 0; i < availableChannelTakes.size(); ++i)
+            if (availableChannelTakes.getReference(i) == takeFile)
+                return takeIdBase + i;
+        return 1; // selected take no longer found on disk - falls back to "None" visually, see updateMidiDeviceWarning()
+    }
+
     for (int i = 0; i < availableMidiInputs.size(); ++i)
         if (availableMidiInputs[i].identifier == identifier)
             return i + 2;
@@ -492,18 +525,24 @@ void ChannelComponent::updateMidiDeviceWarning()
 {
     auto deviceId = processor.getMidiDeviceIdentifier();
     bool missing = false;
+    juce::String tooltip;
 
-    if (deviceId.isNotEmpty())
+    if (RecordingManager::isTakeIdentifier(deviceId))
+    {
+        missing = ! recordingManager.decodeTakeIdentifier(deviceId).existsAsFile();
+        tooltip = "This channel's recorded Take is missing on disk";
+    }
+    else if (deviceId.isNotEmpty())
     {
         auto currentDevices = juce::MidiInput::getAvailableDevices();
         missing = std::none_of(currentDevices.begin(), currentDevices.end(),
                                [&](const juce::MidiDeviceInfo& d) { return d.identifier == deviceId; });
+        tooltip = "This channel's MIDI device is not currently connected";
     }
 
     midiDeviceBox.setColour(juce::ComboBox::textColourId,
                             missing ? juce::Colours::orange : juce::Colours::white);
-    midiDeviceBox.setTooltip(missing ? "This channel's MIDI device is not currently connected"
-                                     : juce::String());
+    midiDeviceBox.setTooltip(missing ? tooltip : juce::String());
 }
 
 void ChannelComponent::changeListenerCallback(juce::ChangeBroadcaster*)

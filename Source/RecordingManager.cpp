@@ -1,4 +1,5 @@
 #include "RecordingManager.h"
+#include <cstring>
 
 RecordingManager::RecordingManager()
 {
@@ -15,6 +16,39 @@ RecordingManager::~RecordingManager()
     backgroundThread.stopThread(2000);
 }
 
+juce::Array<juce::File> RecordingManager::findChannelMidiTakes(int channelIndex) const
+{
+    juce::Array<juce::File> result;
+    if (! recordingsFolder.isDirectory())
+        return result;
+
+    juce::String baseName = "Channel " + juce::String(channelIndex + 1);
+
+    juce::Array<juce::File> takeFolders;
+    for (const auto& entry : juce::RangedDirectoryIterator(recordingsFolder, false, "*", juce::File::findDirectories))
+        takeFolders.add(entry.getFile());
+    takeFolders.sort(); // take-folder names are %Y-%m-%d_%H-%M-%S, so lexicographic order == chronological order
+
+    for (int i = takeFolders.size(); --i >= 0;) // newest-first
+        for (const auto& entry : juce::RangedDirectoryIterator(takeFolders.getReference(i), false,
+                                                                baseName + "*.mid", juce::File::findFiles))
+            result.add(entry.getFile());
+
+    return result;
+}
+
+juce::String RecordingManager::encodeTakeIdentifier(const juce::File& takeFile) const
+{
+    return juce::String(takeIdentifierPrefix) + takeFile.getRelativePathFrom(recordingsFolder);
+}
+
+juce::File RecordingManager::decodeTakeIdentifier(const juce::String& identifier) const
+{
+    if (! isTakeIdentifier(identifier))
+        return {};
+    return recordingsFolder.getChildFile(identifier.substring((int) juce::String(takeIdentifierPrefix).length()));
+}
+
 void RecordingManager::setChannelCount(int count)
 {
     // Retire any track beyond the new count that was still recording -
@@ -22,12 +56,12 @@ void RecordingManager::setChannelCount(int count)
     // this keeps it from leaking a dangling file handle rather than
     // crashing or corrupting anything.
     for (int i = count; i < (int) channelArmed.size() && i < maxTracks; ++i)
-        retireTrack(channelTrackStorage[(size_t) i], channelTrackPublished[(size_t) i]);
+        retireTrack(channelTrackStorage[(size_t) i], channelTrackPublished[(size_t) i], recordingSampleRate);
 
     channelArmed.resize((size_t) count, false);
 }
 
-void RecordingManager::setChannelArmed(int channelIndex, bool armed)
+void RecordingManager::setChannelArmed(int channelIndex, bool armed, double bpm)
 {
     if (channelIndex < 0 || channelIndex >= (int) channelArmed.size() || channelIndex >= maxTracks)
         return;
@@ -41,8 +75,9 @@ void RecordingManager::setChannelArmed(int channelIndex, bool armed)
 
     if (armed)
     {
-        auto file = uniqueTakeFile(currentTakeFolder, "Channel " + juce::String(channelIndex + 1));
-        auto track = createTrack(file, recordingSampleRate, recordingNumChannelChannels);
+        auto audioFile = uniqueTakeFile(currentTakeFolder, "Channel " + juce::String(channelIndex + 1));
+        auto midiFile  = uniqueTakeFile(currentTakeFolder, "Channel " + juce::String(channelIndex + 1), "mid");
+        auto track = createChannelTrack(audioFile, midiFile, recordingSampleRate, recordingNumChannelChannels, bpm);
         // A failure here (e.g. disk full mid-take) just means this one
         // source silently isn't captured - same failure mode as any other
         // file-system error during a take, not worth interrupting the rest
@@ -56,7 +91,8 @@ void RecordingManager::setChannelArmed(int channelIndex, bool armed)
     }
     else
     {
-        retireTrack(channelTrackStorage[(size_t) channelIndex], channelTrackPublished[(size_t) channelIndex]);
+        retireTrack(channelTrackStorage[(size_t) channelIndex], channelTrackPublished[(size_t) channelIndex],
+                    recordingSampleRate);
     }
 }
 
@@ -88,15 +124,16 @@ void RecordingManager::setMasterArmed(bool armed)
     }
     else
     {
-        retireTrack(masterTrackStorage, masterTrackPublished);
+        retireTrack(masterTrackStorage, masterTrackPublished, recordingSampleRate);
     }
 }
 
-juce::File RecordingManager::uniqueTakeFile(const juce::File& folder, const juce::String& baseName)
+juce::File RecordingManager::uniqueTakeFile(const juce::File& folder, const juce::String& baseName,
+                                             const juce::String& extension)
 {
-    auto candidate = folder.getChildFile(baseName + ".wav");
+    auto candidate = folder.getChildFile(baseName + "." + extension);
     for (int suffix = 2; candidate.existsAsFile(); ++suffix)
-        candidate = folder.getChildFile(baseName + " (" + juce::String(suffix) + ").wav");
+        candidate = folder.getChildFile(baseName + " (" + juce::String(suffix) + ")." + extension);
     return candidate;
 }
 
@@ -124,6 +161,19 @@ std::unique_ptr<RecordingManager::RecordingTrack> RecordingManager::createTrack(
     // typical available RAM.
     track->writer = std::make_unique<juce::AudioFormatWriter::ThreadedWriter>(
         writer.release(), backgroundThread, 32768);
+    return track;
+}
+
+std::unique_ptr<RecordingManager::RecordingTrack> RecordingManager::createChannelTrack(
+    const juce::File& audioFile, const juce::File& midiFile, double sampleRate, int numChannels, double bpm)
+{
+    auto track = createTrack(audioFile, sampleRate, numChannels);
+    if (track == nullptr)
+        return nullptr;
+
+    track->midiCapture = std::make_unique<MidiCapture>();
+    track->midiCapture->captureBpm = bpm;
+    track->midiCapture->targetFile = midiFile;
     return track;
 }
 
@@ -168,12 +218,14 @@ void RecordingManager::publishTrack(std::unique_ptr<RecordingTrack>& storage,
 }
 
 void RecordingManager::retireTrack(std::unique_ptr<RecordingTrack>& storage,
-                                    std::atomic<RecordingTrack*>& published)
+                                    std::atomic<RecordingTrack*>& published,
+                                    double recordingSampleRate)
 {
     if (storage == nullptr)
         return;
     published.store(nullptr, std::memory_order_release);
     juce::Thread::sleep(50);
+    drainAndFinalizeMidi(*storage, recordingSampleRate);
     storage.reset();
 }
 
@@ -182,13 +234,78 @@ void RecordingManager::teardownAllTracks()
     for (size_t i = 0; i < channelTrackStorage.size(); ++i)
     {
         channelTrackPublished[i].store(nullptr, std::memory_order_relaxed);
+        if (channelTrackStorage[i] != nullptr)
+            drainAndFinalizeMidi(*channelTrackStorage[i], recordingSampleRate);
         channelTrackStorage[i].reset();
     }
     masterTrackPublished.store(nullptr, std::memory_order_relaxed);
     masterTrackStorage.reset();
 }
 
-juce::String RecordingManager::startRecording(double sampleRate, int numChannelChannels, int numMasterChannels)
+void RecordingManager::drainMidiCapture(RecordingTrack& track, double recordingSampleRate)
+{
+    if (track.midiCapture == nullptr)
+        return;
+
+    auto& capture = *track.midiCapture;
+    int numReady = capture.fifo.getNumReady();
+    if (numReady <= 0)
+        return;
+
+    int start1, size1, start2, size2;
+    capture.fifo.prepareToRead(numReady, start1, size1, start2, size2);
+
+    auto appendEvent = [&](const CapturedMidiEvent& e)
+    {
+        double seconds = (double) e.takeElapsedSamples / recordingSampleRate;
+        double ticks = seconds * (capture.captureBpm / 60.0) * (double) ticksPerQuarterNote;
+        capture.sequence.addEvent(juce::MidiMessage(e.data, (int) e.numBytes, ticks));
+    };
+
+    for (int i = 0; i < size1; ++i)
+        appendEvent(capture.ring[(size_t) (start1 + i)]);
+    for (int i = 0; i < size2; ++i)
+        appendEvent(capture.ring[(size_t) (start2 + i)]);
+
+    capture.fifo.finishedRead(size1 + size2);
+}
+
+void RecordingManager::drainAndFinalizeMidi(RecordingTrack& track, double recordingSampleRate)
+{
+    if (track.midiCapture == nullptr)
+        return;
+
+    // One last catch-up drain - by the time this runs (retireTrack()'s
+    // drain-margin sleep, or teardownAllTracks() after stopRecording()'s
+    // own drain sleep) the audio thread is guaranteed to have stopped
+    // writing to this track, so nothing more will arrive after this.
+    drainMidiCapture(track, recordingSampleRate);
+
+    auto& capture = *track.midiCapture;
+    if (capture.sequence.getNumEvents() == 0)
+        return; // channel was armed but nothing played - no .mid to write
+
+    capture.sequence.updateMatchedPairs();
+
+    juce::MidiFile midiFile;
+    midiFile.setTicksPerQuarterNote(ticksPerQuarterNote);
+    midiFile.addTrack(capture.sequence);
+
+    if (auto stream = capture.targetFile.createOutputStream())
+        midiFile.writeTo(*stream);
+}
+
+void RecordingManager::pollMidiCapture()
+{
+    if (! isRecording())
+        return;
+
+    for (auto& storage : channelTrackStorage)
+        if (storage != nullptr)
+            drainMidiCapture(*storage, recordingSampleRate);
+}
+
+juce::String RecordingManager::startRecording(double sampleRate, int numChannelChannels, int numMasterChannels, double bpm)
 {
     if (isRecording())
         return {};
@@ -222,8 +339,9 @@ juce::String RecordingManager::startRecording(double sampleRate, int numChannelC
         if (! channelArmed[i])
             continue;
 
-        auto file = uniqueTakeFile(takeFolder, "Channel " + juce::String((int) i + 1));
-        auto track = createTrack(file, sampleRate, numChannelChannels);
+        auto audioFile = uniqueTakeFile(takeFolder, "Channel " + juce::String((int) i + 1));
+        auto midiFile  = uniqueTakeFile(takeFolder, "Channel " + juce::String((int) i + 1), "mid");
+        auto track = createChannelTrack(audioFile, midiFile, sampleRate, numChannelChannels, bpm);
         if (track == nullptr)
         {
             teardownAllTracks();
@@ -303,6 +421,40 @@ void RecordingManager::writeChannelBlock(int channelIndex, const juce::AudioBuff
         blockHadSignalThisCallback = true;
 
     track->writer->write(buffer.getArrayOfReadPointers(), buffer.getNumSamples());
+}
+
+void RecordingManager::writeChannelMidiBlock(int channelIndex, const juce::MidiBuffer& midi)
+{
+    if (! recording.load(std::memory_order_acquire))
+        return;
+    if (channelIndex < 0 || channelIndex >= maxTracks)
+        return;
+
+    auto* track = channelTrackPublished[(size_t) channelIndex].load(std::memory_order_acquire);
+    if (track == nullptr || track->midiCapture == nullptr)
+        return;
+
+    auto& capture = *track->midiCapture;
+    auto takeElapsedBeforeThisBlock = samplesRecorded.load(std::memory_order_relaxed);
+
+    for (const auto meta : midi)
+    {
+        auto msg = meta.getMessage();
+        int numBytes = msg.getRawDataSize();
+        if (numBytes <= 0 || numBytes > 3)
+            continue; // SysEx/other large messages aren't captured - see writeChannelMidiBlock's header comment
+
+        int start1, size1, start2, size2;
+        capture.fifo.prepareToWrite(1, start1, size1, start2, size2);
+        if (size1 <= 0)
+            continue; // ring buffer full - drop this event rather than block/interrupt the take
+
+        auto& slot = capture.ring[(size_t) start1];
+        slot.takeElapsedSamples = takeElapsedBeforeThisBlock + meta.samplePosition;
+        slot.numBytes = (uint8_t) numBytes;
+        std::memcpy(slot.data, msg.getRawData(), (size_t) numBytes);
+        capture.fifo.finishedWrite(1);
+    }
 }
 
 void RecordingManager::writeMasterBlock(const juce::AudioBuffer<float>& buffer)

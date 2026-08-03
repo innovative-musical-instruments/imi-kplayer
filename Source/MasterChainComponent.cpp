@@ -78,6 +78,28 @@ MasterChainComponent::MasterChainComponent(MasterChainProcessor& p)
     addAndMakeVisible(recordButton);
 
     updateArmAndRecordButtons();
+
+    // Icons are vector-drawn by TransportButtonLookAndFeel rather than
+    // Unicode glyphs (see that class's header comment for why) - the button
+    // text below is a sentinel it dispatches on, not shown to the user.
+    transportButtonLookAndFeel = std::make_unique<TransportButtonLookAndFeel>();
+
+    playPauseButton.onClick = [this]
+    {
+        transportPlaying = ! transportPlaying;
+        updateTransportButtons();
+        if (onPlayPauseClicked) onPlayPauseClicked();
+    };
+    playPauseButton.setLookAndFeel(transportButtonLookAndFeel.get());
+    addAndMakeVisible(playPauseButton);
+
+    rtzButton.setButtonText("RTZ");
+    rtzButton.setTooltip("Return to zero");
+    rtzButton.onClick = [this] { if (onRtzClicked) onRtzClicked(); };
+    rtzButton.setLookAndFeel(transportButtonLookAndFeel.get());
+    addAndMakeVisible(rtzButton);
+
+    updateTransportButtons();
 }
 
 MasterChainComponent::~MasterChainComponent()
@@ -85,6 +107,8 @@ MasterChainComponent::~MasterChainComponent()
     volumeSlider.setLookAndFeel(nullptr);
     for (auto& button : slotButtons)
         button.setLookAndFeel(nullptr);
+    playPauseButton.setLookAndFeel(nullptr);
+    rtzButton.setLookAndFeel(nullptr);
 }
 
 void MasterChainComponent::setVolume(float linearGain)
@@ -120,6 +144,18 @@ void MasterChainComponent::updateArmAndRecordButtons()
     recordButton.setColour(juce::TextButton::textColourOffId,
                            recordingActive ? juce::Colours::white : juce::Colour(0xffaaaaaa));
     recordButton.setTooltip(recordingActive ? "Stop recording" : "Start recording every armed channel/master");
+}
+
+void MasterChainComponent::updateTransportButtons()
+{
+    // Sentinel text TransportButtonLookAndFeel dispatches on - see its
+    // header comment.
+    playPauseButton.setButtonText(transportPlaying ? "PAUSE" : "PLAY");
+    playPauseButton.setColour(juce::TextButton::buttonColourId,
+                              transportPlaying ? juce::Colour(0xff2a6b3d) : juce::Colour(0xff2a2a3e));
+    playPauseButton.setColour(juce::TextButton::textColourOffId,
+                              transportPlaying ? juce::Colours::white : juce::Colour(0xffaaaaaa));
+    playPauseButton.setTooltip(transportPlaying ? "Pause MIDI Take playback" : "Play MIDI Take playback");
 }
 
 void MasterChainComponent::setLevelMeterSources(const std::atomic<float>* leftLevel,
@@ -242,6 +278,13 @@ void MasterChainComponent::resized()
     area.removeFromBottom(6);
     armButton.setBounds(recordArea.removeFromLeft(recordArea.getWidth() / 2).reduced(2, 0));
     recordButton.setBounds(recordArea.reduced(2, 0));
+
+    // ---- MIDI Take playback transport (Increment B) - Play/Pause + RTZ,
+    // just above the arm/record row.
+    auto transportArea = area.removeFromBottom(24);
+    area.removeFromBottom(6);
+    playPauseButton.setBounds(transportArea.removeFromLeft(transportArea.getWidth() / 2).reduced(2, 0));
+    rtzButton.setBounds(transportArea.reduced(2, 0));
 
     auto leftMeterArea = area.removeFromLeft(16);
     area.removeFromLeft(4);

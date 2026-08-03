@@ -16,6 +16,8 @@
 #include "TempoSyncComponent.h"
 #include "MidiClockTempoDetector.h"
 #include "RecordingManager.h"
+#include "MidiTakePlayer.h"
+#include "SessionTransport.h"
 
 class MainComponent : public juce::Component,
                       public juce::AudioIODeviceCallback,
@@ -84,6 +86,25 @@ public:
     juce::File getRecordingsFolder() const { return recordingManager.getRecordingsFolder(); }
     void setRecordingSilenceTimeoutSeconds(double seconds) { recordingManager.setSilenceTimeoutSeconds(seconds); }
     double getRecordingSilenceTimeoutSeconds() const { return recordingManager.getSilenceTimeoutSeconds(); }
+
+    // Minimal session transport for MIDI Take playback (Increment B, see
+    // docs/kplayer-take-recording-playback-spec.md and SessionTransport's
+    // own header for the full design) - fully independent of
+    // RecordingManager's own start/stop above; Play/Pause and Record are two
+    // separate toggles driving/reading the same playhead.
+    void toggleTransportPlaying() { if (sessionTransport.isPlaying()) sessionTransport.pause(); else sessionTransport.play(); }
+    bool isTransportPlaying() const { return sessionTransport.isPlaying(); }
+    void rtzTransport() { sessionTransport.rtz(); }
+
+    // Re-resolves channel i's midiDeviceIdentifier against the current
+    // recordingsFolder: loads the corresponding MidiTakePlayer if it's a
+    // take: identifier (see RecordingManager::isTakeIdentifier), unloads it
+    // otherwise. Called by SessionIO::loadSession right after restoring a
+    // channel's saved identifier - that path sets the identifier directly on
+    // ChannelProcessor rather than through ChannelComponent's combo box, so
+    // it doesn't go through onMidiTakeSelected/onMidiTakeDeselected below.
+    void resolveMidiTakeSelectionForChannel(int index);
+    void refreshChannelTakeList(int index) { channelComponents[(size_t) index]->refreshTakeList(); }
 
     // Fired whenever recording starts/stops/auto-stops, so the channel-strip
     // and master-column UI can refresh their arm/recording-active visuals
@@ -196,6 +217,19 @@ private:
 
     std::vector<std::unique_ptr<ChannelProcessor>> channelProcessors;
     std::vector<std::unique_ptr<ChannelComponent>> channelComponents;
+
+    // MIDI Take playback (Increment B) - one player per channel, parallel to
+    // channelProcessors/channelComponents above and resized alongside them
+    // in addChannel()/setChannelCount() (which already fully detaches the
+    // audio callback before resizing those - see MidiTakePlayer's own header
+    // comment for why that means this doesn't need RecordingManager's
+    // fixed-size lock-free-array treatment). sessionTransport is the shared
+    // playhead every player renders against - see its own header for the
+    // full design.
+    std::vector<std::unique_ptr<MidiTakePlayer>> midiTakePlayers;
+    SessionTransport sessionTransport;
+    void loadMidiTakeForChannel(int index, const juce::File& file);
+    void unloadMidiTakeForChannel(int index);
 
     juce::Component channelRackContent;
     juce::Viewport  channelViewport;

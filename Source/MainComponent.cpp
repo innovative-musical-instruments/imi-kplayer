@@ -35,6 +35,8 @@ MainComponent::MainComponent(juce::AudioDeviceManager& dm, PluginManager& pm)
     masterChainComponent.onVolumeChanged = [this](float linearGain) { masterVolume = linearGain; notifyDirty(); };
     masterChainProcessor.onBypassChanged = [this](int) { masterChainComponent.refresh(); };
     masterChainComponent.onMasterArmToggled = [this](bool armed) { setMasterArmed(armed); notifyDirty(); };
+    masterChainComponent.onPlayPauseClicked = [this] { toggleTransportPlaying(); };
+    masterChainComponent.onRtzClicked       = [this] { rtzTransport(); };
     masterChainComponent.onRecordButtonClicked = [this]
     {
         // Lazy prompt: ask for a recordings folder right here the first
@@ -171,17 +173,20 @@ void MainComponent::addChannel(int index)
         }
     }
 
-    auto component = std::make_unique<ChannelComponent>(*processor, deviceManager, index + 1);
+    auto component = std::make_unique<ChannelComponent>(*processor, deviceManager, recordingManager, index + 1);
     component->onLoadPlugin    = [this, index](int slot) { showPluginBrowser(index, slot, false); };
     component->onReplacePlugin = [this, index](int slot) { showPluginBrowser(index, slot, true);  };
     component->onDirty         = [this] { notifyDirty(); };
     processor->onBypassChanged = [this, index](int) { channelComponents[(size_t) index]->refresh(); };
     component->onArmToggled    = [this, index](bool armed) { setChannelArmed(index, armed); notifyDirty(); };
+    component->onMidiTakeSelected   = [this, index](const juce::File& file) { loadMidiTakeForChannel(index, file); };
+    component->onMidiTakeDeselected = [this, index] { unloadMidiTakeForChannel(index); };
     component->setInputSectionCollapsed(inputSectionCollapsed);
     channelRackContent.addAndMakeVisible(component.get());
 
     channelProcessors.push_back(std::move(processor));
     channelComponents.push_back(std::move(component));
+    midiTakePlayers.push_back(std::make_unique<MidiTakePlayer>());
 }
 
 void MainComponent::setChannelCount(int newCount)
@@ -207,6 +212,7 @@ void MainComponent::setChannelCount(int newCount)
         // which removes them from channelRackContent automatically.
         channelComponents.resize((size_t) newCount);
         channelProcessors.resize((size_t) newCount);
+        midiTakePlayers.resize((size_t) newCount);
     }
 
     recordingManager.setChannelCount(newCount);
@@ -387,6 +393,7 @@ void MainComponent::timerCallback()
     }
 
     recordingManager.pollForAutoStop();
+    recordingManager.pollMidiCapture();
 }
 
 void MainComponent::discardIncidentalDirtyFlags()
@@ -435,9 +442,38 @@ void MainComponent::setChannelArmed(int channelIndex, bool armed)
     // calls this directly to restore saved arm state, and must not leave the
     // just-loaded session marked dirty (same convention as setGlobalTempo/
     // setTempoSyncEnabled). The UI-driven callback site marks dirty instead.
-    recordingManager.setChannelArmed(channelIndex, armed);
+    recordingManager.setChannelArmed(channelIndex, armed, currentTempo);
     if (channelIndex >= 0 && channelIndex < (int) channelComponents.size())
         channelComponents[(size_t) channelIndex]->setArmed(armed);
+}
+
+void MainComponent::loadMidiTakeForChannel(int index, const juce::File& file)
+{
+    if (index < 0 || index >= (int) midiTakePlayers.size())
+        return;
+
+    auto* device = deviceManager.getCurrentAudioDevice();
+    double sampleRate = device != nullptr ? device->getCurrentSampleRate() : currentSampleRate;
+    midiTakePlayers[(size_t) index]->loadTake(file, sampleRate, currentTempo);
+}
+
+void MainComponent::unloadMidiTakeForChannel(int index)
+{
+    if (index < 0 || index >= (int) midiTakePlayers.size())
+        return;
+    midiTakePlayers[(size_t) index]->unload();
+}
+
+void MainComponent::resolveMidiTakeSelectionForChannel(int index)
+{
+    if (index < 0 || index >= (int) channelProcessors.size())
+        return;
+
+    auto identifier = channelProcessors[(size_t) index]->getMidiDeviceIdentifier();
+    if (RecordingManager::isTakeIdentifier(identifier))
+        loadMidiTakeForChannel(index, recordingManager.decodeTakeIdentifier(identifier));
+    else
+        unloadMidiTakeForChannel(index);
 }
 
 void MainComponent::setMasterArmed(bool armed)
@@ -453,6 +489,11 @@ juce::String MainComponent::toggleRecording()
     {
         recordingManager.stopRecording();
         refreshRecordingUI();
+        // New MIDI Take files may now exist (RecordingManager finalizes
+        // them synchronously inside stopRecording(), before returning here)
+        // - let every channel's MIDI Input Selector pick them up.
+        for (int i = 0; i < (int) channelComponents.size(); ++i)
+            refreshChannelTakeList(i);
         return {};
     }
 
@@ -462,7 +503,7 @@ juce::String MainComponent::toggleRecording()
     auto* device = deviceManager.getCurrentAudioDevice();
     double sampleRate = device != nullptr ? device->getCurrentSampleRate() : currentSampleRate;
 
-    auto error = recordingManager.startRecording(sampleRate, 2, 2);
+    auto error = recordingManager.startRecording(sampleRate, 2, 2, currentTempo);
     refreshRecordingUI();
     return error;
 }
@@ -672,6 +713,12 @@ void MainComponent::audioDeviceIOCallbackWithContext(
         }
     }
 
+    // MIDI Take playback (Increment B): advanced once per callback, not per
+    // channel, so every channel's MidiTakePlayer renders against the same
+    // block-start position this callback - see SessionTransport's header.
+    auto transportBlockStart = sessionTransport.advanceAndGetBlockStartPosition(numSamples);
+    bool transportIsPlaying  = sessionTransport.isPlaying();
+
     for (int channelIndex = 0; channelIndex < (int) channelProcessors.size(); ++channelIndex)
     {
         auto& channel = channelProcessors[(size_t) channelIndex];
@@ -694,12 +741,24 @@ void MainComponent::audioDeviceIOCallbackWithContext(
         // numbers, so they must not all reference the same instance.
         juce::MidiBuffer channelMidi;
         auto deviceId = channel->getMidiDeviceIdentifier();
-        if (deviceId.isNotEmpty())
+        if (RecordingManager::isTakeIdentifier(deviceId))
+        {
+            midiTakePlayers[(size_t) channelIndex]->renderBlock(transportBlockStart, numSamples,
+                                                                 transportIsPlaying, channelMidi);
+        }
+        else if (deviceId.isNotEmpty())
         {
             auto it = midiSnapshot.find(deviceId);
             if (it != midiSnapshot.end())
                 channelMidi = it->second;
         }
+
+        // MIDI Take capture (see docs/kplayer-take-recording-playback-spec.md):
+        // must happen before processBlock() below, which hands this same
+        // buffer to whatever plugin is loaded - plugins are free to mutate
+        // the buffer they're given, so this is the last point at which
+        // channelMidi is still guaranteed to be the raw, unprocessed input.
+        recordingManager.writeChannelMidiBlock(channelIndex, channelMidi);
 
         channel->processBlock(channelScratch, channelMidi);
 

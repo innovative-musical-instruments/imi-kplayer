@@ -102,6 +102,9 @@ target_sources(IMI_KPlayer PRIVATE
     Source/MidiClockTempoDetector.h
     Source/RecordingManager.cpp
     Source/RecordingManager.h
+    Source/MidiTakePlayer.cpp
+    Source/MidiTakePlayer.h
+    Source/SessionTransport.h
     Source/ConsoleFaderLookAndFeel.h
     Source/LoadingOverlayComponent.h
     Source/SessionIO.cpp
