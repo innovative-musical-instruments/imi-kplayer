@@ -41,6 +41,12 @@ The generator name tracks whatever VS version is installed — check `cmake
 --help` for the exact string if this stops matching (e.g. "Visual Studio 17
 2022" on a VS2022 machine).
 
+Release: no signed/notarized pipeline exists for Windows (unlike Mac's
+`scripts/build_release.sh` above) — "build a release" here just means
+`cmake --build build --config Release` in the same `build/` dir, landing at
+`build/IMI_KPlayer_artefacts/Release/Kadabra K-Player.exe`. Fine for local
+testing; not something to hand out as-is until a real signing setup exists.
+
 ## Architecture — where to look
 
 - `Source/Main.cpp` — app entry, `MainWindow`, menu/save/load/quit flow,
