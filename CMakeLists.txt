@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(IMI_KPlayer VERSION 0.9.2)
+project(IMI_KPlayer VERSION 0.9.3)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -126,6 +126,10 @@ target_compile_definitions(IMI_KPlayer PRIVATE
     JUCE_USE_CURL=0
     JUCE_PLUGINHOST_VST3=1
     JUCE_PLUGINHOST_AU=1
+    # Decode-only MP3 support for Import Audio to Track (Increment E, see
+    # docs/kplayer-take-recording-playback-spec.md section 9) - off by
+    # default in JUCE, unlike WAV/AIFF/FLAC/OggVorbis.
+    JUCE_USE_MP3AUDIOFORMAT=1
     JUCE_APPLICATION_NAME_STRING="$<TARGET_PROPERTY:IMI_KPlayer,JUCE_PRODUCT_NAME>"
     JUCE_APPLICATION_VERSION_STRING="$<TARGET_PROPERTY:IMI_KPlayer,JUCE_VERSION>"
 )

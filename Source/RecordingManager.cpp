@@ -1,4 +1,5 @@
 #include "RecordingManager.h"
+#include <cmath>
 #include <cstring>
 
 RecordingManager::RecordingManager()
@@ -57,6 +58,110 @@ juce::File RecordingManager::decodeTakeIdentifier(const juce::String& identifier
     if (! isTakeIdentifier(identifier))
         return {};
     return recordingsFolder.getChildFile(identifier.substring((int) juce::String(takeIdentifierPrefix).length()));
+}
+
+juce::String RecordingManager::importAudioTake(int channelIndex, const juce::File& sourceFile,
+                                                double sessionSampleRate, juce::File& outImportedFile)
+{
+    if (recordingsFolder == juce::File())
+        return "No recordings folder has been set.";
+    if (! recordingsFolder.isDirectory() && ! recordingsFolder.createDirectory())
+        return "Could not create or access the recordings folder: " + recordingsFolder.getFullPathName();
+
+    // Manually registered, not AudioFormatManager::registerBasicFormats() -
+    // that unconditionally includes CoreAudioFormat on Mac (AAC/M4A/ALAC,
+    // not gated by a JUCE_USE_* flag), which would make the accepted file
+    // types differ between Mac and Windows. WindowsMediaFormat is likewise
+    // deliberately never registered. FLAC/OggVorbis/MP3 are still gated
+    // behind the same JUCE_USE_* checks JUCE itself uses, so this tracks
+    // whatever's actually compiled in.
+    juce::AudioFormatManager formatManager;
+    formatManager.registerFormat(new juce::WavAudioFormat(), true);
+    formatManager.registerFormat(new juce::AiffAudioFormat(), false);
+   #if JUCE_USE_FLAC
+    formatManager.registerFormat(new juce::FlacAudioFormat(), false);
+   #endif
+   #if JUCE_USE_OGGVORBIS
+    formatManager.registerFormat(new juce::OggVorbisAudioFormat(), false);
+   #endif
+   #if JUCE_USE_MP3AUDIOFORMAT
+    formatManager.registerFormat(new juce::MP3AudioFormat(), false);
+   #endif
+
+    std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(sourceFile));
+    if (reader == nullptr)
+        return "Could not read \"" + sourceFile.getFileName() + "\" - unsupported format or corrupt file.";
+
+    auto numSourceSamples = reader->lengthInSamples;
+    if (numSourceSamples <= 0)
+        return "\"" + sourceFile.getFileName() + "\" has no audio data.";
+
+    int numSourceChannels = juce::jmax(1, (int) reader->numChannels);
+    juce::AudioBuffer<float> sourceBuffer(numSourceChannels, (int) numSourceSamples);
+    reader->read(&sourceBuffer, 0, (int) numSourceSamples, 0, true, true);
+
+    // Resample to the session's sample rate if needed; every K-Player track
+    // is stereo (no per-track mono/stereo property), so a mono source's
+    // single channel just feeds both output channels here too.
+    double ratio = reader->sampleRate / sessionSampleRate;
+    bool needsResampling = std::abs(ratio - 1.0) > 1.0e-9;
+    int numOutSamples = needsResampling ? (int) std::ceil((double) numSourceSamples / ratio)
+                                        : (int) numSourceSamples;
+
+    juce::AudioBuffer<float> outputBuffer(2, numOutSamples);
+    for (int ch = 0; ch < 2; ++ch)
+    {
+        int sourceChannel = juce::jmin(ch, numSourceChannels - 1);
+        auto* input = sourceBuffer.getReadPointer(sourceChannel);
+
+        if (! needsResampling)
+        {
+            outputBuffer.copyFrom(ch, 0, input, numOutSamples);
+        }
+        else
+        {
+            juce::LagrangeInterpolator interpolator;
+            interpolator.reset();
+            interpolator.process(ratio, input, outputBuffer.getWritePointer(ch), numOutSamples,
+                                 (int) numSourceSamples, 0);
+        }
+    }
+
+    auto takeFolder = recordingsFolder.getChildFile(juce::Time::getCurrentTime().formatted("%Y-%m-%d_%H-%M-%S"));
+    if (! takeFolder.createDirectory())
+        return "Could not create a folder for this import: " + takeFolder.getFullPathName();
+
+    auto destFile = uniqueTakeFile(takeFolder, "Channel " + juce::String(channelIndex + 1));
+    std::unique_ptr<juce::OutputStream> outStream = destFile.createOutputStream();
+    if (outStream == nullptr)
+    {
+        takeFolder.deleteRecursively();
+        return "Could not create the imported audio file: " + destFile.getFullPathName();
+    }
+
+    juce::WavAudioFormat wavFormat;
+    auto options = juce::AudioFormatWriter::Options{}
+                        .withSampleRate(sessionSampleRate)
+                        .withNumChannels(2)
+                        .withBitsPerSample(32)
+                        .withSampleFormat(juce::AudioFormatWriterOptions::SampleFormat::floatingPoint);
+    std::unique_ptr<juce::AudioFormatWriter> writer(wavFormat.createWriterFor(outStream, options));
+    if (writer == nullptr)
+    {
+        takeFolder.deleteRecursively();
+        return "Could not create the imported audio file: " + destFile.getFullPathName();
+    }
+
+    if (! writer->writeFromAudioSampleBuffer(outputBuffer, 0, numOutSamples))
+    {
+        writer.reset();
+        takeFolder.deleteRecursively();
+        return "Could not write the imported audio file - check available disk space.";
+    }
+
+    writer.reset(); // flushes/finalizes the file
+    outImportedFile = destFile;
+    return {};
 }
 
 void RecordingManager::setChannelCount(int count)

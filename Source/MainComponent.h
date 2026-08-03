@@ -88,6 +88,19 @@ public:
     void setRecordingSilenceTimeoutSeconds(double seconds) { recordingManager.setSilenceTimeoutSeconds(seconds); }
     double getRecordingSilenceTimeoutSeconds() const { return recordingManager.getSilenceTimeoutSeconds(); }
 
+    // Import Audio to Track (Increment E, see
+    // docs/kplayer-take-recording-playback-spec.md section 9) - called by
+    // Main.cpp's MainWindow once the user has picked both a source file and
+    // a target channel (an existing one, or one just created via
+    // setChannelCount(getNumChannels() + 1) for "New Track"). Returns an
+    // empty string on success, or a user-facing error the caller shows
+    // directly - same convention as toggleRecording(). On success, the
+    // imported file is selected as channelIndex's audio input exactly as if
+    // the user had picked it from the Audio Input Selector (see
+    // ChannelComponent::selectAudioTake), including the same auto-bypass
+    // convenience for a loaded slot-0 instrument.
+    juce::String importAudioToChannel(int channelIndex, const juce::File& sourceFile);
+
     // Minimal session transport for MIDI Take playback (Increment B, see
     // docs/kplayer-take-recording-playback-spec.md and SessionTransport's
     // own header for the full design) - fully independent of

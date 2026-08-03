@@ -79,6 +79,25 @@ public:
     // "missing" warning treatment, same as a disconnected live device).
     juce::File decodeTakeIdentifier(const juce::String& identifier) const;
 
+    // ---- Import Audio to Track (Increment E, message thread only) ----
+    // Reads sourceFile (WAV/AIFF/FLAC/OggVorbis/MP3 - deliberately not
+    // registering platform-specific formats like CoreAudioFormat/
+    // WindowsMediaFormat, see .cpp), resamples to sessionSampleRate if it
+    // doesn't already match (juce::LagrangeInterpolator), upmixes mono to
+    // stereo by duplication (every K-Player track is stereo, no per-track
+    // mono/stereo property), and writes the result into a fresh take-folder
+    // as "Channel <channelIndex+1>.wav" - the same naming/location
+    // convention a live recording already uses, so the result is
+    // indistinguishable from one to findChannelAudioTakes() and the rest of
+    // the Take model. A one-shot, fully-synchronous, in-memory operation -
+    // unlike live recording this never touches the audio thread, so it
+    // skips RecordingManager's own ThreadedWriter/background-thread
+    // machinery entirely and writes directly. Returns an empty string and
+    // sets outImportedFile on success, or a user-facing error string
+    // (mirroring startRecording()'s convention) on failure.
+    juce::String importAudioTake(int channelIndex, const juce::File& sourceFile,
+                                 double sessionSampleRate, juce::File& outImportedFile);
+
     void setSilenceTimeoutSeconds(double seconds) { silenceTimeoutSeconds = juce::jmax(1.0, seconds); }
     double getSilenceTimeoutSeconds() const { return silenceTimeoutSeconds; }
 

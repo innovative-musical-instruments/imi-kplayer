@@ -93,6 +93,7 @@ public:
         cmdOpenSession = 1,
         cmdSaveSession,
         cmdSaveSessionAs,
+        cmdImportAudioTrack,
         cmdSettings,
         cmdAbout,
         cmdHelp,
@@ -107,6 +108,11 @@ public:
         PluginManager& pluginManager;
         MainComponent* mainComponent = nullptr;
         std::unique_ptr<juce::FileChooser> fileChooser;
+        // Import Audio to Track (Increment E) - all three must outlive
+        // their async operation, same reasoning as fileChooser above.
+        std::unique_ptr<juce::FileChooser> importAudioChooser;
+        std::unique_ptr<juce::AlertWindow> importTrackPicker;
+        std::unique_ptr<juce::FileChooser> importFolderChooser;
         juce::File currentSessionFile;
         bool sessionDirty = false;
         // Starts true so the construction-time resizes above don't count
@@ -257,6 +263,9 @@ public:
                 menu.addSubMenu("Recent", recentMenu, numRecent > 0);
 
                 menu.addSeparator();
+                menu.addCommandItem(&commandManager, cmdImportAudioTrack);
+
+                menu.addSeparator();
                 menu.addCommandItem(&commandManager, cmdQuit);
             }
             else if (index == 1)
@@ -285,8 +294,8 @@ public:
 
         void getAllCommands(juce::Array<juce::CommandID>& commands) override
         {
-            commands.addArray({ cmdOpenSession, cmdSaveSession, cmdSaveSessionAs, cmdSettings,
-                                cmdAbout, cmdHelp, cmdQuit });
+            commands.addArray({ cmdOpenSession, cmdSaveSession, cmdSaveSessionAs, cmdImportAudioTrack,
+                                cmdSettings, cmdAbout, cmdHelp, cmdQuit });
         }
 
         void getCommandInfo(juce::CommandID commandID, juce::ApplicationCommandInfo& result) override
@@ -304,6 +313,9 @@ public:
                 case cmdSaveSessionAs:
                     result.setInfo("Save Session As...", "Save the current session to a new file", "File", 0);
                     result.addDefaultKeypress('s', juce::ModifierKeys::commandModifier | juce::ModifierKeys::shiftModifier);
+                    break;
+                case cmdImportAudioTrack:
+                    result.setInfo("Import Audio to Track...", "Import an audio file as a recorded Take on a channel", "File", 0);
                     break;
                 case cmdSettings:
                     result.setInfo("Audio & MIDI...", "Open audio/MIDI settings", "Settings", 0);
@@ -330,6 +342,7 @@ public:
                 case cmdOpenSession:   openSession();      return true;
                 case cmdSaveSession:   saveSession();       return true;
                 case cmdSaveSessionAs: saveSessionAs();      return true;
+                case cmdImportAudioTrack: importAudioToTrack(); return true;
                 case cmdSettings:      showSettings();       return true;
                 case cmdAbout:         showAboutDialog();    return true;
                 case cmdHelp:          openHelpWebsite();    return true;
@@ -446,6 +459,114 @@ public:
                 if (file.existsAsFile())
                     loadSessionFile(file);
             });
+        }
+
+        // Import Audio to Track (Increment E, see
+        // docs/kplayer-take-recording-playback-spec.md section 9): pick a
+        // source file, then which channel to assign it to (or a new one),
+        // then hand off to MainComponent::importAudioToChannel() for the
+        // actual read/resample/write work.
+        void importAudioToTrack()
+        {
+            importAudioChooser = std::make_unique<juce::FileChooser>(
+                "Import Audio to Track", juce::File(),
+                "*.wav;*.wave;*.aiff;*.aif;*.flac;*.ogg;*.mp3");
+
+            importAudioChooser->launchAsync(
+                juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                [this](const juce::FileChooser& fc)
+                {
+                    auto file = fc.getResult();
+                    if (file.existsAsFile())
+                        showImportTrackPicker(file);
+                });
+        }
+
+        void showImportTrackPicker(const juce::File& sourceFile)
+        {
+            importTrackPicker = std::make_unique<juce::AlertWindow>(
+                "Import Audio to Track",
+                "Choose a track for \"" + sourceFile.getFileName() + "\":",
+                juce::MessageBoxIconType::NoIcon);
+
+            int numChannels = mainComponent->getNumChannels();
+            juce::StringArray items;
+            // Omitted once at the channel-count ceiling - no room to grow.
+            if (numChannels < MainComponent::maxChannels)
+                items.add("New Track");
+            for (int i = 0; i < numChannels; ++i)
+                items.add("Channel " + juce::String(i + 1));
+
+            importTrackPicker->addComboBox("track", items, "Track");
+            importTrackPicker->getComboBoxComponent("track")->setSelectedItemIndex(0, juce::dontSendNotification);
+            importTrackPicker->addButton("Import", 1, juce::KeyPress(juce::KeyPress::returnKey));
+            importTrackPicker->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+
+            bool hasNewTrackOption = numChannels < MainComponent::maxChannels;
+
+            // deleteWhenDismissed=false deliberately - the callback below
+            // still needs to read the combo box's selection, which would
+            // already be destroyed by the time it runs if this were true
+            // (per Component::enterModalState's own documented behaviour).
+            // importTrackPicker.reset() below does the cleanup manually,
+            // after reading what's needed.
+            importTrackPicker->enterModalState(true, juce::ModalCallbackFunction::create(
+                [this, sourceFile, hasNewTrackOption](int result)
+                {
+                    int selectedIndex = -1;
+                    if (auto* box = importTrackPicker != nullptr ? importTrackPicker->getComboBoxComponent("track") : nullptr)
+                        selectedIndex = box->getSelectedItemIndex();
+                    importTrackPicker.reset();
+
+                    if (result != 1 || selectedIndex < 0)
+                        return; // cancelled
+
+                    int channelIndex;
+                    if (hasNewTrackOption && selectedIndex == 0)
+                    {
+                        mainComponent->setChannelCount(mainComponent->getNumChannels() + 1);
+                        channelIndex = mainComponent->getNumChannels() - 1;
+                    }
+                    else
+                    {
+                        channelIndex = hasNewTrackOption ? selectedIndex - 1 : selectedIndex;
+                    }
+
+                    performAudioImport(channelIndex, sourceFile);
+                }), false);
+        }
+
+        // Lazy prompt: ask for a recordings folder right here the first
+        // time it's needed, same pattern as the Record button's own prompt
+        // (see onRecordButtonClicked in MainComponent.cpp) - Audio Takes
+        // (imported or recorded) both live under that folder.
+        void performAudioImport(int channelIndex, const juce::File& sourceFile)
+        {
+            if (mainComponent->getRecordingsFolder() == juce::File())
+            {
+                importFolderChooser = std::make_unique<juce::FileChooser>(
+                    "Choose a folder for recordings",
+                    juce::File::getSpecialLocation(juce::File::userMusicDirectory));
+
+                auto flags = juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories;
+                importFolderChooser->launchAsync(flags, [this, channelIndex, sourceFile](const juce::FileChooser& chooser)
+                {
+                    auto result = chooser.getResult();
+                    if (result == juce::File())
+                        return;
+
+                    mainComponent->setRecordingsFolder(result);
+                    markDirty();
+                    performAudioImport(channelIndex, sourceFile);
+                });
+                return;
+            }
+
+            auto error = mainComponent->importAudioToChannel(channelIndex, sourceFile);
+            if (error.isNotEmpty())
+                juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, "Import Audio to Track", error);
+            else
+                markDirty();
         }
 
         // trackAsCurrentFile=false loads the file's content without binding

@@ -457,24 +457,7 @@ void ChannelComponent::comboBoxChanged(juce::ComboBox* combo)
         {
             int index = selected - takeIdBase;
             if (index >= 0 && index < availableChannelAudioTakes.size())
-            {
-                auto takeFile = availableChannelAudioTakes.getReference(index);
-                processor.setAudioInputChannelIndex(-1);
-                processor.setAudioTakeIdentifier(recordingManager.encodeTakeIdentifier(takeFile));
-
-                // A loaded slot-0 instrument would otherwise synthesize from
-                // MIDI (or sit silent) and never touch this incoming audio,
-                // masking the Take with no visible explanation - one-time
-                // convenience bypass so the Take is audible by default. Only
-                // ever auto-*bypasses*, never auto-unbypasses: the user is
-                // free to unbypass afterward to feed the Take into the
-                // instrument instead (e.g. as a vocoder modulator/carrier),
-                // and that choice is never undone by this selector again.
-                if (processor.hasPlugin(ChannelProcessor::slot0Index))
-                    processor.setBypassed(ChannelProcessor::slot0Index, true);
-
-                if (onAudioTakeSelected) onAudioTakeSelected(takeFile);
-            }
+                selectAudioTake(availableChannelAudioTakes.getReference(index));
         }
         else
         {
@@ -594,6 +577,30 @@ void ChannelComponent::refreshAudioTakeList()
 
     availableChannelAudioTakes = freshTakes;
     rebuildAudioInputBox();
+}
+
+void ChannelComponent::selectAudioTake(juce::File takeFile)
+{
+    processor.setAudioInputChannelIndex(-1);
+    processor.setAudioTakeIdentifier(recordingManager.encodeTakeIdentifier(takeFile));
+
+    // A loaded slot-0 instrument would otherwise synthesize from MIDI (or
+    // sit silent) and never touch this incoming audio, masking the Take
+    // with no visible explanation - one-time convenience bypass so the
+    // Take is audible by default. Only ever auto-*bypasses*, never
+    // auto-unbypasses: the user is free to unbypass afterward to feed the
+    // Take into the instrument instead (e.g. as a vocoder modulator/
+    // carrier), and that choice is never undone by this selector again.
+    if (processor.hasPlugin(ChannelProcessor::slot0Index))
+        processor.setBypassed(ChannelProcessor::slot0Index, true);
+
+    // Picks up a freshly-imported file not yet in
+    // availableChannelAudioTakes, and restores the combo box selection to
+    // match what was just set above - see this method's own header comment.
+    refreshAudioTakeList();
+    updateAudioInputWarning();
+
+    if (onAudioTakeSelected) onAudioTakeSelected(takeFile);
 }
 
 void ChannelComponent::rebuildAudioInputBox()

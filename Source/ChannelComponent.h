@@ -89,6 +89,29 @@ public:
     // "Recorded Takes" section (Increment C).
     void refreshAudioTakeList();
 
+    // Selects takeFile as this channel's audio input - same effect as the
+    // user picking it from the Audio Input Selector's "Recorded Takes"
+    // section (comboBoxChanged() below calls this too, for the one place
+    // that logic should live), but callable directly for a take that was
+    // just created programmatically (Increment E's Import Audio to Track,
+    // see MainComponent::importAudioToChannel) rather than clicked in the
+    // combo box. Calls refreshAudioTakeList() internally so a
+    // freshly-imported file - not yet in availableChannelAudioTakes - still
+    // shows up selected afterward; for the manual-click path that's a
+    // harmless redundant rescan.
+    //
+    // Deliberately takes takeFile *by value*, not by reference: the manual-
+    // click call site passes availableChannelAudioTakes.getReference(index)
+    // - a reference straight into that array - and refreshAudioTakeList()
+    // above reassigns that same array before this method is done using
+    // takeFile. A by-reference parameter would dangle the moment that
+    // reassignment happens, a real use-after-free that crashed
+    // intermittently in testing (more likely to manifest the more else was
+    // going on, e.g. Take playback elsewhere reusing freed heap sooner -
+    // nothing to do with audio-thread concurrency, purely a message-thread
+    // lifetime bug). The by-value copy is taken before any of that runs.
+    void selectAudioTake(juce::File takeFile);
+
     // Global collapse toggle (all channels move together, driven from
     // MainComponent) - hides the Audio In/MIDI In/MIDI Ch rows, leaving the
     // channel name visible. Purely a view preference, not session state.

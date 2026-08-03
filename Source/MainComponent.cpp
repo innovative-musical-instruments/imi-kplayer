@@ -506,6 +506,24 @@ void MainComponent::resolveAudioTakeSelectionForChannel(int index)
         unloadAudioTakeForChannel(index);
 }
 
+juce::String MainComponent::importAudioToChannel(int channelIndex, const juce::File& sourceFile)
+{
+    if (channelIndex < 0 || channelIndex >= (int) channelComponents.size())
+        return "Invalid target channel.";
+
+    juce::File importedFile;
+    auto error = recordingManager.importAudioTake(channelIndex, sourceFile, currentSampleRate, importedFile);
+    if (error.isNotEmpty())
+        return error;
+
+    // selectAudioTake() fires onAudioTakeSelected, already wired in
+    // addChannel() to loadAudioTakeForChannel() - same path a manual
+    // selection in the Audio Input Selector already takes, including its
+    // auto-bypass convenience for a loaded slot-0 instrument.
+    channelComponents[(size_t) channelIndex]->selectAudioTake(importedFile);
+    return {};
+}
+
 void MainComponent::setMasterArmed(bool armed)
 {
     // See setChannelArmed() above for why this doesn't self-mark dirty.
