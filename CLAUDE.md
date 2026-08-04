@@ -25,10 +25,13 @@ cmake --build build --config Debug
 App lands at `build/IMI_KPlayer_artefacts/Debug/Kadabra K-Player.app`.
 
 Release (signed + notarized, separate `build-release/` dir so day-to-day dev
-in `build/` is untouched): `scripts/build_release.sh`. Requires a Developer
-ID Application cert and notarization credentials already stored in Keychain
-(`xcrun notarytool store-credentials "kplayer-notary" ...`, a one-time,
-human-only, interactive step — never something to script or automate).
+in `build/` is untouched): `scripts/build_release.sh`. Builds a universal
+binary (`x86_64;arm64`) by default — pass an arch (e.g. `x86_64` or `arm64`)
+as `$1` to override for a single-architecture build, which lands in
+`build-release-<arch>/` instead. Requires a Developer ID Application cert
+and notarization credentials already stored in Keychain (`xcrun notarytool
+store-credentials "kplayer-notary" ...`, a one-time, human-only, interactive
+step — never something to script or automate).
 
 **Windows:**
 ```

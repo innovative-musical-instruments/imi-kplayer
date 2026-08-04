@@ -1,6 +1,7 @@
 # Build
 build/
 build-release/
+build-release-*/
 
 # macOS
 .DS_Store
