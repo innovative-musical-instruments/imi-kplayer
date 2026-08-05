@@ -70,7 +70,14 @@ testing; not something to hand out as-is until a real signing setup exists.
 - `Source/SessionIO.cpp` / `SessionMigrator.{h,cpp}` / `SessionFormat.{h,cpp}`
   — `.kplayer` session serialization and versioned migration (current
   `formatVersion` 4 — never edit a shipped migration step, only append new
-  ones).
+  ones). Plugin slots relink by identity, not by the saved path: a saved
+  `PluginDescription`'s `fileOrIdentifier` is an absolute, machine-specific
+  install path (baked in from whichever machine saved the file) that's
+  never resolvable as-is on the other platform, even for the same plugin
+  actually installed there — `resolveLocalDescription()` in `SessionIO.cpp`
+  re-resolves it against this machine's own scanned `PluginManager`
+  plugin list first, matched by `uniqueId` (falls back to name+manufacturer+
+  format). See the "Cross-platform session plugin relink" note below.
 - `Source/PluginManager.{h,cpp}` — VST3/AU scanning and caching.
 - `docs/*.md` — MVP spec, session format versioning spec, refinement spec,
   first-release backlog, and the save/load + SysEx design notes.
@@ -101,6 +108,47 @@ testing; not something to hand out as-is until a real signing setup exists.
 - Session round-trip fields always use `getProperty(key, default)` with a
   safe default, so an older/newer file degrades gracefully rather than
   crashing.
+
+## Cross-platform session plugin relink (needs Windows verification)
+
+Added 2026-08-05 (Mac side), not yet verified on Windows — build there and
+confirm before considering this closed.
+
+**Symptom reported:** `.kplayer` sessions saved on one machine (with VST3
+instruments/inserts in place — Surge XT, HISE-based K-Samplers, KChannel)
+lost their plugins when opened on the other platform, while channel
+settings (gain/pan/mute/MIDI routing — plain JSON scalars) always
+round-tripped fine.
+
+**Root cause, confirmed by diffing two real session files** (one saved on
+each platform, same rig): a saved plugin slot's `PluginDescription` embeds
+`fileOrIdentifier`, an absolute install path from the saving machine (e.g.
+`C:\Program Files\Common Files\VST3\Surge XT.vst3` vs `/Library/Audio/
+Plug-Ins/VST3/Surge XT.vst3`). `SessionIO::loadSession()` passed that
+description straight to `formatManager.createPluginInstance()` with no
+re-resolution — the literal path never exists on the other OS, so the load
+silently failed and the slot came back empty, no error surfaced. The
+plugin's real identity (`PluginDescription::uniqueId`, a VST3 FUID-derived
+value) was confirmed identical across both files for the same plugin, so
+the plugins genuinely were compatible — only the path lookup was broken.
+
+**Fix:** `SessionIO.cpp`'s `resolveLocalDescription()` re-resolves a saved
+plugin slot against this machine's own scanned `PluginManager::
+getPluginList()` (matched by `uniqueId`, falling back to name+manufacturer+
+format) before attempting to load, substituting the correct local path.
+Verified working Mac-side: a Windows-saved session's Surge XT/K-Sampler/
+KChannel instances now relink and load correctly on Mac.
+
+**What still needs checking on Windows:**
+1. Build (`cmake -B build -G "Visual Studio 18 2026"` /
+   `cmake --build build --config Debug`), then open a **Mac-saved**
+   `.kplayer` session there and confirm the same plugins relink.
+2. `AudioUnitPluginFormat` is Mac-only (`#if JUCE_MAC` in
+   `PluginManager.cpp`) — if a Mac session has a plugin that was scanned/
+   loaded as AU rather than VST3, no relink is possible on Windows by
+   design (AU doesn't exist there). Worth confirming none of the
+   HISE-based K-Samplers are AU-only in practice, or documenting that as a
+   known limitation if so.
 
 ## Testing
 

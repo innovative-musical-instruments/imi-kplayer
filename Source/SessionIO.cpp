@@ -48,9 +48,48 @@ namespace
         return juce::var(obj);
     }
 
+    // A saved PluginDescription's fileOrIdentifier is an absolute,
+    // machine-specific install path (e.g. "C:\Program Files\Common
+    // Files\VST3\Foo.vst3" on Windows vs "/Library/Audio/Plug-Ins/VST3/
+    // Foo.vst3" on Mac) - never resolvable as-is on a different machine or
+    // platform, even when the exact same plugin is installed there. Find
+    // the equivalent entry in this machine's own scanned plugin list
+    // (correct local paths) instead, matched by real plugin identity
+    // rather than path.
+    //
+    // uniqueId is the field to match on: JUCE introduced it specifically
+    // to fix VST3 plugins with matching FUIDs producing different legacy
+    // uid values per platform, and it's confirmed stable across a Mac/
+    // Windows pair of K-Player session files for the same plugin. Fall
+    // back to name+manufacturer+format for the rare case uniqueId is
+    // unpopulated (e.g. an older scan cache) or a plugin was rebuilt with
+    // a different id per platform.
+    juce::PluginDescription resolveLocalDescription(const juce::PluginDescription& saved,
+                                                     const juce::KnownPluginList& knownPluginList)
+    {
+        auto candidates = knownPluginList.getTypes();
+
+        for (auto& candidate : candidates)
+            if (candidate.pluginFormatName == saved.pluginFormatName
+                && candidate.uniqueId != 0
+                && candidate.uniqueId == saved.uniqueId)
+                return candidate;
+
+        for (auto& candidate : candidates)
+            if (candidate.pluginFormatName == saved.pluginFormatName
+                && candidate.name == saved.name
+                && candidate.manufacturerName == saved.manufacturerName)
+                return candidate;
+
+        // No local match - fall through with the saved description
+        // untouched (e.g. same machine, plugin never moved).
+        return saved;
+    }
+
     template <typename SlotHost>
     void applyPluginSlotVar(SlotHost& processor, int slotIndex, const juce::var& v,
                             juce::AudioPluginFormatManager& formatManager,
+                            const juce::KnownPluginList& knownPluginList,
                             double sampleRate, int blockSize)
     {
         if (! v.isObject())
@@ -61,13 +100,23 @@ namespace
         if (xml == nullptr)
             return;
 
-        juce::PluginDescription desc;
-        if (! desc.loadFromXml(*xml))
+        juce::PluginDescription savedDesc;
+        if (! savedDesc.loadFromXml(*xml))
             return;
 
         auto state = decodeBase64(v.getProperty("stateBlob", juce::String()).toString());
 
-        bool loaded = processor.loadPlugin(slotIndex, desc, formatManager, sampleRate, blockSize, &state);
+        auto localDesc = resolveLocalDescription(savedDesc, knownPluginList);
+
+        bool loaded = processor.loadPlugin(slotIndex, localDesc, formatManager, sampleRate, blockSize, &state);
+        if (! loaded && localDesc.fileOrIdentifier != savedDesc.fileOrIdentifier)
+        {
+            // Relinked entry still failed to load (e.g. a stale plugin
+            // cache) - retry with the saved description verbatim, same as
+            // pre-relink behaviour, rather than giving up early.
+            loaded = processor.loadPlugin(slotIndex, savedDesc, formatManager, sampleRate, blockSize, &state);
+        }
+
         if (loaded)
             processor.setBypassed(slotIndex, (bool) v.getProperty("isBypassed", false));
     }
@@ -110,6 +159,7 @@ namespace
 
     void applyChannelVar(ChannelProcessor& processor, const juce::var& v,
                          juce::AudioPluginFormatManager& formatManager,
+                         const juce::KnownPluginList& knownPluginList,
                          double sampleRate, int blockSize, int channelIndex)
     {
         if (! v.isObject())
@@ -145,14 +195,14 @@ namespace
 
         applyPluginSlotVar(processor, ChannelProcessor::slot0Index,
                           v.getProperty("slot0Plugin", juce::var()),
-                          formatManager, sampleRate, blockSize);
+                          formatManager, knownPluginList, sampleRate, blockSize);
 
         if (auto* insertsArray = v.getProperty("insertPlugins", juce::var()).getArray())
         {
             int count = juce::jmin((int) insertsArray->size(), ChannelProcessor::numInsertSlots);
             for (int i = 0; i < count; ++i)
                 applyPluginSlotVar(processor, i + 1, insertsArray->getReference(i),
-                                  formatManager, sampleRate, blockSize);
+                                  formatManager, knownPluginList, sampleRate, blockSize);
         }
     }
 
@@ -166,6 +216,7 @@ namespace
 
     void applyMasterChainVar(MasterChainProcessor& processor, const juce::var& v,
                              juce::AudioPluginFormatManager& formatManager,
+                             const juce::KnownPluginList& knownPluginList,
                              double sampleRate, int blockSize)
     {
         for (int slot = 0; slot < MasterChainProcessor::numSlots; ++slot)
@@ -176,7 +227,7 @@ namespace
             int count = juce::jmin((int) array->size(), MasterChainProcessor::numSlots);
             for (int i = 0; i < count; ++i)
                 applyPluginSlotVar(processor, i, array->getReference(i),
-                                  formatManager, sampleRate, blockSize);
+                                  formatManager, knownPluginList, sampleRate, blockSize);
         }
     }
 }
@@ -304,7 +355,8 @@ bool SessionIO::loadSession(const juce::File& file,
         {
             auto& channelVar = channelArray->getReference(i);
             applyChannelVar(mainComponent.getChannelProcessor(i), channelVar,
-                            pluginManager.getFormatManager(), sampleRate, blockSize, i);
+                            pluginManager.getFormatManager(), pluginManager.getPluginList(),
+                            sampleRate, blockSize, i);
             mainComponent.setChannelArmed(i, (bool) channelVar.getProperty("armed", false));
             // A saved midiDeviceIdentifier may reference a Take (see
             // RecordingManager::isTakeIdentifier) - applyChannelVar() above
@@ -325,7 +377,8 @@ bool SessionIO::loadSession(const juce::File& file,
 
     applyMasterChainVar(mainComponent.getMasterChainProcessor(),
                         parsed.getProperty("masterChain", juce::var()),
-                        pluginManager.getFormatManager(), sampleRate, blockSize);
+                        pluginManager.getFormatManager(), pluginManager.getPluginList(),
+                        sampleRate, blockSize);
     mainComponent.refreshMasterChainUI();
 
     return true;
