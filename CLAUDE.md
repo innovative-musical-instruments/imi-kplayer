@@ -109,12 +109,13 @@ testing; not something to hand out as-is until a real signing setup exists.
   safe default, so an older/newer file degrades gracefully rather than
   crashing.
 
-## Cross-platform session plugin relink (needs Windows verification)
+## Cross-platform session plugin relink
 
-Added 2026-08-05 (Mac side), not yet verified on Windows — build there and
-confirm before considering this closed.
+Added 2026-08-05, verified both directions (Mac-saved session loaded on
+Windows, and vice versa) — Surge XT/K-Sampler/KChannel instances relink and
+load correctly on either platform.
 
-**Symptom reported:** `.kplayer` sessions saved on one machine (with VST3
+**Symptom:** `.kplayer` sessions saved on one machine (with VST3
 instruments/inserts in place — Surge XT, HISE-based K-Samplers, KChannel)
 lost their plugins when opened on the other platform, while channel
 settings (gain/pan/mute/MIDI routing — plain JSON scalars) always
@@ -136,19 +137,12 @@ the plugins genuinely were compatible — only the path lookup was broken.
 plugin slot against this machine's own scanned `PluginManager::
 getPluginList()` (matched by `uniqueId`, falling back to name+manufacturer+
 format) before attempting to load, substituting the correct local path.
-Verified working Mac-side: a Windows-saved session's Surge XT/K-Sampler/
-KChannel instances now relink and load correctly on Mac.
 
-**What still needs checking on Windows:**
-1. Build (`cmake -B build -G "Visual Studio 18 2026"` /
-   `cmake --build build --config Debug`), then open a **Mac-saved**
-   `.kplayer` session there and confirm the same plugins relink.
-2. `AudioUnitPluginFormat` is Mac-only (`#if JUCE_MAC` in
-   `PluginManager.cpp`) — if a Mac session has a plugin that was scanned/
-   loaded as AU rather than VST3, no relink is possible on Windows by
-   design (AU doesn't exist there). Worth confirming none of the
-   HISE-based K-Samplers are AU-only in practice, or documenting that as a
-   known limitation if so.
+**Known limitation:** `AudioUnitPluginFormat` is Mac-only (`#if JUCE_MAC`
+in `PluginManager.cpp`) — if a Mac session has a plugin that was scanned/
+loaded as AU rather than VST3, no relink is possible on Windows by design
+(AU doesn't exist there). None of the current HISE-based K-Samplers are
+AU-only in practice, so this hasn't bitten yet.
 
 ## Testing
 
