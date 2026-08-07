@@ -47,6 +47,13 @@ public:
     std::function<void()> onPlayPauseClicked;
     std::function<void()> onRtzClicked;
 
+    // Emergency all-notes-off/all-sound-off, injected into every loaded
+    // instrument regardless of channel/device routing - see
+    // MainComponent::triggerPanic(). Purely a fire-and-forget request, no
+    // visual latch on this button (unlike arm/record) since there's no
+    // ongoing state to reflect back.
+    std::function<void()> onPanicClicked;
+
     explicit MasterChainComponent(MasterChainProcessor& processor);
     ~MasterChainComponent() override;
 
@@ -93,6 +100,8 @@ private:
     std::unique_ptr<TransportButtonLookAndFeel> transportButtonLookAndFeel;
     bool transportPlaying = false;
     void updateTransportButtons();
+
+    juce::TextButton panicButton;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MasterChainComponent)
 };

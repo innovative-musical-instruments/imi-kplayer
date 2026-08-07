@@ -117,6 +117,15 @@ void PluginManager::scanPlugins()
 
     auto deadMansPedalFile = getPluginCacheFile().getSiblingFile("plugin_scan_deadmanspedal.txt");
 
+    // Snapshot whatever's already in the pedal file before the loop below
+    // starts touching it - a non-empty snapshot means a previous run left
+    // it behind by crashing (or hanging and getting force-quit) mid-scan.
+    // See getPluginsSkippedByLastCrash()'s header comment.
+    lastCrashedPlugins.clear();
+    if (deadMansPedalFile.existsAsFile())
+        lastCrashedPlugins.addLines(deadMansPedalFile.loadFileAsString());
+    lastCrashedPlugins.removeEmptyStrings();
+
     for (auto* format : formatManager.getFormats())
     {
         juce::PluginDirectoryScanner scanner(
@@ -138,6 +147,29 @@ void PluginManager::scanPlugins()
         bool more = true;
         while (more)
         {
+            // Announced in its own quick round-trip, separate from the
+            // scanNextFile() call below - scanNextFile() only fills in the
+            // plugin's name as an early internal step, but doesn't return
+            // control to us until the whole (possibly slow) scan of that
+            // file is done. Reading the name after the call, as this used
+            // to do, meant the overlay showed the *previous* plugin's name
+            // for the entire duration of the next one's scan (confirmed via
+            // a WaveShell scan showing the prior plugin throughout). This
+            // getNextPluginFileThatWillBeScanned()/getProgress() pair
+            // reflects the file about to be scanned, and posting it as its
+            // own message gives the message loop a chance to actually paint
+            // it before the slow work starts.
+            {
+                juce::WaitableEvent announceDone;
+                juce::MessageManager::callAsync([this, &scanner, &announceDone]
+                {
+                    currentlyScanningPluginName = scanner.getNextPluginFileThatWillBeScanned();
+                    currentScanProgress = scanner.getProgress();
+                    announceDone.signal();
+                });
+                announceDone.wait();
+            }
+
             juce::WaitableEvent stepDone;
             juce::MessageManager::callAsync([&scanner, &pluginBeingScanned, &more, &stepDone]
             {
@@ -147,6 +179,34 @@ void PluginManager::scanPlugins()
             stepDone.wait();
         }
     }
+
+    currentlyScanningPluginName.clear();
+    currentScanProgress = 0.0f;
+
+    // The loop above only ever adds/updates entries it actually finds on
+    // disk - nothing about it notices a plugin that's since been
+    // uninstalled or moved, so without this a Rescan would pick up newly
+    // installed plugins but leave stale entries for removed ones behind
+    // forever. Same pattern as JUCE's own reference implementation,
+    // PluginListComponent::removeMissingPlugins().
+    for (auto& desc : knownPluginList.getTypes())
+        if (! formatManager.doesPluginStillExist(desc))
+            knownPluginList.removeType(desc);
+
+    // Reaching this line at all means the scan finished without crashing
+    // (a mid-scan crash kills the process before control ever gets back
+    // here) - so anything captured into lastCrashedPlugins above has now
+    // fully served its purpose: each format's PluginDirectoryScanner
+    // constructor already folded those entries into knownPluginList's own
+    // blacklist (applyBlacklistingsFromDeadMansPedal, persisted below via
+    // the plugin cache XML, independent of this file), and the caller can
+    // read lastCrashedPlugins to notify the user once. Nothing else ever
+    // removes an already-skipped plugin's entry from this file, so leaving
+    // it in place would make that notification fire again on every future
+    // scan indefinitely - clearing it here keeps it a true "crashed just
+    // now" marker instead.
+    if (deadMansPedalFile.existsAsFile())
+        deadMansPedalFile.deleteFile();
 
     cacheFile.getParentDirectory().createDirectory();
     if (auto xml = knownPluginList.createXml())

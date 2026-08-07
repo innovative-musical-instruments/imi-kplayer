@@ -100,6 +100,13 @@ MasterChainComponent::MasterChainComponent(MasterChainProcessor& p)
     addAndMakeVisible(rtzButton);
 
     updateTransportButtons();
+
+    panicButton.setButtonText("PANIC");
+    panicButton.setTooltip("All notes off / all sound off - immediately silences every loaded instrument");
+    panicButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff7a2020));
+    panicButton.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
+    panicButton.onClick = [this] { if (onPanicClicked) onPanicClicked(); };
+    addAndMakeVisible(panicButton);
 }
 
 MasterChainComponent::~MasterChainComponent()
@@ -270,6 +277,13 @@ void MasterChainComponent::resized()
             area.removeFromTop(3);
     }
     area.removeFromTop(16);
+
+    // ---- Panic: full-width, always the bottommost control - most
+    // emergency-critical action gets the least ambiguous target, and stays
+    // reachable regardless of channel-rack scroll position (master column
+    // is fixed, like collapseInputButton).
+    panicButton.setBounds(area.removeFromBottom(24));
+    area.removeFromBottom(6);
 
     // ---- Record: arm + global transport, below the fader/meters. Carved
     // from the bottom of what's left, shrinking the fader/meters below to

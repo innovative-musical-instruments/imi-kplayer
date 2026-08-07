@@ -52,6 +52,13 @@ public:
     // Called on the message thread once PluginManager's background scan finishes.
     void onScanComplete();
 
+    // Settings dialog's "Rescan Plugins" button - replays exactly what
+    // startup already does (same scanPluginsAsync call, same
+    // LoadingOverlayComponent), so newly-installed plugins are picked up
+    // the same way a fresh launch would find them. pluginsReady gates the
+    // plugin browser shut for the duration, same as the startup scan.
+    void rescanPlugins();
+
     // Tempo is transport-wide, applied to every channel's playhead.
     void   setGlobalTempo(double bpm);
     double getGlobalTempo() const { return currentTempo; }
@@ -109,6 +116,13 @@ public:
     void toggleTransportPlaying() { if (sessionTransport.isPlaying()) sessionTransport.pause(); else sessionTransport.play(); }
     bool isTransportPlaying() const { return sessionTransport.isPlaying(); }
     void rtzTransport() { sessionTransport.rtz(); }
+
+    // Emergency all-notes-off/all-sound-off. Message-thread setter only -
+    // the actual injection happens on the audio thread at the top of the
+    // next audioDeviceIOCallbackWithContext, which exchanges the flag back
+    // to false once consumed (same pattern as every other MIDI-driven flag
+    // in this class, just triggered from the UI instead of from MIDI).
+    void triggerPanic() { panicRequested.store(true, std::memory_order_relaxed); }
 
     // Re-resolves channel i's midiDeviceIdentifier against the current
     // recordingsFolder: loads the corresponding MidiTakePlayer if it's a
@@ -294,6 +308,11 @@ private:
     std::atomic<bool> pendingMasterArmValueFromMidi { false };
     std::atomic<bool> recordStateChangedByMidi { false };
     std::atomic<bool> pendingRecordStateValueFromMidi { false };
+
+    // Set by triggerPanic() (message thread, e.g. the master panic button or
+    // a menu command), consumed and reset at the top of the very next audio
+    // callback - see audioDeviceIOCallbackWithContext.
+    std::atomic<bool> panicRequested { false };
 
     // Cached identifier of the first connected MIDI device whose name
     // contains "kadabra" (see findKadabraMidiDeviceIdentifier() in

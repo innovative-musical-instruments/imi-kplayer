@@ -28,6 +28,29 @@ public:
     static constexpr int maxRecentlyUsed = 10;
     const juce::StringArray& getRecentlyUsedIdentifiers() const { return recentlyUsed; }
 
+    // Live scan status, for showing "which plugin is it on right now" in
+    // LoadingOverlayComponent during a scan (startup or Settings' Rescan
+    // button - same underlying scanPlugins() call either way). Both written
+    // to (inside scanPlugins()'s callAsync step lambda, which runs on the
+    // message thread - see that function's comment) and read from (a
+    // message-thread poll) the message thread only, just at different
+    // times, so plain members are safe here with no torn-read risk at all -
+    // unlike the audio-thread-shared fields elsewhere in this app, there's
+    // no cross-thread access to guard against.
+    juce::String getCurrentlyScanningPluginName() const { return currentlyScanningPluginName; }
+    float getScanProgress() const { return currentScanProgress; }
+
+    // Snapshot of the dead-man's-pedal file's contents taken at the very
+    // start of the most recent scanPlugins() call, before JUCE's own
+    // PluginDirectoryScanner starts rewriting it for this run. A non-empty
+    // list here means the app didn't exit cleanly during a previous scan
+    // (crash, or a force-quit during a hang) - those plugins are already
+    // auto-blacklisted by that point (standard PluginDirectoryScanner
+    // behaviour, see applyBlacklistingsFromDeadMansPedal); this snapshot
+    // exists purely so the caller can tell the user about it once, after
+    // the scan completes.
+    const juce::StringArray& getPluginsSkippedByLastCrash() const { return lastCrashedPlugins; }
+
 private:
     juce::AudioPluginFormatManager formatManager;
     juce::KnownPluginList knownPluginList;
@@ -35,6 +58,10 @@ private:
 
     juce::StringArray favorites;
     juce::StringArray recentlyUsed;
+
+    juce::String currentlyScanningPluginName;
+    float currentScanProgress = 0.0f;
+    juce::StringArray lastCrashedPlugins;
     juce::File getFavoritesFile();
     juce::File getRecentlyUsedFile();
     void loadFavoritesAndRecent();
