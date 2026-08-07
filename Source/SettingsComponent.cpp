@@ -1,15 +1,11 @@
 #include "SettingsComponent.h"
 
 SettingsComponent::SettingsComponent(juce::AudioDeviceManager& dm,
-                                            int initialChannelCount,
-                                            int maxChannelCount,
-                                            std::function<void(int)> onChannelCountChangedIn,
                                             const juce::File& initialRecordingsFolder,
                                             double initialSilenceTimeoutSeconds,
                                             std::function<void(juce::File)> onRecordingsFolderChangedIn,
                                             std::function<void(double)> onSilenceTimeoutChangedIn)
     : deviceManager(dm),
-      onChannelCountChanged(std::move(onChannelCountChangedIn)),
       onRecordingsFolderChanged(std::move(onRecordingsFolderChangedIn)),
       onSilenceTimeoutChanged(std::move(onSilenceTimeoutChangedIn)),
       recordingsFolder(initialRecordingsFolder)
@@ -33,20 +29,6 @@ SettingsComponent::SettingsComponent(juce::AudioDeviceManager& dm,
     audioSettingsViewport.setViewedComponent(selector.get(), false);
     audioSettingsViewport.setScrollBarsShown(true, false);
     addAndMakeVisible(audioSettingsViewport);
-
-    channelCountLabel.setText("Channels", juce::dontSendNotification);
-    addAndMakeVisible(channelCountLabel);
-
-    channelCountSlider.setSliderStyle(juce::Slider::IncDecButtons);
-    channelCountSlider.setRange(1, maxChannelCount, 1);
-    channelCountSlider.setValue(initialChannelCount, juce::dontSendNotification);
-    channelCountSlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 50, 22);
-    channelCountSlider.onValueChange = [this]
-    {
-        if (onChannelCountChanged)
-            onChannelCountChanged((int) channelCountSlider.getValue());
-    };
-    addAndMakeVisible(channelCountSlider);
 
     recordingLabel.setText("Recording", juce::dontSendNotification);
     recordingLabel.setFont(juce::Font(14.0f, juce::Font::bold));
@@ -92,12 +74,6 @@ SettingsComponent::~SettingsComponent() {}
 void SettingsComponent::resized()
 {
     auto area = getLocalBounds().reduced(10);
-
-    auto channelRow = area.removeFromTop(30);
-    channelCountLabel.setBounds(channelRow.removeFromLeft(100));
-    channelCountSlider.setBounds(channelRow);
-
-    area.removeFromTop(10);
 
     recordingLabel.setBounds(area.removeFromTop(20));
 

@@ -68,45 +68,12 @@ MasterChainComponent::MasterChainComponent(MasterChainProcessor& p)
     armButton.onClick = [this]
     {
         armed = ! armed;
-        updateArmAndRecordButtons();
+        updateArmButton();
         if (onMasterArmToggled) onMasterArmToggled(armed);
     };
     addAndMakeVisible(armButton);
 
-    recordButton.setButtonText(juce::String::charToString((juce::juce_wchar) 0x25CF) + " REC");
-    recordButton.onClick = [this] { if (onRecordButtonClicked) onRecordButtonClicked(); };
-    addAndMakeVisible(recordButton);
-
-    updateArmAndRecordButtons();
-
-    // Icons are vector-drawn by TransportButtonLookAndFeel rather than
-    // Unicode glyphs (see that class's header comment for why) - the button
-    // text below is a sentinel it dispatches on, not shown to the user.
-    transportButtonLookAndFeel = std::make_unique<TransportButtonLookAndFeel>();
-
-    playPauseButton.onClick = [this]
-    {
-        transportPlaying = ! transportPlaying;
-        updateTransportButtons();
-        if (onPlayPauseClicked) onPlayPauseClicked();
-    };
-    playPauseButton.setLookAndFeel(transportButtonLookAndFeel.get());
-    addAndMakeVisible(playPauseButton);
-
-    rtzButton.setButtonText("RTZ");
-    rtzButton.setTooltip("Return to zero");
-    rtzButton.onClick = [this] { if (onRtzClicked) onRtzClicked(); };
-    rtzButton.setLookAndFeel(transportButtonLookAndFeel.get());
-    addAndMakeVisible(rtzButton);
-
-    updateTransportButtons();
-
-    panicButton.setButtonText("PANIC");
-    panicButton.setTooltip("All notes off / all sound off - immediately silences every loaded instrument");
-    panicButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff7a2020));
-    panicButton.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
-    panicButton.onClick = [this] { if (onPanicClicked) onPanicClicked(); };
-    addAndMakeVisible(panicButton);
+    updateArmButton();
 }
 
 MasterChainComponent::~MasterChainComponent()
@@ -114,8 +81,6 @@ MasterChainComponent::~MasterChainComponent()
     volumeSlider.setLookAndFeel(nullptr);
     for (auto& button : slotButtons)
         button.setLookAndFeel(nullptr);
-    playPauseButton.setLookAndFeel(nullptr);
-    rtzButton.setLookAndFeel(nullptr);
 }
 
 void MasterChainComponent::setVolume(float linearGain)
@@ -127,42 +92,16 @@ void MasterChainComponent::setVolume(float linearGain)
 void MasterChainComponent::setArmed(bool shouldBeArmed)
 {
     armed = shouldBeArmed;
-    updateArmAndRecordButtons();
+    updateArmButton();
 }
 
-void MasterChainComponent::setRecordingActive(bool active)
-{
-    recordingActive = active;
-    // Arming/unarming while active takes effect immediately (see
-    // RecordingManager::setMasterArmed), same as a channel's own arm button.
-    updateArmAndRecordButtons();
-}
-
-void MasterChainComponent::updateArmAndRecordButtons()
+void MasterChainComponent::updateArmButton()
 {
     armButton.setColour(juce::TextButton::buttonColourId,
                         armed ? juce::Colour(0xff7a2020) : juce::Colour(0xff2a2a3e));
     armButton.setColour(juce::TextButton::textColourOffId,
                         armed ? juce::Colours::white : juce::Colour(0xffaaaaaa));
     armButton.setTooltip(armed ? "Master is armed to record" : "Arm master output for recording");
-
-    recordButton.setColour(juce::TextButton::buttonColourId,
-                           recordingActive ? juce::Colours::red : juce::Colour(0xff2a2a3e));
-    recordButton.setColour(juce::TextButton::textColourOffId,
-                           recordingActive ? juce::Colours::white : juce::Colour(0xffaaaaaa));
-    recordButton.setTooltip(recordingActive ? "Stop recording" : "Start recording every armed channel/master");
-}
-
-void MasterChainComponent::updateTransportButtons()
-{
-    // Sentinel text TransportButtonLookAndFeel dispatches on - see its
-    // header comment.
-    playPauseButton.setButtonText(transportPlaying ? "PAUSE" : "PLAY");
-    playPauseButton.setColour(juce::TextButton::buttonColourId,
-                              transportPlaying ? juce::Colour(0xff2a6b3d) : juce::Colour(0xff2a2a3e));
-    playPauseButton.setColour(juce::TextButton::textColourOffId,
-                              transportPlaying ? juce::Colours::white : juce::Colour(0xffaaaaaa));
-    playPauseButton.setTooltip(transportPlaying ? "Pause MIDI Take playback" : "Play MIDI Take playback");
 }
 
 void MasterChainComponent::setLevelMeterSources(const std::atomic<float>* leftLevel,
@@ -278,27 +217,12 @@ void MasterChainComponent::resized()
     }
     area.removeFromTop(16);
 
-    // ---- Panic: full-width, always the bottommost control - most
-    // emergency-critical action gets the least ambiguous target, and stays
-    // reachable regardless of channel-rack scroll position (master column
-    // is fixed, like collapseInputButton).
-    panicButton.setBounds(area.removeFromBottom(24));
+    // ---- ARM, below the fader/meters - global transport (Play/Rec/RTZ)
+    // and Panic moved out to GlobalSectionComponent, this strip only
+    // carries what's actually part of the master signal chain.
+    auto armArea = area.removeFromBottom(24);
     area.removeFromBottom(6);
-
-    // ---- Record: arm + global transport, below the fader/meters. Carved
-    // from the bottom of what's left, shrinking the fader/meters below to
-    // accommodate (per-request - there was no free space here otherwise).
-    auto recordArea = area.removeFromBottom(24);
-    area.removeFromBottom(6);
-    armButton.setBounds(recordArea.removeFromLeft(recordArea.getWidth() / 2).reduced(2, 0));
-    recordButton.setBounds(recordArea.reduced(2, 0));
-
-    // ---- MIDI Take playback transport (Increment B) - Play/Pause + RTZ,
-    // just above the arm/record row.
-    auto transportArea = area.removeFromBottom(24);
-    area.removeFromBottom(6);
-    playPauseButton.setBounds(transportArea.removeFromLeft(transportArea.getWidth() / 2).reduced(2, 0));
-    rtzButton.setBounds(transportArea.reduced(2, 0));
+    armButton.setBounds(armArea);
 
     auto leftMeterArea = area.removeFromLeft(16);
     area.removeFromLeft(4);

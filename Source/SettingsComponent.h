@@ -7,10 +7,11 @@
 class SettingsComponent : public juce::Component
 {
 public:
+    // Channel count moved out to GlobalSectionComponent's own +/- box in
+    // the main window (see MainComponent::globalSection) - this dialog now
+    // only covers audio/MIDI device selection, recordings folder/silence
+    // timeout, and plugin rescanning.
     SettingsComponent(juce::AudioDeviceManager& dm,
-                        int initialChannelCount,
-                        int maxChannelCount,
-                        std::function<void(int)> onChannelCountChanged,
                         const juce::File& initialRecordingsFolder,
                         double initialSilenceTimeoutSeconds,
                         std::function<void(juce::File)> onRecordingsFolderChanged,
@@ -24,18 +25,11 @@ public:
     // at the point this component is constructed.
     std::function<void()> onRescanRequested;
 
-    // Lets the owner revert the displayed value if a requested shrink is
-    // cancelled by the user (e.g. after a "channels have loaded plugins"
-    // confirmation is declined) - the slider has already visually moved by
-    // the time onChannelCountChanged fires.
-    void setDisplayedChannelCount(int count) { channelCountSlider.setValue(count, juce::dontSendNotification); }
-
 private:
     void updateRecordingsFolderLabel();
     void chooseRecordingsFolder();
 
     juce::AudioDeviceManager& deviceManager;
-    std::function<void(int)> onChannelCountChanged;
     std::function<void(juce::File)> onRecordingsFolderChanged;
     std::function<void(double)> onSilenceTimeoutChanged;
 
@@ -51,8 +45,6 @@ private:
     // by scrolling instead of being silently clipped off the bottom of a
     // fixed-height dialog.
     juce::Viewport audioSettingsViewport;
-    juce::Label  channelCountLabel;
-    juce::Slider channelCountSlider;
 
     juce::File recordingsFolder;
     juce::Label recordingLabel;

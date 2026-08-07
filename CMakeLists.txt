@@ -93,6 +93,9 @@ target_sources(IMI_KPlayer PRIVATE
     Source/MasterChainProcessor.h
     Source/MasterChainComponent.cpp
     Source/MasterChainComponent.h
+    Source/GlobalSectionComponent.cpp
+    Source/GlobalSectionComponent.h
+    Source/GearButtonLookAndFeel.h
     Source/PeakMeterComponent.cpp
     Source/PeakMeterComponent.h
     Source/PluginEditorWindow.h

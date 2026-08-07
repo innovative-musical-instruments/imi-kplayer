@@ -7,13 +7,16 @@
 #include "PeakMeterComponent.h"
 #include "ConsoleFaderLookAndFeel.h"
 #include "SlotButtonLookAndFeel.h"
-#include "TransportButtonLookAndFeel.h"
 
 // The master bus strip: the insert-slot buttons (same load/replace/remove/
 // bypass popup-menu pattern as ChannelComponent's insert slots, applied
-// once to the master sum instead of once per channel) with the output
-// gain fader and its peak meter integrated directly below them, mirroring
-// how a channel bundles its own gain fader under its insert slots.
+// once to the master sum instead of once per channel), the output gain
+// fader and its peak meter integrated directly below them, and the master
+// ARM toggle - mirroring how a channel bundles its own gain fader under its
+// insert slots. Everything session-global (transport, Record Ready, tempo/
+// sync, channel count, Settings, Panic) lives one strip further right, in
+// GlobalSectionComponent - see MainComponent::resized() for the actual
+// strip order.
 class MasterChainComponent : public juce::Component
 {
 public:
@@ -27,32 +30,12 @@ public:
     std::function<void(float linearGain)> onVolumeChanged;
 
     // Multitrack recording (see RecordingManager) - MainComponent owns the
-    // arm/recording-active truth and is the one global transport for every
-    // armed channel and the master together; this component only reflects
-    // that state via setArmed()/setRecordingActive() and reports user
-    // clicks. The arm toggle stays clickable while recording is active, same
-    // as a channel's own arm button - arming mid-take takes effect
-    // immediately rather than being rejected.
+    // arm truth and is the one global transport for every armed channel and
+    // the master together; this component only reflects that state via
+    // setArmed() and reports user clicks. The arm toggle stays clickable
+    // while recording is active, same as a channel's own arm button -
+    // arming mid-take takes effect immediately rather than being rejected.
     std::function<void(bool armed)> onMasterArmToggled;
-    std::function<void()> onRecordButtonClicked;
-
-    // Minimal session transport for MIDI Take playback (Increment B, see
-    // docs/kplayer-take-recording-playback-spec.md and SessionTransport's
-    // own header for the full design) - independent of the arm/record
-    // controls above. Not MIDI-remote-controllable in this increment
-    // (unlike arm/record's CC104/102), so the Play/Pause button's visual
-    // state is purely self-managed here and reported outward, same shape as
-    // armButton's own onClick below - no external setter needed since
-    // nothing else can change it out from under the button.
-    std::function<void()> onPlayPauseClicked;
-    std::function<void()> onRtzClicked;
-
-    // Emergency all-notes-off/all-sound-off, injected into every loaded
-    // instrument regardless of channel/device routing - see
-    // MainComponent::triggerPanic(). Purely a fire-and-forget request, no
-    // visual latch on this button (unlike arm/record) since there's no
-    // ongoing state to reflect back.
-    std::function<void()> onPanicClicked;
 
     explicit MasterChainComponent(MasterChainProcessor& processor);
     ~MasterChainComponent() override;
@@ -71,7 +54,6 @@ public:
                               std::atomic<bool>* clipFlagRight);
 
     void setArmed(bool shouldBeArmed);
-    void setRecordingActive(bool active);
 
 private:
     void showPluginSlotMenu(int slotIndex);
@@ -90,18 +72,8 @@ private:
     PeakMeterComponent rightLevelMeter;
 
     juce::TextButton armButton;
-    juce::TextButton recordButton;
     bool armed = false;
-    bool recordingActive = false;
-    void updateArmAndRecordButtons();
-
-    juce::TextButton playPauseButton;
-    juce::TextButton rtzButton;
-    std::unique_ptr<TransportButtonLookAndFeel> transportButtonLookAndFeel;
-    bool transportPlaying = false;
-    void updateTransportButtons();
-
-    juce::TextButton panicButton;
+    void updateArmButton();
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MasterChainComponent)
 };
