@@ -9,11 +9,10 @@
 #include "ChannelComponent.h"
 #include "MasterChainProcessor.h"
 #include "MasterChainComponent.h"
-#include "BrandingStripComponent.h"
+#include "GlobalSectionComponent.h"
 #include "PluginManager.h"
 #include "LoadingOverlayComponent.h"
 #include "SessionMigrator.h"
-#include "TempoSyncComponent.h"
 #include "MidiClockTempoDetector.h"
 #include "RecordingManager.h"
 #include "MidiTakePlayer.h"
@@ -113,7 +112,10 @@ public:
     // own header for the full design) - fully independent of
     // RecordingManager's own start/stop above; Play/Pause and Record are two
     // separate toggles driving/reading the same playhead.
-    void toggleTransportPlaying() { if (sessionTransport.isPlaying()) sessionTransport.pause(); else sessionTransport.play(); }
+    // Starts/pauses the transport; if Record Ready was armed and waiting
+    // for exactly this play edge (see toggleRecordArm()), also starts
+    // recording - no longer a trivial one-liner, see the .cpp.
+    void toggleTransportPlaying();
     bool isTransportPlaying() const { return sessionTransport.isPlaying(); }
     void rtzTransport() { sessionTransport.rtz(); }
 
@@ -144,6 +146,13 @@ public:
     // without polling - reason is non-empty only for an auto-stop (silence
     // timeout or low disk space), for a message the caller can show the user.
     std::function<void(juce::String reason)> onRecordingStateChanged;
+
+    // Forwarded from GlobalSectionComponent's own callbacks - both need
+    // MainWindow-level context this component doesn't have (a confirm
+    // dialog for a destructive shrink, opening the Settings DialogWindow),
+    // same shape as onDirty above.
+    std::function<void(int newCount)> onChannelCountChangeRequested;
+    std::function<void()> onSettingsRequested;
 
     // Window size round-trips through the session the same way tempo does:
     // MainWindow (which actually owns the DocumentWindow) writes its current
@@ -281,13 +290,13 @@ private:
     MasterChainProcessor masterChainProcessor;
     MasterChainComponent masterChainComponent { masterChainProcessor };
 
-    // IMI + Tribal Tools logos, fixed height, directly above the master
-    // strip (spec item 2).
-    BrandingStripComponent brandingStrip;
+    // Rightmost strip: branding, channel count, Settings access, the I/O
+    // collapse toggle, tempo/sync (owns the actual TempoSyncComponent -
+    // see getTempoSyncComponent()), transport, Record Ready, and Panic.
+    // Constructed with the same starting values SettingsComponent used to
+    // seed its own channel-count slider with.
+    GlobalSectionComponent globalSection { defaultChannelCount, maxChannels };
 
-    // Tempo + MIDI-clock sync control, between collapseInputButton and
-    // masterChainComponent in the master column (see resized()).
-    TempoSyncComponent tempoSyncComponent;
     MidiClockTempoDetector tempoClockDetector;
     bool tempoSyncEnabled = false;
     juce::String tempoSyncDeviceIdentifier;
@@ -314,6 +323,14 @@ private:
     // callback - see audioDeviceIOCallbackWithContext.
     std::atomic<bool> panicRequested { false };
 
+    // Record Ready state machine (globalSection.recordButton's third state,
+    // between idle and actually recording) - purely message-thread/click-
+    // driven, no audio-thread access needed, so a plain bool is enough. See
+    // toggleRecordArm()/startArmedRecording() for the actual transitions.
+    bool recordArmedForNextPlay = false;
+    void toggleRecordArm();
+    void startArmedRecording();
+
     // Cached identifier of the first connected MIDI device whose name
     // contains "kadabra" (see findKadabraMidiDeviceIdentifier() in
     // MainComponent.cpp), refreshed on construction and on every device-list
@@ -327,10 +344,9 @@ private:
     void refreshKadabraDeviceIdentifier();
 
     // Single global toggle (not per-channel) that collapses/expands the
-    // Audio In/MIDI In/MIDI Ch rows on every channel strip at once - lives
-    // in the master column so it's visible regardless of channel-rack
-    // scroll position.
-    juce::TextButton collapseInputButton;
+    // Audio In/MIDI In/MIDI Ch rows on every channel strip at once - the
+    // actual button lives in globalSection (see getInputSectionCollapsed()
+    // callback wiring in the constructor), this just tracks the state.
     bool inputSectionCollapsed = false;
 
     // Nothing renders a SettableTooltipClient's tooltip text without one of

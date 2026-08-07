@@ -35,71 +35,49 @@ MainComponent::MainComponent(juce::AudioDeviceManager& dm, PluginManager& pm)
     masterChainComponent.onVolumeChanged = [this](float linearGain) { masterVolume = linearGain; notifyDirty(); };
     masterChainProcessor.onBypassChanged = [this](int) { masterChainComponent.refresh(); };
     masterChainComponent.onMasterArmToggled = [this](bool armed) { setMasterArmed(armed); notifyDirty(); };
-    masterChainComponent.onPlayPauseClicked = [this] { toggleTransportPlaying(); };
-    masterChainComponent.onRtzClicked       = [this] { rtzTransport(); };
-    masterChainComponent.onPanicClicked     = [this] { triggerPanic(); };
-    masterChainComponent.onRecordButtonClicked = [this]
-    {
-        // Lazy prompt: ask for a recordings folder right here the first
-        // time it's needed, rather than requiring a trip to Settings first.
-        if (! recordingManager.isRecording() && recordingManager.getRecordingsFolder() == juce::File())
-        {
-            recordingFolderChooser = std::make_unique<juce::FileChooser>(
-                "Choose a folder for recordings",
-                juce::File::getSpecialLocation(juce::File::userMusicDirectory));
-
-            auto flags = juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories;
-            recordingFolderChooser->launchAsync(flags, [this](const juce::FileChooser& chooser)
-            {
-                auto result = chooser.getResult();
-                if (result == juce::File())
-                    return;
-
-                setRecordingsFolder(result);
-                notifyDirty();
-
-                auto error = toggleRecording();
-                if (error.isNotEmpty())
-                    juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, "Recording", error);
-            });
-            return;
-        }
-
-        auto error = toggleRecording();
-        if (error.isNotEmpty())
-            juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, "Recording", error);
-    };
     masterChainComponent.setLevelMeterSources(&masterPeakLeft, &masterPeakRight,
                                               &masterClipFlagLeft, &masterClipFlagRight);
     addAndMakeVisible(masterChainComponent);
-    addAndMakeVisible(brandingStrip);
 
-    collapseInputButton.setButtonText("Hide Channel I/O's");
-    collapseInputButton.onClick = [this] { toggleInputSectionCollapsed(); };
-    addAndMakeVisible(collapseInputButton);
+    // Both need MainWindow-level context this component doesn't have
+    // (a confirm dialog for a destructive shrink, opening the Settings
+    // DialogWindow) - just forwarded up to whatever Main.cpp wires there.
+    globalSection.onChannelCountChangeRequested = [this](int newCount)
+    {
+        if (onChannelCountChangeRequested) onChannelCountChangeRequested(newCount);
+    };
+    globalSection.onSettingsRequested = [this] { if (onSettingsRequested) onSettingsRequested(); };
+    globalSection.onCollapseToggled   = [this] { toggleInputSectionCollapsed(); };
+    globalSection.onPlayPauseClicked  = [this] { toggleTransportPlaying(); };
+    globalSection.onRtzClicked        = [this] { rtzTransport(); };
+    globalSection.onPanicClicked      = [this] { triggerPanic(); };
+    // Record Ready click routing (idle -> armed -> recording -> idle) -
+    // see toggleRecordArm()'s own comment for the full state machine.
+    globalSection.onRecordButtonClicked = [this] { toggleRecordArm(); };
+    addAndMakeVisible(globalSection);
 
     // Manual edits only apply while sync is off (TempoSyncComponent itself
     // won't even let the value label be edited while synced, but the guard
     // here is what actually matters). Sync-on/off and device changes are
     // deliberate user actions - unlike the sync-driven tempo ticks in
     // timerCallback(), they do mark the session dirty.
-    tempoSyncComponent.onTempoChanged = [this](double bpm)
+    auto& tempoSync = globalSection.getTempoSyncComponent();
+    tempoSync.onTempoChanged = [this](double bpm)
     {
         if (tempoSyncEnabled) return;
         setGlobalTempo(bpm);
         notifyDirty();
     };
-    tempoSyncComponent.onSyncToggled = [this](bool enabled)
+    tempoSync.onSyncToggled = [this](bool enabled)
     {
         setTempoSyncEnabled(enabled);
         notifyDirty();
     };
-    tempoSyncComponent.onSyncDeviceChanged = [this](juce::String identifier)
+    tempoSync.onSyncDeviceChanged = [this](juce::String identifier)
     {
         setTempoSyncDeviceIdentifier(std::move(identifier));
         notifyDirty();
     };
-    addAndMakeVisible(tempoSyncComponent);
 
     // Fires from RecordingManager's silence/disk-space watchdog (see
     // timerCallback() -> pollForAutoStop()) - refresh the arm/recording
@@ -223,13 +201,14 @@ void MainComponent::setChannelCount(int newCount)
     recordingManager.setChannelCount(newCount);
 
     deviceManager.addAudioCallback(this);
+    globalSection.setChannelCount(newCount);
     resized();
 }
 
 void MainComponent::setInputSectionCollapsedState(bool collapsed)
 {
     inputSectionCollapsed = collapsed;
-    collapseInputButton.setButtonText(inputSectionCollapsed ? "Show Channel I/O's" : "Hide Channel I/O's");
+    globalSection.setInputSectionCollapsed(inputSectionCollapsed);
     for (auto& c : channelComponents)
         c->setInputSectionCollapsed(inputSectionCollapsed);
 }
@@ -424,7 +403,7 @@ void MainComponent::timerCallback()
     if (tempoSyncEnabled && tempoSyncDeviceIdentifier.isNotEmpty())
     {
         bool hasSignal = tempoClockDetector.hasSignal();
-        tempoSyncComponent.setSyncSignalWarning(! hasSignal);
+        globalSection.getTempoSyncComponent().setSyncSignalWarning(! hasSignal);
 
         // Holds the last-known tempo (rather than reverting to the manual
         // value) once the signal drops, per the earlier design discussion -
@@ -450,21 +429,21 @@ void MainComponent::setGlobalTempo(double bpm)
     for (auto& channel : channelProcessors)
         channel->setTempo(bpm);
     masterChainProcessor.setTempo(bpm);
-    tempoSyncComponent.setDisplayedTempo(bpm);
+    globalSection.getTempoSyncComponent().setDisplayedTempo(bpm);
 }
 
 void MainComponent::setTempoSyncEnabled(bool enabled)
 {
     tempoSyncEnabled = enabled;
-    tempoSyncComponent.setSyncEnabled(enabled);
+    globalSection.getTempoSyncComponent().setSyncEnabled(enabled);
     if (! enabled)
-        tempoSyncComponent.setSyncSignalWarning(false);
+        globalSection.getTempoSyncComponent().setSyncSignalWarning(false);
 }
 
 void MainComponent::setTempoSyncDeviceIdentifier(juce::String identifier)
 {
     tempoSyncDeviceIdentifier = std::move(identifier);
-    tempoSyncComponent.setSyncDeviceIdentifier(tempoSyncDeviceIdentifier);
+    globalSection.getTempoSyncComponent().setSyncDeviceIdentifier(tempoSyncDeviceIdentifier);
 
     // A stray interval spanning the old and new device's pulse streams
     // must not get baked into the average - see MidiClockTempoDetector::reset().
@@ -601,7 +580,106 @@ void MainComponent::refreshRecordingUI()
     bool active = recordingManager.isRecording();
     for (auto& c : channelComponents)
         c->setRecordingActive(active);
-    masterChainComponent.setRecordingActive(active);
+
+    // Whatever armed it - the Record Ready button, or a direct MIDI CC102
+    // toggle bypassing it entirely (see timerCallback()) - it's live now,
+    // so any pending arm-and-wait-for-play request is moot. Centralising
+    // this here (the one choke point every recording start/stop already
+    // funnels through) means it stays correct regardless of which path
+    // triggered it, current or future.
+    if (active)
+        recordArmedForNextPlay = false;
+
+    globalSection.setRecordState(active ? GlobalSectionComponent::RecordState::recording
+                                        : GlobalSectionComponent::RecordState::idle);
+}
+
+void MainComponent::toggleTransportPlaying()
+{
+    bool wasPlaying = sessionTransport.isPlaying();
+    if (wasPlaying)
+        sessionTransport.pause();
+    else
+        sessionTransport.play();
+
+    globalSection.setTransportPlaying(sessionTransport.isPlaying());
+
+    // Record Ready was waiting for exactly this play edge - if it was
+    // already playing when armed, toggleRecordArm() already started
+    // recording directly and recordArmedForNextPlay would already be
+    // false, so this can't double-fire.
+    if (! wasPlaying && sessionTransport.isPlaying() && recordArmedForNextPlay)
+        startArmedRecording();
+}
+
+void MainComponent::toggleRecordArm()
+{
+    if (recordingManager.isRecording())
+    {
+        // Actively recording - REC stops it. Playback (if any) is
+        // deliberately left untouched, same as the direct MIDI CC102 path
+        // has always done.
+        auto error = toggleRecording();
+        if (error.isNotEmpty())
+            juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, "Recording", error);
+        return;
+    }
+
+    if (recordArmedForNextPlay)
+    {
+        // Armed but nothing has actually started yet - cancel back to idle.
+        recordArmedForNextPlay = false;
+        globalSection.setRecordState(GlobalSectionComponent::RecordState::idle);
+        return;
+    }
+
+    recordArmedForNextPlay = true;
+    if (sessionTransport.isPlaying())
+        startArmedRecording(); // already rolling - no future play edge to wait for, start now
+    else
+        globalSection.setRecordState(GlobalSectionComponent::RecordState::armed);
+}
+
+void MainComponent::startArmedRecording()
+{
+    recordArmedForNextPlay = false;
+
+    // Lazy prompt: ask for a recordings folder right here the first time
+    // it's needed, rather than requiring a trip to Settings first - same
+    // as the Record button used to do directly before Record Ready existed.
+    if (recordingManager.getRecordingsFolder() == juce::File())
+    {
+        recordingFolderChooser = std::make_unique<juce::FileChooser>(
+            "Choose a folder for recordings",
+            juce::File::getSpecialLocation(juce::File::userMusicDirectory));
+
+        auto flags = juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories;
+        recordingFolderChooser->launchAsync(flags, [this](const juce::FileChooser& chooser)
+        {
+            auto result = chooser.getResult();
+            if (result == juce::File())
+            {
+                // Cancelled - nothing to record into. refreshRecordingUI()
+                // never runs in this branch (toggleRecording() is never
+                // reached), so the button would otherwise stay stuck on
+                // "armed" - revert it explicitly here instead.
+                globalSection.setRecordState(GlobalSectionComponent::RecordState::idle);
+                return;
+            }
+
+            setRecordingsFolder(result);
+            notifyDirty();
+
+            auto error = toggleRecording();
+            if (error.isNotEmpty())
+                juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, "Recording", error);
+        });
+        return;
+    }
+
+    auto error = toggleRecording();
+    if (error.isNotEmpty())
+        juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, "Recording", error);
 }
 
 void MainComponent::showPluginBrowser(int channelIndex, int slotIndex, bool isReplace)
@@ -922,16 +1000,17 @@ void MainComponent::resized()
 {
     auto area = getLocalBounds().reduced(20);
 
-    auto masterChainArea = area.removeFromRight(130);
-    brandingStrip.setBounds(masterChainArea.removeFromTop(40));
-    masterChainArea.removeFromTop(6);
-    collapseInputButton.setBounds(masterChainArea.removeFromTop(22));
-    masterChainArea.removeFromTop(6);
-    tempoSyncComponent.setBounds(masterChainArea.removeFromTop(TempoSyncComponent::preferredHeight));
-    masterChainArea.removeFromTop(6);
+    // Rightmost: Global section (branding, channel count, Settings, I/O
+    // collapse, tempo/sync, transport, Record Ready, Panic) - see
+    // GlobalSectionComponent's own resized() for its internal layout.
+    auto globalArea = area.removeFromRight(150);
+    globalSection.setBounds(globalArea);
+    area.removeFromRight(12);
 
+    // Master strip: inserts, gain fader/meters, ARM only - between the
+    // channel rack and the global section.
+    auto masterChainArea = area.removeFromRight(110);
     masterChainComponent.setBounds(masterChainArea);
-
     area.removeFromRight(20);
 
     channelViewport.setBounds(area);

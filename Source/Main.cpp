@@ -120,7 +120,6 @@ public:
         // as user-driven; see the end of the constructor and resized().
         bool programmaticResize = true;
         juce::ApplicationCommandManager commandManager;
-        juce::Component::SafePointer<SettingsComponent> activeSettings;
 
         // File > Recent - persisted to disk (mirrors PluginManager's
         // ~/Library/IMI/KPlayer/ convention - note juce::File::userApplicationDataDirectory
@@ -217,6 +216,12 @@ public:
             setMenuBar(this);
             mainComponent = new MainComponent(dm, pm);
             mainComponent->onDirty = [this] { markDirty(); };
+            // Forwarded from GlobalSectionComponent's own callbacks -
+            // MainComponent doesn't have the context either of these needs
+            // (a confirm dialog for a destructive shrink, opening the
+            // Settings DialogWindow).
+            mainComponent->onChannelCountChangeRequested = [this](int newCount) { requestChannelCountChange(newCount); };
+            mainComponent->onSettingsRequested = [this] { showSettings(); };
             setContentOwned(mainComponent, true);
             setResizable(true, true);
             centreWithSize(1152, 800);
@@ -698,14 +703,10 @@ public:
         void showSettings()
         {
             auto* settings = new SettingsComponent(deviceManager,
-                                                    mainComponent->getNumChannels(),
-                                                    MainComponent::maxChannels,
-                                                    [this](int newCount) { requestChannelCountChange(newCount); },
                                                     mainComponent->getRecordingsFolder(),
                                                     mainComponent->getRecordingSilenceTimeoutSeconds(),
                                                     [this](juce::File folder) { mainComponent->setRecordingsFolder(folder); markDirty(); },
                                                     [this](double seconds) { mainComponent->setRecordingSilenceTimeoutSeconds(seconds); markDirty(); });
-            activeSettings = settings;
 
             juce::DialogWindow::LaunchOptions opts;
             opts.content.setOwned(settings);
@@ -807,16 +808,19 @@ public:
                     "Channels " + juce::String(newCount + 1) + "-" + juce::String(oldCount)
                         + " have loaded plugins that will be removed. Continue?",
                     "Reduce", "Cancel", this),
-                [this, newCount, oldCount](int confirmResult)
+                [this, newCount](int confirmResult)
                 {
+                    // Cancel needs no revert here (unlike the old Settings
+                    // slider, which visually snapped to the new value the
+                    // instant it was dragged/clicked) - GlobalSectionComponent's
+                    // +/- boxes never move their own displayed count on
+                    // click, only in response to MainComponent::setChannelCount()
+                    // actually succeeding, so an unconfirmed shrink just
+                    // never touches the display at all.
                     if (confirmResult == 1)
                     {
                         mainComponent->setChannelCount(newCount);
                         markDirty();
-                    }
-                    else if (activeSettings != nullptr)
-                    {
-                        activeSettings->setDisplayedChannelCount(oldCount);
                     }
                 });
         }
