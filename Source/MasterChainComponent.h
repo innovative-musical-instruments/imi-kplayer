@@ -55,6 +55,14 @@ public:
 
     void setArmed(bool shouldBeArmed);
 
+    // Global collapse of each channel's Audio In/MIDI In/MIDI Channel rows
+    // (see MainComponent::setInputSectionCollapsedState) shifts
+    // ChannelComponent's own divider line up/down - this strip has no such
+    // rows to collapse, but needs to know the state anyway so its own
+    // heading divider can track the same Y position either way (see
+    // resized()'s comment).
+    void setInputSectionCollapsed(bool collapsed);
+
 private:
     void showPluginSlotMenu(int slotIndex);
     void updateSlotButton(int slotIndex);
@@ -62,6 +70,8 @@ private:
     MasterChainProcessor& processor;
 
     juce::Label titleLabel;
+    int titleDividerY = 0;
+    bool inputSectionCollapsed = false;
     std::array<juce::TextButton, numSlots> slotButtons;
     std::unique_ptr<SlotButtonLookAndFeel> slotButtonLookAndFeel;
 

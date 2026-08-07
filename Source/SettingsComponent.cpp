@@ -59,6 +59,7 @@ SettingsComponent::SettingsComponent(juce::AudioDeviceManager& dm,
 
     pluginsLabel.setText("Plugins", juce::dontSendNotification);
     pluginsLabel.setFont(juce::Font(14.0f, juce::Font::bold));
+    pluginsLabel.setJustificationType(juce::Justification::centredLeft);
     addAndMakeVisible(pluginsLabel);
 
     rescanPluginsButton.setButtonText("Rescan Plugins");
@@ -75,9 +76,17 @@ void SettingsComponent::resized()
 {
     auto area = getLocalBounds().reduced(10);
 
+    // Measured approximation of where AudioDeviceSelectorComponent's own
+    // "Test" button (Output row, below) sits - that's a JUCE built-in
+    // component whose internal layout isn't exposed, so this is a fixed
+    // inset calibrated against a screenshot rather than a shared value;
+    // nudge this one number if it drifts as the dialog width changes.
+    const int audioSelectorRightInset = 28;
+
     recordingLabel.setBounds(area.removeFromTop(20));
 
     auto folderRow = area.removeFromTop(26);
+    folderRow.removeFromRight(audioSelectorRightInset);
     chooseFolderButton.setBounds(folderRow.removeFromRight(90));
     folderRow.removeFromRight(6);
     recordingsFolderPathLabel.setBounds(folderRow);
@@ -85,11 +94,15 @@ void SettingsComponent::resized()
     area.removeFromTop(6);
     auto silenceRow = area.removeFromTop(26);
     silenceTimeoutLabel.setBounds(silenceRow.removeFromLeft(180));
+    silenceRow.removeFromRight(audioSelectorRightInset);
     silenceTimeoutSlider.setBounds(silenceRow);
 
+    // Heading beside the button now, not above it - same row, left-aligned
+    // the same way the Recording/Auto-stop labels are (fixed-width column,
+    // matching silenceTimeoutLabel's own 180px).
     area.removeFromTop(10);
-    pluginsLabel.setBounds(area.removeFromTop(20));
     auto pluginsRow = area.removeFromTop(26);
+    pluginsLabel.setBounds(pluginsRow.removeFromLeft(180));
     rescanPluginsButton.setBounds(pluginsRow.removeFromLeft(160));
 
     area.removeFromTop(10);

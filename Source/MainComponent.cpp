@@ -215,6 +215,7 @@ void MainComponent::setInputSectionCollapsedState(bool collapsed)
 {
     inputSectionCollapsed = collapsed;
     globalSection.setInputSectionCollapsed(inputSectionCollapsed);
+    masterChainComponent.setInputSectionCollapsed(inputSectionCollapsed);
     for (auto& c : channelComponents)
         c->setInputSectionCollapsed(inputSectionCollapsed);
 }
