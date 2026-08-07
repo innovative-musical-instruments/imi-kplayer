@@ -57,8 +57,15 @@ public:
     std::function<void()> onRecordButtonClicked;
     void setRecordState(RecordState state);
 
+    // Work Mode (default) vs. Show Mode - see MainComponent::
+    // setShowModeEnabled()'s comment for the full reasoning. Dumb reflector
+    // like onCollapseToggled above: reports the click, owner decides and
+    // pushes the actual state back via setShowModeEnabled().
+    std::function<void()> onShowModeToggled;
+    void setShowModeEnabled(bool enabled);
+
     // Momentary visual only (a brief red flash on click) - no persistent
-    // state to reflect back in, unlike Record Ready above.
+    // state to reflect back in, unlike Record Ready/Show Mode above.
     std::function<void()> onPanicClicked;
 
 private:
@@ -92,6 +99,9 @@ private:
     RecordState recordState = RecordState::idle;
     bool blinkPhaseOn = false;
     void updateRecordButtonColour();
+
+    juce::TextButton showModeButton;
+    bool showModeEnabled = false;
 
     juce::TextButton panicButton;
 

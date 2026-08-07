@@ -43,7 +43,14 @@ Cmd+Q, Dock quit, File > Quit, window close — already funnels through, via
 Save/Discard/Cancel prompt untouched — this is an *additional* path, not a
 replacement of the existing one.
 
-## B. Fast load/save via diffing
+## B. Fast load/save via diffing — DONE (2026-08-07)
+
+Implemented and reviewed against the actual code before building (see
+"Backlog review habit") - the root cause below was re-confirmed unchanged
+by everything else built in the intervening two weeks (Panic/Rescan/scan
+bulletproofing, the Master-strip/Global-section split). One part of the
+original proposal below turned out to need correcting before implementing,
+noted inline.
 
 **Confirmed root cause** (not just "plugin loading is inherently slow"):
 - `ChannelProcessor::loadPlugin()` has a deliberate `Thread::sleep(1000)`
@@ -63,39 +70,75 @@ replacement of the existing one.
   the message thread for well over a minute, almost entirely in safety-margin
   sleeps, not actual plugin work.
 
-**Proposed fix — diff before mutating anything:**
-1. Before touching any live state, compare the new session's plugin layout
-   against what's currently loaded, per channel and per slot (same channel
-   index + same slot index + same plugin identity, e.g.
-   `PluginDescription::createIdentifierString()`).
-2. Where they match: skip `unloadPlugin`/`loadPlugin` entirely. Keep the
-   running instance and push the new session's saved patch/parameter state
-   via `setStateInformation()` (with the same `ready`-flag audio-thread-safety
-   gating already used elsewhere for slot mutation). This is the actual win —
-   it skips instantiation *and* both safety-margin sleeps completely, since
-   those exist specifically around creating/destroying an instance, not
-   around updating one that's already alive and settled.
-3. Where they don't match (different plugin, or empty either side): fall back
-   to today's unload+load path, but only for that one slot.
-4. Same idea one level up: skip the channel-count resize if unchanged, and
-   skip `deviceManager.initialise(...)` if the new session's device XML
-   matches the current live state (also avoids an audible dropout on every
-   load, not just time).
+**Implemented fix — diff before mutating anything**, in `SessionIO.cpp`'s
+`applyPluginSlotVar()` (shared by `applyChannelVar()`/`applyMasterChainVar()`,
+both of which no longer blanket-unload every slot before applying anything —
+each slot decides for itself now):
 
-**Matching strategy for v1:** position-based (same channel index + same slot
-index + same plugin identity) — simplest correct approach, almost certainly
-covers the real workflow (switching between Muses built on the same
-underlying rig, same plugins in the same slots, different settings).
-Matching an instance across *different* slot positions is a plausible future
-refinement but adds real bookkeeping complexity (avoiding double-claiming one
-instance) — only build it if position-based turns out insufficient in
-practice.
+1. Saved slot is empty → unload whatever's currently there, if anything.
+2. Same plugin identity already loaded in this exact slot
+   (`PluginDescription::createIdentifierString()`, position-based match —
+   same channel index + same slot index) **and** byte-identical state
+   (`ChannelProcessor::getPluginState()` vs. the saved blob) → true no-op,
+   not even a `setStateInformation()` call.
+3. Same plugin identity, **different** state → push the new state into the
+   running instance in place via the new
+   `ChannelProcessor`/`MasterChainProcessor::updatePluginState()`, skipping
+   `createPluginInstance()`, bus renegotiation, and `prepareToPlay()`
+   entirely — the actual win, since those (not `setStateInformation()`
+   itself) are what the destroy+recreate path pays for.
+4. Anything else (different plugin, or empty either side) → today's full
+   unload+load path, unchanged, only for that one slot.
+5. Same idea one level up: `deviceManager.initialise(...)` is now skipped
+   when the new session's device XML string-matches the current live
+   state (`SessionIO::loadSession()`) — avoids an audible dropout on every
+   load/song-switch, not just time. (Channel-count resize was already
+   skipped-if-unchanged before this pass — `MainComponent::setChannelCount()`
+   already early-returns on `newCount == oldCount`; the original doc listed
+   this as still-needed work, it wasn't.)
 
-**Honest expectation-setting:** this makes the *engine overhead* near-instant
-for matching slots. It can't make a genuinely different patch on the same
-plugin type load faster if the plugin itself does real work applying it (e.g.
-a sample-based instrument swapping resident samples) — that cost lives inside
-the plugin, not in KPlayer's loading logic.
+**Correction to the original proposal, made before implementing (worth
+recording since it changes the actual behavior from what's written above in
+the original design)**: step 2 above ("skip *both* safety-margin sleeps
+completely... those exist specifically around creating/destroying an
+instance, not around updating one that's already alive") was only half
+right. `ChannelProcessor::loadPlugin()`'s 1000ms sleep sits *after*
+`setStateInformation()`, not just after construction — its real job is
+letting HISE's async sample-streaming settle before the audio thread
+touches the plugin again, and calling `setStateInformation()` with a
+*different* patch on an already-loaded instance could in principle
+re-trigger that same async work, not just fresh instantiation.
+
+What resolved it: this app's actual instrument roster (K-Sampler and
+friends) loads its sample data once, at instantiation — not in response to
+a later `setStateInformation()` call carrying a different patch. So for the
+plugins actually in use here, there's no async streaming work happening in
+the fast path to wait out, and the settle sleep can be dropped for it
+entirely — only the same 50ms drain margin `loadPlugin()`/`unloadPlugin()`
+already use is kept (`slot.ready` gates whether the audio thread touches the
+plugin at all, so once that's observably false, `setStateInformation()` is
+safe with no further wait). **This is a roster-specific assumption, not a
+general guarantee** — `updatePluginState()`'s header comment flags it
+explicitly; revisit if a plugin that *does* reload sample data per-patch
+(some third-party HISE-based instruments do) ever ends up in a slot this
+path can reach.
+
+**Matching strategy:** position-based (same channel index + same slot index
++ same plugin identity) — simplest correct approach, covers the real
+workflow this was built for (switching between Muses built on the same
+rig — same channel count, same plugins in the same slots, different mix/
+insert settings; e.g. 5 setlist songs all using the same K-Sampler
+instances with different KChannel EQ/comp per song). Matching an instance
+across *different* slot positions was considered and dropped — real
+bookkeeping complexity (avoiding double-claiming one instance) for a
+workflow that doesn't come up here.
+
+**Honest expectation-setting, updated:** for this app's actual plugins, the
+fast path is now close to genuinely instant (tens of ms per matching slot,
+almost entirely the 50ms drain margin) rather than the original doc's more
+conservative "engine overhead only, plugin's own patch-swap work still
+costs whatever it costs" framing — because that patch-swap work turned out
+not to be async/slow for this roster in the first place.
 
 ## Related: MIDI SysEx for OS↔Player communication
 
@@ -128,7 +171,7 @@ manufacturer-ID byte prefix; since this is a closed Kadabra↔KPlayer protocol
 
 ## Status
 
-Nothing in this document is implemented. Revisit when ready to schedule
-either piece — B (fast load/save) is probably the higher-leverage one given
-Kadabra is used live, but A (launch/quit integration) is what makes the two
-apps feel like one system.
+B (fast load/save) is done — see its section above. A (launch/quit
+integration) and the MIDI SysEx section above remain unimplemented; revisit
+A when ready to schedule it, it's what makes the two apps feel like one
+system.

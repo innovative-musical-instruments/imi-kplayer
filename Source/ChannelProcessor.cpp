@@ -97,6 +97,28 @@ bool ChannelProcessor::loadPlugin(int slotIndex,
     return true;
 }
 
+bool ChannelProcessor::updatePluginState(int slotIndex, const juce::MemoryBlock& newState)
+{
+    jassert(slotIndex >= 0 && slotIndex < totalSlotCount);
+    auto& slot = slots[(size_t) slotIndex];
+
+    if (slot.plugin == nullptr)
+        return false;
+
+    // Same drain-margin reasoning as loadPlugin()/unloadPlugin() - once the
+    // audio thread has observed ready==false, processBlock() won't touch
+    // this slot's plugin at all (see the ready checks there), so
+    // setStateInformation() below is safe to call concurrently with it.
+    slot.ready.store(false, std::memory_order_release);
+    juce::Thread::sleep(50);
+
+    if (newState.getSize() > 0)
+        slot.plugin->setStateInformation(newState.getData(), (int) newState.getSize());
+
+    slot.ready.store(true, std::memory_order_release);
+    return true;
+}
+
 void ChannelProcessor::unloadPlugin(int slotIndex)
 {
     jassert(slotIndex >= 0 && slotIndex < totalSlotCount);

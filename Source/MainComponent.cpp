@@ -54,7 +54,13 @@ MainComponent::MainComponent(juce::AudioDeviceManager& dm, PluginManager& pm)
     // Record Ready click routing (idle -> armed -> recording -> idle) -
     // see toggleRecordArm()'s own comment for the full state machine.
     globalSection.onRecordButtonClicked = [this] { toggleRecordArm(); };
+    globalSection.onShowModeToggled = [this] { setShowModeEnabled(! showModeEnabled); };
     addAndMakeVisible(globalSection);
+
+    // Loaded here (not via an in-class initializer, since globalSection
+    // itself needs to already exist to receive the pushed value) - app-
+    // level persisted setting, see isShowModeEnabled()'s own comment.
+    setShowModeEnabled(getShowModeFile().loadFileAsString().trim() == "1");
 
     // Manual edits only apply while sync is off (TempoSyncComponent itself
     // won't even let the value label be edited while synced, but the guard
@@ -217,6 +223,22 @@ void MainComponent::toggleInputSectionCollapsed()
 {
     setInputSectionCollapsedState(! inputSectionCollapsed);
     notifyDirty();
+}
+
+juce::File MainComponent::getShowModeFile()
+{
+    return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
+               .getChildFile("IMI").getChildFile("KPlayer").getChildFile("show_mode.txt");
+}
+
+void MainComponent::setShowModeEnabled(bool enabled)
+{
+    showModeEnabled = enabled;
+    globalSection.setShowModeEnabled(showModeEnabled);
+
+    auto file = getShowModeFile();
+    file.getParentDirectory().createDirectory();
+    file.replaceWithText(showModeEnabled ? "1" : "0");
 }
 
 bool MainComponent::channelHasLoadedPlugin(int index) const

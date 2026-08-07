@@ -212,6 +212,21 @@ public:
     // behavior turned out to be correct, not a bug.
     void discardIncidentalDirtyFlags();
 
+    // Work Mode (default) vs. Show Mode: live MIDI-driven parameter changes
+    // (see discardIncidentalDirtyFlags's comment just above) deliberately
+    // keep dirtying the session during a performance, which is correct, but
+    // means loading a different Muse mid-set hits the same Save/Discard/
+    // Cancel prompt every time - fine while designing, disruptive live.
+    // Show Mode makes Main.cpp's openSession()/openRecentFile() skip that
+    // prompt entirely and just discard-and-load (Quit is untouched either
+    // way - see silentKadabraQuit()'s own Kadabra-connected recovery path).
+    // App-level, not session-persisted (the whole point is switching
+    // between several .kplayer files without it flipping per-file) -
+    // persisted across launches the same small-file way PluginManager
+    // persists favorites/recently-used.
+    bool isShowModeEnabled() const { return showModeEnabled; }
+    void setShowModeEnabled(bool enabled);
+
     // Session-format round-trip bookkeeping for SessionIO (spec §4.5/§5):
     // remembers the formatVersion and any unrecognized top-level fields from
     // the last loaded file, so re-saving a newer-than-supported file doesn't
@@ -374,6 +389,9 @@ private:
 
     int       lastLoadedFormatVersion = SessionMigrator::kCurrentFormatVersion;
     juce::var lastLoadedExtraFields;
+
+    bool showModeEnabled = false;
+    static juce::File getShowModeFile();
 
     std::unique_ptr<LoadingOverlayComponent> loadingOverlay;
     bool pluginsReady = false;
