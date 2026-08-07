@@ -86,6 +86,18 @@ namespace
         return saved;
     }
 
+    // Delta load (see docs/KPlayer_Session_Save_Load_Design_2026-07-25.md
+    // Part B): the caller no longer unloads this slot before calling here
+    // (see applyChannelVar/applyMasterChainVar below) - this decides for
+    // itself whether the existing instance can be kept:
+    //   - saved slot is empty -> unload whatever's here, if anything.
+    //   - same plugin identity already loaded, identical state -> true
+    //     no-op, not even a setStateInformation() call.
+    //   - same plugin identity, different state -> push the new state into
+    //     the running instance in place (updatePluginState()), skipping
+    //     destroy+recreate entirely.
+    //   - anything else (different plugin, or nothing loaded yet) -> fall
+    //     back to the full unload+load path, unchanged from before.
     template <typename SlotHost>
     void applyPluginSlotVar(SlotHost& processor, int slotIndex, const juce::var& v,
                             juce::AudioPluginFormatManager& formatManager,
@@ -93,7 +105,11 @@ namespace
                             double sampleRate, int blockSize)
     {
         if (! v.isObject())
+        {
+            if (processor.hasPlugin(slotIndex))
+                processor.unloadPlugin(slotIndex);
             return;
+        }
 
         auto xmlString = v.getProperty("pluginDescriptionXml", juce::String()).toString();
         auto xml = juce::XmlDocument::parse(xmlString);
@@ -105,8 +121,24 @@ namespace
             return;
 
         auto state = decodeBase64(v.getProperty("stateBlob", juce::String()).toString());
-
         auto localDesc = resolveLocalDescription(savedDesc, knownPluginList);
+        bool targetBypassed = (bool) v.getProperty("isBypassed", false);
+
+        if (processor.hasPlugin(slotIndex)
+            && processor.getPluginDescription(slotIndex).createIdentifierString() == localDesc.createIdentifierString())
+        {
+            auto currentState = processor.getPluginState(slotIndex);
+            if (currentState != state)
+                processor.updatePluginState(slotIndex, state);
+            // else: identical plugin, identical state already loaded -
+            // nothing to push, not even setStateInformation().
+
+            processor.setBypassed(slotIndex, targetBypassed);
+            return;
+        }
+
+        if (processor.hasPlugin(slotIndex))
+            processor.unloadPlugin(slotIndex);
 
         bool loaded = processor.loadPlugin(slotIndex, localDesc, formatManager, sampleRate, blockSize, &state);
         if (! loaded && localDesc.fileOrIdentifier != savedDesc.fileOrIdentifier)
@@ -118,7 +150,7 @@ namespace
         }
 
         if (loaded)
-            processor.setBypassed(slotIndex, (bool) v.getProperty("isBypassed", false));
+            processor.setBypassed(slotIndex, targetBypassed);
     }
 
     juce::var channelToVar(ChannelProcessor& processor)
@@ -189,20 +221,24 @@ namespace
         processor.setAudioTakeIdentifier(v.getProperty("audioTakeIdentifier", juce::String()).toString());
 
         // Loading a session onto an already-populated channel replaces
-        // whatever was there.
-        for (int slot = 0; slot < ChannelProcessor::totalSlotCount; ++slot)
-            processor.unloadPlugin(slot);
-
+        // whatever was there - but per-slot now (see applyPluginSlotVar's
+        // own comment), not via a blanket unload-everything-first pass, so
+        // a slot whose target plugin+state already matches what's running
+        // never pays a destroy+recreate cost at all.
         applyPluginSlotVar(processor, ChannelProcessor::slot0Index,
                           v.getProperty("slot0Plugin", juce::var()),
                           formatManager, knownPluginList, sampleRate, blockSize);
 
-        if (auto* insertsArray = v.getProperty("insertPlugins", juce::var()).getArray())
+        auto* insertsArray = v.getProperty("insertPlugins", juce::var()).getArray();
+        for (int i = 0; i < ChannelProcessor::numInsertSlots; ++i)
         {
-            int count = juce::jmin((int) insertsArray->size(), ChannelProcessor::numInsertSlots);
-            for (int i = 0; i < count; ++i)
-                applyPluginSlotVar(processor, i + 1, insertsArray->getReference(i),
-                                  formatManager, knownPluginList, sampleRate, blockSize);
+            // Missing/short array (older or hand-edited file) - treat any
+            // slot beyond what was actually saved as empty, same as a
+            // present-but-null entry would be.
+            auto slotVar = (insertsArray != nullptr && i < insertsArray->size())
+                             ? insertsArray->getReference(i) : juce::var();
+            applyPluginSlotVar(processor, i + 1, slotVar,
+                              formatManager, knownPluginList, sampleRate, blockSize);
         }
     }
 
@@ -219,15 +255,13 @@ namespace
                              const juce::KnownPluginList& knownPluginList,
                              double sampleRate, int blockSize)
     {
-        for (int slot = 0; slot < MasterChainProcessor::numSlots; ++slot)
-            processor.unloadPlugin(slot);
-
-        if (auto* array = v.getArray())
+        // Per-slot, same as applyChannelVar - no blanket pre-unload.
+        auto* array = v.getArray();
+        for (int i = 0; i < MasterChainProcessor::numSlots; ++i)
         {
-            int count = juce::jmin((int) array->size(), MasterChainProcessor::numSlots);
-            for (int i = 0; i < count; ++i)
-                applyPluginSlotVar(processor, i, array->getReference(i),
-                                  formatManager, knownPluginList, sampleRate, blockSize);
+            auto slotVar = (array != nullptr && i < array->size()) ? array->getReference(i) : juce::var();
+            applyPluginSlotVar(processor, i, slotVar,
+                              formatManager, knownPluginList, sampleRate, blockSize);
         }
     }
 }
@@ -321,10 +355,29 @@ bool SessionIO::loadSession(const juce::File& file,
     mainComponent.setLastLoadedFormatVersion(SessionFormat::resolveLoadedFormatVersion(fileFormatVersion));
     mainComponent.setLastLoadedExtraFields(SessionFormat::extractExtraFields(parsed));
 
+    // Delta load (see docs/KPlayer_Session_Save_Load_Design_2026-07-25.md
+    // Part B): AudioDeviceManager::initialise() always briefly stops/
+    // restarts the audio callback, regardless of whether anything about
+    // the device config actually changed - an audible dropout on every
+    // load/song-switch even for the common case of staying on the same
+    // interface throughout a set. Skipped entirely when the saved XML
+    // matches the live device's own current state string-for-string (a
+    // simple text comparison - same "position-based, simplest correct
+    // approach" philosophy as the plugin-slot matching above; a
+    // semantically-identical-but-differently-formatted XML string would
+    // still trigger a reinit, which is an acceptable, safe-by-default
+    // false negative rather than a risk of skipping a real device change).
     auto deviceXmlString = parsed.getProperty("audioDeviceStateXml", juce::String()).toString();
     if (deviceXmlString.isNotEmpty())
-        if (auto deviceXml = juce::XmlDocument::parse(deviceXmlString))
-            deviceManager.initialise(0, 2, deviceXml.get(), true);
+    {
+        juce::String currentDeviceXmlString;
+        if (auto currentXml = deviceManager.createStateXml())
+            currentDeviceXmlString = currentXml->toString();
+
+        if (currentDeviceXmlString != deviceXmlString)
+            if (auto deviceXml = juce::XmlDocument::parse(deviceXmlString))
+                deviceManager.initialise(0, 2, deviceXml.get(), true);
+    }
 
     mainComponent.setMasterVolume((float) (double) parsed.getProperty("masterVolume", 1.0));
     mainComponent.setGlobalTempo((double) parsed.getProperty("tempo", 120.0));

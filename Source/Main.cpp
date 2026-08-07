@@ -450,7 +450,7 @@ public:
 
         void openSession()
         {
-            confirmDiscardUnsavedChanges([this]
+            auto proceed = [this]
             {
                 fileChooser = std::make_unique<juce::FileChooser>(
                     "Open Session", juce::File(), "*.kplayer");
@@ -463,16 +463,28 @@ public:
                         if (file.existsAsFile())
                             loadSessionFile(file);
                     });
-            });
+            };
+
+            // Show Mode: skip the confirm prompt entirely, same reasoning as
+            // openRecentFile() below - see MainComponent::isShowModeEnabled().
+            if (mainComponent->isShowModeEnabled())
+                proceed();
+            else
+                confirmDiscardUnsavedChanges(proceed);
         }
 
         void openRecentFile(const juce::File& file)
         {
-            confirmDiscardUnsavedChanges([this, file]
+            auto proceed = [this, file]
             {
                 if (file.existsAsFile())
                     loadSessionFile(file);
-            });
+            };
+
+            if (mainComponent->isShowModeEnabled())
+                proceed();
+            else
+                confirmDiscardUnsavedChanges(proceed);
         }
 
         // Import Audio to Track (Increment E, see

@@ -70,6 +70,10 @@ GlobalSectionComponent::GlobalSectionComponent(int initialChannelCount, int maxC
     addAndMakeVisible(recordButton);
     updateRecordButtonColour();
 
+    showModeButton.onClick = [this] { if (onShowModeToggled) onShowModeToggled(); };
+    addAndMakeVisible(showModeButton);
+    setShowModeEnabled(false);
+
     // Neutral by default, momentary red flash on click only - see
     // onClick below. Unlike Record Ready, this reflects nothing external;
     // it's purely local, fire-and-forget visual feedback.
@@ -194,6 +198,22 @@ void GlobalSectionComponent::updateRecordButtonColour()
     recordButton.setTooltip(tooltip);
 }
 
+void GlobalSectionComponent::setShowModeEnabled(bool enabled)
+{
+    showModeEnabled = enabled;
+    showModeButton.setButtonText(showModeEnabled ? "Show Mode" : "Work Mode");
+    // Muted green for Show Mode - same "engaged, not alarming" shade
+    // playPauseButton already uses for its active state, rather than a
+    // bright/alarming colour fighting for attention with Panic.
+    showModeButton.setColour(juce::TextButton::buttonColourId,
+                             showModeEnabled ? juce::Colour(0xff2a6b3d) : juce::Colour(0xff2a2a3e));
+    showModeButton.setColour(juce::TextButton::textColourOffId,
+                             showModeEnabled ? juce::Colours::white : juce::Colour(0xffaaaaaa));
+    showModeButton.setTooltip(showModeEnabled
+        ? "Show Mode - loading a session discards unsaved changes without asking. Click for Work Mode."
+        : "Work Mode - loading a session with unsaved changes asks first. Click for Show Mode.");
+}
+
 void GlobalSectionComponent::paint(juce::Graphics& g)
 {
     g.fillAll(juce::Colour(0xff1e1e2e));
@@ -225,9 +245,12 @@ void GlobalSectionComponent::resized()
     tempoSyncComponent.setBounds(area.removeFromTop(TempoSyncComponent::preferredHeight));
     area.removeFromTop(10);
 
-    // Panic pinned to the very bottom - always reachable regardless of how
-    // much space the rest of this strip's content ends up needing.
+    // Panic pinned to the very bottom, Work/Show mode directly above it -
+    // both always reachable regardless of how much space the rest of this
+    // strip's content ends up needing.
     panicButton.setBounds(area.removeFromBottom(24));
+    area.removeFromBottom(6);
+    showModeButton.setBounds(area.removeFromBottom(24));
     area.removeFromBottom(10);
 
     auto transportArea = area.removeFromTop(24);
