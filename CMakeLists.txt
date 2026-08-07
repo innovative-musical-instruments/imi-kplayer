@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(IMI_KPlayer VERSION 0.9.4)
+project(IMI_KPlayer VERSION 0.9.5)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -34,6 +34,15 @@ juce_add_gui_app(IMI_KPlayer
     BUNDLE_ID "com.imi.kplayer"
     MICROPHONE_PERMISSION_ENABLED TRUE
     MICROPHONE_PERMISSION_TEXT "Kadabra K-Player needs microphone/audio input access to route live audio input into channels."
+    # Without this, clicking "Bluetooth MIDI..." in Settings (JUCE's
+    # BluetoothMidiDevicePairingDialogue) hard-crashes the app: macOS's TCC
+    # framework aborts any process that touches Bluetooth with no
+    # NSBluetoothAlwaysUsageDescription in its Info.plist
+    # (__TCC_CRASHING_DUE_TO_PRIVACY_VIOLATION__ in the crash report), it
+    # doesn't just deny access - same root category as the microphone
+    # permission above, but a crash instead of silent denial.
+    BLUETOOTH_PERMISSION_ENABLED TRUE
+    BLUETOOTH_PERMISSION_TEXT "Kadabra K-Player uses Bluetooth to pair with Bluetooth MIDI controllers."
     HARDENED_RUNTIME_ENABLED ${KPLAYER_RELEASE_BUILD}
     HARDENED_RUNTIME_OPTIONS
         com.apple.security.cs.disable-library-validation

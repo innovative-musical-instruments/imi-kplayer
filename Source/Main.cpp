@@ -8,6 +8,29 @@
 #include "SessionIO.h"
 #include "AboutScreenComponent.h"
 
+// See KPlayerApplication::MainWindow::showSettings() - the Settings dialog
+// is deliberately non-modal, so nothing else auto-deletes it once it's
+// hidden the way a modal DialogWindow would. This is what actually deletes
+// it, the moment it stops being visible by any means (native close button,
+// Esc, our own click-to-close toggle, Rescan's close-then-scan).
+struct SettingsDialogCloseWatcher : public juce::ComponentListener
+{
+    std::function<void()> onClosed;
+
+    void componentVisibilityChanged(juce::Component& comp) override
+    {
+        if (comp.isVisible() || onClosed == nullptr)
+            return;
+
+        // Deferred rather than deleting comp synchronously from inside its
+        // own visibility-change notification - let that call stack unwind
+        // first.
+        auto callback = std::move(onClosed);
+        onClosed = nullptr;
+        juce::MessageManager::callAsync(callback);
+    }
+};
+
 class KPlayerApplication : public juce::JUCEApplication
 {
 public:
@@ -120,6 +143,14 @@ public:
         // as user-driven; see the end of the constructor and resized().
         bool programmaticResize = true;
         juce::ApplicationCommandManager commandManager;
+        // Non-null exactly while the (deliberately non-modal, see
+        // showSettings()) Settings dialog is open - lets showSettings()
+        // toggle it closed on a second click/menu-select instead of
+        // stacking a duplicate. settingsCloseWatcher below is what actually
+        // deletes the window and nulls this out once it's hidden, by any
+        // means.
+        juce::Component::SafePointer<juce::DialogWindow> activeSettingsDialog;
+        std::unique_ptr<SettingsDialogCloseWatcher> settingsCloseWatcher;
 
         // File > Recent - persisted to disk (mirrors PluginManager's
         // ~/Library/IMI/KPlayer/ convention - note juce::File::userApplicationDataDirectory
@@ -251,7 +282,7 @@ public:
 
         juce::StringArray getMenuBarNames() override
         {
-            return { "File", "Settings", "Help" };
+            return { "File", "Help" };
         }
 
         juce::PopupMenu getMenuForIndex(int index, const juce::String&) override
@@ -275,13 +306,12 @@ public:
                 menu.addCommandItem(&commandManager, cmdPanic);
 
                 menu.addSeparator();
+                menu.addCommandItem(&commandManager, cmdSettings);
+
+                menu.addSeparator();
                 menu.addCommandItem(&commandManager, cmdQuit);
             }
             else if (index == 1)
-            {
-                menu.addCommandItem(&commandManager, cmdSettings);
-            }
-            else if (index == 2)
             {
                 menu.addCommandItem(&commandManager, cmdAbout);
                 menu.addCommandItem(&commandManager, cmdHelp);
@@ -331,7 +361,7 @@ public:
                     result.addDefaultKeypress('.', juce::ModifierKeys::commandModifier);
                     break;
                 case cmdSettings:
-                    result.setInfo("Audio & MIDI...", "Open audio/MIDI settings", "Settings", 0);
+                    result.setInfo("Settings...", "Open Settings (toggles closed if already open)", "File", 0);
                     break;
                 case cmdAbout:
                     result.setInfo("About", "About KPlayer", "Help", 0);
@@ -712,8 +742,26 @@ public:
                 });
         }
 
+        // Toggle: clicking Settings (menu item or the Global-section button)
+        // while the dialog is already open closes it, same as the native
+        // close button - rather than doing nothing or stacking a second one.
+        //
+        // Deliberately non-modal (LaunchOptions::create(), not
+        // launchAsync()) - a fully modal dialog blocks click delivery to
+        // the rest of the app *including* the Global-section Settings
+        // button itself, which is exactly what this toggle needs to keep
+        // working. Settings doesn't gate anything that needs exclusive
+        // access (channel count moved out to the Global section already;
+        // device selection/recordings folder/Rescan are all fine to leave
+        // interactive alongside the main window).
         void showSettings()
         {
+            if (activeSettingsDialog != nullptr)
+            {
+                activeSettingsDialog->setVisible(false);
+                return;
+            }
+
             auto* settings = new SettingsComponent(deviceManager,
                                                     mainComponent->getRecordingsFolder(),
                                                     mainComponent->getRecordingSilenceTimeoutSeconds(),
@@ -733,19 +781,42 @@ public:
             // the user grow the window too means they don't have to scroll
             // at all on setups with a lot of enumerated MIDI ports.
             opts.resizable = true;
-            juce::Component::SafePointer<juce::DialogWindow> dialogWindow = opts.launchAsync();
-            if (dialogWindow != nullptr)
-                dialogWindow->setResizeLimits(420, 400, 900, 1200);
+
+            // create() just builds the window without entering modal state -
+            // we own showing it and cleaning it up (below), since JUCE's
+            // own auto-delete-on-close only applies to modal components.
+            activeSettingsDialog = opts.create();
+            activeSettingsDialog->setResizeLimits(420, 400, 900, 1200);
+            activeSettingsDialog->setVisible(true);
+            activeSettingsDialog->toFront(true);
+
+            // The native close button's default handler just does
+            // setVisible(false) for a non-modal DialogWindow (no
+            // ModalComponentManager watching it to trigger deletion) - this
+            // listener is what actually deletes the window once it's
+            // hidden, by any means (native close, Esc, our own toggle
+            // above, or Rescan's close-then-scan below), so there's one
+            // single cleanup path regardless of which one fired.
+            settingsCloseWatcher = std::make_unique<SettingsDialogCloseWatcher>();
+            settingsCloseWatcher->onClosed = [this]
+            {
+                if (activeSettingsDialog != nullptr)
+                {
+                    delete activeSettingsDialog.getComponent();
+                    activeSettingsDialog = nullptr;
+                }
+            };
+            activeSettingsDialog->addComponentListener(settingsCloseWatcher.get());
 
             // Skips the confirm dialog by design (user request) - closes
             // Settings and reuses the exact startup-scan flow (same
             // LoadingOverlayComponent, same scanPluginsAsync call) so newly
             // installed plugins are picked up the same way a relaunch would
             // find them.
-            settings->onRescanRequested = [this, dialogWindow]
+            settings->onRescanRequested = [this]
             {
-                if (dialogWindow != nullptr)
-                    dialogWindow->exitModalState(0);
+                if (activeSettingsDialog != nullptr)
+                    activeSettingsDialog->setVisible(false);
                 mainComponent->rescanPlugins();
             };
         }

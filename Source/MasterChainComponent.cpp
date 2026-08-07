@@ -4,10 +4,13 @@
 MasterChainComponent::MasterChainComponent(MasterChainProcessor& p)
     : processor(p)
 {
+    // Same look as each channel's own (editable) name heading -
+    // ChannelComponent::channelNameLabel - just not editable here; the
+    // master strip has nothing to rename.
     titleLabel.setText("Master Section", juce::dontSendNotification);
-    titleLabel.setFont(juce::Font(11.0f));
+    titleLabel.setFont(juce::Font(13.0f, juce::Font::bold));
     titleLabel.setJustificationType(juce::Justification::centred);
-    titleLabel.setColour(juce::Label::textColourId, juce::Colour(0xffaaaaaa));
+    titleLabel.setColour(juce::Label::textColourId, juce::Colours::white);
     addAndMakeVisible(titleLabel);
 
     slotButtonLookAndFeel = std::make_unique<SlotButtonLookAndFeel>();
@@ -93,6 +96,12 @@ void MasterChainComponent::setArmed(bool shouldBeArmed)
 {
     armed = shouldBeArmed;
     updateArmButton();
+}
+
+void MasterChainComponent::setInputSectionCollapsed(bool collapsed)
+{
+    inputSectionCollapsed = collapsed;
+    resized();
 }
 
 void MasterChainComponent::updateArmButton()
@@ -200,14 +209,49 @@ void MasterChainComponent::paint(juce::Graphics& g)
     g.fillAll(juce::Colour(0xff1e1e2e));
     g.setColour(juce::Colour(0xff3d5a80));
     g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(2), 6.0f, 1.5f);
+
+    // Dimmed divider under the heading, same colour/alpha as
+    // ChannelComponent's own section dividers - same look and feel as a
+    // channel heading, just not editable (nothing here to rename).
+    g.setColour(juce::Colour(0xff3d5a80).withAlpha(0.5f));
+    auto dividerBounds = getLocalBounds().reduced(6);
+    g.drawHorizontalLine(titleDividerY, (float) dividerBounds.getX(), (float) dividerBounds.getRight());
 }
 
 void MasterChainComponent::resized()
 {
     auto area = getLocalBounds().reduced(6);
 
-    titleLabel.setBounds(area.removeFromTop(16));
+    // 18px + 6px gap, matching ChannelComponent::channelNameLabel's own
+    // heading spacing exactly.
+    titleLabel.setBounds(area.removeFromTop(18));
     area.removeFromTop(6);
+
+    // Divider line only - computed against a throwaway copy of area so it
+    // doesn't affect where the inserts below actually land (see next
+    // comment). Matches ChannelComponent::inputSectionDividerY's Y position
+    // exactly in both collapse states (136px is that component's Audio In/
+    // MIDI In/MIDI Channel block height when shown - see its own
+    // resized()), so the two rows of divider lines stay level with the
+    // channels regardless of the global I/O-collapse toggle, even though
+    // this strip has no such rows of its own to collapse.
+    {
+        auto dividerProbe = area;
+        dividerProbe.removeFromTop(inputSectionCollapsed ? 0 : 136);
+        dividerProbe.removeFromTop(6);
+        titleDividerY = dividerProbe.getY();
+    }
+
+    // Inserts deliberately do NOT reflow with the toggle above, unlike the
+    // channels' own Plugins section - this strip has nothing in the
+    // collapsible block to reclaim space from, so following the divider
+    // would just make the inserts jump around for no reason. Fixed to the
+    // same Y a channel's own slot 0 button sits at with I/O collapsed
+    // (29 = inputSectionDividerY's collapsed offset from here, 6, + the
+    // 7px gap + 16px "Instrument" label channels have above their own
+    // slot 0 - this strip has no such label, so slot 0 lands directly here
+    // instead), regardless of the live toggle state.
+    area.removeFromTop(29);
 
     for (int i = 0; i < numSlots; ++i)
     {

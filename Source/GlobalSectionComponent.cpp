@@ -37,6 +37,7 @@ GlobalSectionComponent::GlobalSectionComponent(int initialChannelCount, int maxC
     updateChannelButtons();
 
     gearButtonLookAndFeel = std::make_unique<GearButtonLookAndFeel>();
+    settingsButton.setButtonText("Settings");
     settingsButton.setTooltip("Settings");
     settingsButton.setLookAndFeel(gearButtonLookAndFeel.get());
     settingsButton.onClick = [this] { if (onSettingsRequested) onSettingsRequested(); };
@@ -141,7 +142,7 @@ void GlobalSectionComponent::updateTransportButtons()
                               transportPlaying ? juce::Colour(0xff2a6b3d) : juce::Colour(0xff2a2a3e));
     playPauseButton.setColour(juce::TextButton::textColourOffId,
                               transportPlaying ? juce::Colours::white : juce::Colour(0xffaaaaaa));
-    playPauseButton.setTooltip(transportPlaying ? "Pause MIDI Take playback" : "Play MIDI Take playback");
+    playPauseButton.setTooltip(transportPlaying ? "Pause audio and MIDI" : "Play audio and MIDI");
 }
 
 void GlobalSectionComponent::setRecordState(RecordState state)
@@ -225,9 +226,17 @@ void GlobalSectionComponent::resized()
 {
     auto area = getLocalBounds().reduced(6);
 
-    brandingStrip.setBounds(area.removeFromTop(40));
-    area.removeFromTop(10);
+    // Shrunk 5px (was 40) - frees the room needed to get the Channels
+    // +/- row's top lined up with Master's Insert 1 button below (see next
+    // comment), rather than just a cosmetic nudge.
+    brandingStrip.setBounds(area.removeFromTop(35));
+    area.removeFromTop(2);
 
+    // Channels heading sits directly above its own +/- row (no gap, as
+    // before) - the row's *top* is what's actually aligned to Master's
+    // Insert 1 button top (MasterChainComponent::resized(): 6 + 18 title +
+    // 6 gap + 29 fixed insert offset = 29px into this component, i.e. this
+    // row must start there too, 29px past this component's own top).
     channelsLabel.setBounds(area.removeFromTop(16));
     auto channelsRow = area.removeFromTop(24);
     channelMinusButton.setBounds(channelsRow.removeFromLeft(28));
@@ -235,13 +244,20 @@ void GlobalSectionComponent::resized()
     channelPlusButton.setBounds(channelsRow.removeFromRight(28));
     channelsRow.removeFromRight(4);
     channelCountLabel.setBounds(channelsRow);
-    area.removeFromTop(10);
+    area.removeFromTop(6);
 
     settingsButton.setBounds(area.removeFromTop(28));
-    area.removeFromTop(6);
-    collapseInputButton.setBounds(area.removeFromTop(22));
-    area.removeFromTop(10);
+    area.removeFromTop(4);
+    // Grown to match Settings' own height (was 22).
+    collapseInputButton.setBounds(area.removeFromTop(28));
 
+    // Tempo's own heading lines up with Master's "Output" label
+    // (MasterChainComponent::resized(): 59 insert-1 top + 5*22 slots +
+    // 4*3 slot gaps + 16 "Output" label offset = 197px into this
+    // component) - whatever's left here is genuinely just slack, not a
+    // tightened gap like the ones above; Master's insert chain is simply
+    // taller than this strip's content above Tempo.
+    area.removeFromTop(197 - area.getY());
     tempoSyncComponent.setBounds(area.removeFromTop(TempoSyncComponent::preferredHeight));
     area.removeFromTop(10);
 
