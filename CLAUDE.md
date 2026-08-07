@@ -11,6 +11,25 @@ git. This file is the one piece of context guaranteed to be present on
 either machine — prefer updating it over relying on session memory, which is
 local to whichever machine wrote it.
 
+## Cross-repo context
+
+Shared strategy, brand, and spec docs live in `imi-common-docs`, a private
+sibling repo at `../imi-common-docs` (clone alongside this repo under
+`~/projects/`). It is the source of truth — do not duplicate its content
+here or let local copies drift.
+
+- `../imi-common-docs/strategy/master-backlog.md` — current priorities,
+  active milestone (IMI Free release, target Sept 13 2026), and the
+  Epic/Feature breakdown Section 7 tracks it under
+- `../imi-common-docs/brand/` — IMI style guide
+- `../imi-common-docs/specs/` — cross-product specs
+- `../imi-common-docs/decisions/` — dated decision records
+
+If a task needs current strategic context (what's in scope, what's
+deferred, why), read the master backlog first rather than asking Vinch to
+restate it. Note this repo is private, so — unlike the public K-Sampler
+repos — it's fine for this file to reference `imi-common-docs` directly.
+
 ## Build
 
 JUCE 8 SDK is required separately (not vendored in this repo) — see
