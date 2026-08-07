@@ -14,12 +14,24 @@ public:
         startTimerHz(30);
     }
 
+    // Pushed in from outside (MainComponent's own poll timer, which already
+    // has a PluginManager& to read from) rather than this component reading
+    // PluginManager directly - keeps this a dumb, dependency-free scrim like
+    // it was before. A changing name plus a moving progress bar is a much
+    // more convincing "still alive" signal on a long scan than the spinner
+    // alone, especially if one plugin's init legitimately takes a while.
+    void setScanStatus(const juce::String& pluginName, float progress)
+    {
+        currentPluginName = pluginName;
+        currentProgress = juce::jlimit(0.0f, 1.0f, progress);
+    }
+
     void paint(juce::Graphics& g) override
     {
         g.fillAll(juce::Colour(0xdd1a1a2e));
 
         auto bounds = getLocalBounds().toFloat();
-        auto centre = bounds.getCentre().translated(0.0f, -14.0f);
+        auto centre = bounds.getCentre().translated(0.0f, -28.0f);
         const float radius = 16.0f;
 
         juce::Path arc;
@@ -29,10 +41,41 @@ public:
         g.strokePath(arc, juce::PathStrokeType(3.0f, juce::PathStrokeType::curved,
                                                 juce::PathStrokeType::rounded));
 
+        auto textArea = bounds.removeFromBottom(bounds.getHeight() * 0.45f);
+
         g.setFont(15.0f);
-        g.drawText("Scanning plugins...",
-                    bounds.removeFromBottom(bounds.getHeight() * 0.4f).toNearestInt(),
+        g.drawText("Scanning plugins...", textArea.removeFromTop(22).toNearestInt(),
                     juce::Justification::centred);
+
+        if (currentPluginName.isNotEmpty())
+        {
+            g.setFont(13.0f);
+            g.setColour(juce::Colour(0xffaaaaaa));
+            g.drawText(currentPluginName, textArea.removeFromTop(20).toNearestInt(),
+                        juce::Justification::centred);
+
+            auto barArea = textArea.removeFromTop(6).reduced(bounds.getWidth() * 0.3f, 0.0f);
+            g.setColour(juce::Colour(0xff3d3d55));
+            g.fillRoundedRectangle(barArea, 3.0f);
+            g.setColour(juce::Colour(0xff3d5a80));
+            g.fillRoundedRectangle(barArea.withWidth(barArea.getWidth() * currentProgress), 3.0f);
+
+            // Indeterminate "still alive" shimmer, independent of
+            // currentProgress - JUCE only reports progress in whole-file
+            // steps (see PluginManager::scanPlugins's comment), so a single
+            // slow plugin can legitimately hold the same fraction for a long
+            // time. This sweeps continuously regardless, reusing the
+            // spinner's own animation phase rather than a second timer.
+            float phase = angle / juce::MathConstants<float>::twoPi;
+            float sweepWidth = barArea.getWidth() * 0.2f;
+            float sweepX = barArea.getX() + phase * (barArea.getWidth() + sweepWidth) - sweepWidth;
+            auto sweepArea = barArea.withX(sweepX).withWidth(sweepWidth).getIntersection(barArea);
+            if (! sweepArea.isEmpty())
+            {
+                g.setColour(juce::Colours::white.withAlpha(0.3f));
+                g.fillRoundedRectangle(sweepArea, 3.0f);
+            }
+        }
     }
 
 private:
@@ -45,6 +88,8 @@ private:
     }
 
     float angle = 0.0f;
+    juce::String currentPluginName;
+    float currentProgress = 0.0f;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(LoadingOverlayComponent)
 };

@@ -94,6 +94,7 @@ public:
         cmdSaveSession,
         cmdSaveSessionAs,
         cmdImportAudioTrack,
+        cmdPanic,
         cmdSettings,
         cmdAbout,
         cmdHelp,
@@ -266,6 +267,9 @@ public:
                 menu.addCommandItem(&commandManager, cmdImportAudioTrack);
 
                 menu.addSeparator();
+                menu.addCommandItem(&commandManager, cmdPanic);
+
+                menu.addSeparator();
                 menu.addCommandItem(&commandManager, cmdQuit);
             }
             else if (index == 1)
@@ -295,7 +299,7 @@ public:
         void getAllCommands(juce::Array<juce::CommandID>& commands) override
         {
             commands.addArray({ cmdOpenSession, cmdSaveSession, cmdSaveSessionAs, cmdImportAudioTrack,
-                                cmdSettings, cmdAbout, cmdHelp, cmdQuit });
+                                cmdPanic, cmdSettings, cmdAbout, cmdHelp, cmdQuit });
         }
 
         void getCommandInfo(juce::CommandID commandID, juce::ApplicationCommandInfo& result) override
@@ -316,6 +320,10 @@ public:
                     break;
                 case cmdImportAudioTrack:
                     result.setInfo("Import Audio to Track...", "Import an audio file as a recorded Take on a channel", "File", 0);
+                    break;
+                case cmdPanic:
+                    result.setInfo("Panic (All Notes Off)", "Immediately silence every loaded instrument - all notes off / all sound off", "File", 0);
+                    result.addDefaultKeypress('.', juce::ModifierKeys::commandModifier);
                     break;
                 case cmdSettings:
                     result.setInfo("Audio & MIDI...", "Open audio/MIDI settings", "Settings", 0);
@@ -343,6 +351,7 @@ public:
                 case cmdSaveSession:   saveSession();       return true;
                 case cmdSaveSessionAs: saveSessionAs();      return true;
                 case cmdImportAudioTrack: importAudioToTrack(); return true;
+                case cmdPanic:         mainComponent->triggerPanic(); return true;
                 case cmdSettings:      showSettings();       return true;
                 case cmdAbout:         showAboutDialog();    return true;
                 case cmdHelp:          openHelpWebsite();    return true;
@@ -711,8 +720,21 @@ public:
             // the user grow the window too means they don't have to scroll
             // at all on setups with a lot of enumerated MIDI ports.
             opts.resizable = true;
-            if (auto* dialogWindow = opts.launchAsync())
+            juce::Component::SafePointer<juce::DialogWindow> dialogWindow = opts.launchAsync();
+            if (dialogWindow != nullptr)
                 dialogWindow->setResizeLimits(420, 400, 900, 1200);
+
+            // Skips the confirm dialog by design (user request) - closes
+            // Settings and reuses the exact startup-scan flow (same
+            // LoadingOverlayComponent, same scanPluginsAsync call) so newly
+            // installed plugins are picked up the same way a relaunch would
+            // find them.
+            settings->onRescanRequested = [this, dialogWindow]
+            {
+                if (dialogWindow != nullptr)
+                    dialogWindow->exitModalState(0);
+                mainComponent->rescanPlugins();
+            };
         }
 
         // The About box draws its own fake title bar (traffic lights /

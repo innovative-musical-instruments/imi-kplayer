@@ -37,6 +37,7 @@ MainComponent::MainComponent(juce::AudioDeviceManager& dm, PluginManager& pm)
     masterChainComponent.onMasterArmToggled = [this](bool armed) { setMasterArmed(armed); notifyDirty(); };
     masterChainComponent.onPlayPauseClicked = [this] { toggleTransportPlaying(); };
     masterChainComponent.onRtzClicked       = [this] { rtzTransport(); };
+    masterChainComponent.onPanicClicked     = [this] { triggerPanic(); };
     masterChainComponent.onRecordButtonClicked = [this]
     {
         // Lazy prompt: ask for a recordings folder right here the first
@@ -307,10 +308,46 @@ void MainComponent::onScanComplete()
 {
     pluginsReady = true;
     loadingOverlay.reset();
+
+    // Surface a crash from the *previous* scan (this one just finished
+    // cleanly, or we wouldn't have got here at all - see PluginManager's
+    // own comment on why this list is safe to read exactly once here).
+    // The plugin(s) are already blacklisted, not silently missing - point
+    // at the plugin browser's "Failed to Load" section (Increment 4) for
+    // the retry path rather than duplicating it here.
+    auto crashed = pluginManager.getPluginsSkippedByLastCrash();
+    if (! crashed.isEmpty())
+    {
+        juce::String message = crashed.size() == 1
+            ? "1 plugin crashed during a previous scan and was automatically skipped:\n\n"
+            : juce::String(crashed.size()) + " plugins crashed during a previous scan and were automatically skipped:\n\n";
+        message += crashed.joinIntoString("\n");
+        message += "\n\nThey've been marked as failed - open the plugin browser's \"Failed to Load\" "
+                    "section to retry one.";
+
+        juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon,
+            "Plugin(s) Skipped After Crashing", message);
+    }
+}
+
+void MainComponent::rescanPlugins()
+{
+    pluginsReady = false;
+    loadingOverlay = std::make_unique<LoadingOverlayComponent>();
+    addAndMakeVisible(loadingOverlay.get());
+    loadingOverlay->setBounds(getLocalBounds());
+    pluginManager.scanPluginsAsync([this] { onScanComplete(); });
 }
 
 void MainComponent::timerCallback()
 {
+    // Live "which plugin is it on right now" status for the scan overlay
+    // (startup or Settings' Rescan button) - see PluginManager's own
+    // comment on why reading these here, on the message thread, is safe.
+    if (loadingOverlay != nullptr)
+        loadingOverlay->setScanStatus(pluginManager.getCurrentlyScanningPluginName(),
+                                       pluginManager.getScanProgress());
+
     // Drain every processor's flag unconditionally (not short-circuiting on
     // the first hit) so none are left set from this tick to linger into the
     // next one, then notify at most once regardless of how many fired.
@@ -764,6 +801,13 @@ void MainComponent::audioDeviceIOCallbackWithContext(
         }
     }
 
+    // Panic (see triggerPanic()): consumed once here, then injected into
+    // every channel's MIDI buffer below, regardless of that channel's own
+    // device/MIDI-channel routing - a stuck note can be sitting in any
+    // loaded instrument, not just the one on whatever device/channel is
+    // "selected" right now.
+    bool doPanic = panicRequested.exchange(false, std::memory_order_relaxed);
+
     // MIDI Take playback (Increment B): advanced once per callback, not per
     // channel, so every channel's MidiTakePlayer renders against the same
     // block-start position this callback - see SessionTransport's header.
@@ -823,6 +867,18 @@ void MainComponent::audioDeviceIOCallbackWithContext(
         // the buffer they're given, so this is the last point at which
         // channelMidi is still guaranteed to be the raw, unprocessed input.
         recordingManager.writeChannelMidiBlock(channelIndex, channelMidi);
+
+        // Injected after the MIDI Take recording tap above, deliberately -
+        // a panic is a host-level emergency action, not part of the
+        // performance, and shouldn't be captured into a take. All 16
+        // channels covers this channel regardless of which one it's
+        // actually routed to.
+        if (doPanic)
+            for (int midiCh = 1; midiCh <= 16; ++midiCh)
+            {
+                channelMidi.addEvent(juce::MidiMessage::allNotesOff(midiCh), 0);
+                channelMidi.addEvent(juce::MidiMessage::allSoundOff(midiCh), 0);
+            }
 
         channel->processBlock(channelScratch, channelMidi);
 

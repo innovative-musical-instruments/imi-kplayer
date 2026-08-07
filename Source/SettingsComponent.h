@@ -18,6 +18,12 @@ public:
     ~SettingsComponent() override;
     void resized() override;
 
+    // "Rescan Plugins" button - set post-construction rather than a ctor
+    // param (like AboutScreenComponent::onCloseRequested) since the owner
+    // needs a handle to the enclosing DialogWindow, which doesn't exist yet
+    // at the point this component is constructed.
+    std::function<void()> onRescanRequested;
+
     // Lets the owner revert the displayed value if a requested shrink is
     // cancelled by the user (e.g. after a "channels have loaded plugins"
     // confirmation is declined) - the slider has already visually moved by
@@ -54,6 +60,9 @@ private:
     juce::TextButton chooseFolderButton;
     juce::Label silenceTimeoutLabel;
     juce::Slider silenceTimeoutSlider;
+
+    juce::Label pluginsLabel;
+    juce::TextButton rescanPluginsButton;
 
     std::unique_ptr<juce::FileChooser> activeFileChooser;
 

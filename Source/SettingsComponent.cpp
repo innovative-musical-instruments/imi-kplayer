@@ -75,6 +75,15 @@ SettingsComponent::SettingsComponent(juce::AudioDeviceManager& dm,
     };
     addAndMakeVisible(silenceTimeoutSlider);
 
+    pluginsLabel.setText("Plugins", juce::dontSendNotification);
+    pluginsLabel.setFont(juce::Font(14.0f, juce::Font::bold));
+    addAndMakeVisible(pluginsLabel);
+
+    rescanPluginsButton.setButtonText("Rescan Plugins");
+    rescanPluginsButton.setTooltip("Scan for new/updated plugins, same as at app launch");
+    rescanPluginsButton.onClick = [this] { if (onRescanRequested) onRescanRequested(); };
+    addAndMakeVisible(rescanPluginsButton);
+
     setSize(540, 600);
 }
 
@@ -101,6 +110,11 @@ void SettingsComponent::resized()
     auto silenceRow = area.removeFromTop(26);
     silenceTimeoutLabel.setBounds(silenceRow.removeFromLeft(180));
     silenceTimeoutSlider.setBounds(silenceRow);
+
+    area.removeFromTop(10);
+    pluginsLabel.setBounds(area.removeFromTop(20));
+    auto pluginsRow = area.removeFromTop(26);
+    rescanPluginsButton.setBounds(pluginsRow.removeFromLeft(160));
 
     area.removeFromTop(10);
     audioSettingsViewport.setBounds(area);
