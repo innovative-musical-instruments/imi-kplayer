@@ -44,6 +44,16 @@ public:
     // had before this component existed - just reached through here now.
     TempoSyncComponent& getTempoSyncComponent() { return tempoSyncComponent; }
 
+    // Transport time readout (mm:ss), between Tempo/Sync and the transport
+    // row - see MainComponent::timerCallback() for where it's computed.
+    // Doubles as a recording-elapsed display too whenever recording is
+    // active, since Record Ready only ever starts recording together with
+    // the transport playing - one clock covers both. Mainly there so
+    // "Play with nothing selected to actually play" (silently advancing an
+    // otherwise-inaudible playhead) still gives some visible feedback that
+    // something is happening, rather than looking inert.
+    void setDisplayedTime(const juce::String& text);
+
     std::function<void()> onPlayPauseClicked;
     std::function<void()> onRtzClicked;
     void setTransportPlaying(bool playing);
@@ -88,6 +98,7 @@ private:
     bool inputCollapsed = false;
 
     TempoSyncComponent tempoSyncComponent;
+    juce::Label timeDisplayLabel;
 
     juce::TextButton playPauseButton;
     juce::TextButton rtzButton;
