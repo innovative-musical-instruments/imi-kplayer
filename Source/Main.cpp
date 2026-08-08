@@ -546,10 +546,21 @@ public:
                     "Save", "Discard and Continue", "Cancel", this),
                 [this, onProceed](int result)
                 {
+                    // onProceed can fire from deep inside the AlertWindow's
+                    // own callback/modal-dismissal call stack (immediately
+                    // on Discard, or after saveSession()'s completion
+                    // callback on Save) - same hazard systemRequestedQuit()
+                    // already works around for quit(). Here onProceed often
+                    // launches a second modal of its own (openSession()'s
+                    // FileChooser, saveSessionAs()'s FileChooser) - starting
+                    // that from within the first modal's own teardown
+                    // silently failed to show it on Windows rather than
+                    // hanging/crashing, so defer to a fresh message-loop
+                    // tick the same way.
                     if (result == 1)
-                        saveSession([onProceed](bool saved) { if (saved) onProceed(); });
+                        saveSession([onProceed](bool saved) { if (saved) juce::MessageManager::callAsync(onProceed); });
                     else if (result == 2)
-                        onProceed();
+                        juce::MessageManager::callAsync(onProceed);
                     // result == 0 (Cancel): do nothing.
                 });
         }
