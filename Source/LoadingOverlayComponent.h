@@ -26,6 +26,26 @@ public:
         currentProgress = juce::jlimit(0.0f, 1.0f, progress);
     }
 
+    // Called once the actual background scan is done, but this overlay
+    // needs to stay up a little longer for slower synchronous startup work
+    // that still needs it (see MainComponent::showWarmingUpOverlay()) -
+    // swaps the header from "Scanning plugins..." to a generic message and
+    // drops the plugin-name/progress sub-line, which stops making sense the
+    // moment scanning itself is actually over. That startup work runs
+    // directly on the message thread and can legitimately block it for a
+    // few seconds (plugin instantiation's own safety-margin sleeps), during
+    // which nothing here can repaint or animate - the caller is expected to
+    // force one synchronous repaint right after calling this, so what's
+    // frozen on screen for that stretch is this message, not a stale
+    // scanning status implying scanning is still what's happening.
+    void setWarmingUp()
+    {
+        warmingUp = true;
+        currentPluginName = {};
+        currentProgress = 0.0f;
+        repaint();
+    }
+
     void paint(juce::Graphics& g) override
     {
         g.fillAll(juce::Colour(0xdd1a1a2e));
@@ -44,8 +64,8 @@ public:
         auto textArea = bounds.removeFromBottom(bounds.getHeight() * 0.45f);
 
         g.setFont(15.0f);
-        g.drawText("Scanning plugins...", textArea.removeFromTop(22).toNearestInt(),
-                    juce::Justification::centred);
+        g.drawText(warmingUp ? "Warming up and getting ready..." : "Scanning plugins...",
+                    textArea.removeFromTop(22).toNearestInt(), juce::Justification::centred);
 
         if (currentPluginName.isNotEmpty())
         {
@@ -90,6 +110,7 @@ private:
     float angle = 0.0f;
     juce::String currentPluginName;
     float currentProgress = 0.0f;
+    bool warmingUp = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(LoadingOverlayComponent)
 };

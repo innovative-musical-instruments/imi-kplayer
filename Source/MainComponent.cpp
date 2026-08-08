@@ -306,9 +306,34 @@ MainComponent::~MainComponent()
         deviceManager.removeMidiInputDeviceCallback(input.identifier, this);
 }
 
+void MainComponent::showWarmingUpOverlay()
+{
+    if (loadingOverlay == nullptr)
+        return;
+
+    overlayShowingWarmup = true;
+    loadingOverlay->setWarmingUp();
+
+    // repaint() alone never reaches the screen here: JUCE's macOS peer only
+    // queues the region (NSViewComponentPeer::repaint() adds to
+    // deferredRepaints) and converts it to a real native redraw on the next
+    // VBlank callback - which won't fire if the caller dives straight into
+    // tryAutoLoadKadabraSession()'s own blocking work right after this
+    // returns. Deferring that call via MessageManager::callAsync isn't
+    // enough either - confirmed live via trace logging that the queued
+    // lambda ran in the same millisecond as this call, with zero paints in
+    // between, so callAsync provides no actual guarantee a VBlank has run.
+    // Briefly pumping the dispatch loop here does: it's a real (if nested)
+    // pass through the event loop, long enough for at least one VBlank/
+    // paint cycle to land, so what's frozen on screen for the coming block
+    // is genuinely this message rather than a stale "Scanning plugins...".
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+}
+
 void MainComponent::onScanComplete()
 {
     pluginsReady = true;
+    overlayShowingWarmup = false;
     loadingOverlay.reset();
 
     // Surface a crash from the *previous* scan (this one just finished
@@ -346,7 +371,9 @@ void MainComponent::timerCallback()
     // Live "which plugin is it on right now" status for the scan overlay
     // (startup or Settings' Rescan button) - see PluginManager's own
     // comment on why reading these here, on the message thread, is safe.
-    if (loadingOverlay != nullptr)
+    // Skipped once showWarmingUpOverlay() has switched the overlay to its
+    // post-scan message - see overlayShowingWarmup's own comment.
+    if (loadingOverlay != nullptr && ! overlayShowingWarmup)
         loadingOverlay->setScanStatus(pluginManager.getCurrentlyScanningPluginName(),
                                        pluginManager.getScanProgress());
 

@@ -138,7 +138,20 @@ public:
                     // the scan had finished, always worked, which is what
                     // gave this away. Still covered by MainComponent's
                     // LoadingOverlayComponent throughout - its dismissal via
-                    // onScanComplete() below now also covers this.
+                    // onScanComplete() below now also covers this. The
+                    // overlay's text is swapped to a generic "warming up"
+                    // message just before this starts (see
+                    // MainComponent::showWarmingUpOverlay()), since
+                    // tryAutoLoadKadabraSession() below blocks the message
+                    // thread for its own duration (plugin instantiation's
+                    // safety-margin sleeps) and would otherwise leave the
+                    // overlay frozen mid-scan-status, wrongly implying
+                    // scanning is still happening.
+                    // showWarmingUpOverlay() forces a real paint of this
+                    // message through before returning - see its own
+                    // comment for why a plain repaint()/callAsync deferral
+                    // isn't actually enough on its own.
+                    mainWindow->mainComponent->showWarmingUpOverlay();
                     mainWindow->tryAutoLoadKadabraSession();
                     mainWindow->mainComponent->onScanComplete();
                 }

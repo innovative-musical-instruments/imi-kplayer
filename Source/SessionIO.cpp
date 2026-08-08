@@ -2,6 +2,7 @@
 #include "MainComponent.h"
 #include "ChannelProcessor.h"
 #include "MasterChainProcessor.h"
+#include "RecordingManager.h"
 #include "SessionMigrator.h"
 #include "SessionFormat.h"
 
@@ -24,6 +25,44 @@ namespace
                 return device.name;
 
         return {};
+    }
+
+    // A saved MIDI input identifier is a platform- (and often installation-)
+    // specific string - JUCE's CoreMIDI backend hands back a different
+    // identifier shape than its Windows backends do, so "Kadabra" saved on
+    // Mac never matches any live device's identifier on Windows, even
+    // though the exact same hardware is connected under the exact same
+    // name. Same class of problem as resolveLocalDescription() below solves
+    // for plugin paths - re-resolve against this machine's own currently
+    // available MIDI inputs, matched by name (the one thing that actually
+    // travels across platforms) whenever the raw identifier doesn't match
+    // directly. Identifier match is tried first (cheap same-machine
+    // fast path, and avoids ambiguity if the name were ever visually
+    // identical to another device's saved name), name is the fallback.
+    // Empty (no device selected) and Take references (see
+    // RecordingManager::isTakeIdentifier - encoded into this same field for
+    // channels' MIDI routing) are passed through unchanged, both being
+    // things this shouldn't touch. Falls through to the saved identifier
+    // verbatim if neither matches - same "None selected" outcome as before
+    // this fix for a genuinely unplugged/renamed device.
+    juce::String resolveLocalMidiDeviceIdentifier(const juce::String& savedIdentifier,
+                                                   const juce::String& savedName)
+    {
+        if (savedIdentifier.isEmpty() || RecordingManager::isTakeIdentifier(savedIdentifier))
+            return savedIdentifier;
+
+        auto devices = juce::MidiInput::getAvailableDevices();
+
+        for (auto& device : devices)
+            if (device.identifier == savedIdentifier)
+                return savedIdentifier;
+
+        if (savedName.isNotEmpty())
+            for (auto& device : devices)
+                if (device.name == savedName)
+                    return device.identifier;
+
+        return savedIdentifier;
     }
 
     // Templated so it works for any slot host with this method shape -
@@ -216,7 +255,9 @@ namespace
         processor.setGain((float) (double) v.getProperty("volume", 1.0));
         processor.setPan((float) (double) v.getProperty("pan", 0.0));
         processor.setMidiChannel((int) v.getProperty("midiChannel", 0));
-        processor.setMidiDeviceIdentifier(v.getProperty("midiDeviceIdentifier", juce::String()).toString());
+        auto savedMidiDeviceId   = v.getProperty("midiDeviceIdentifier", juce::String()).toString();
+        auto savedMidiDeviceName = v.getProperty("midiDeviceName", juce::String()).toString();
+        processor.setMidiDeviceIdentifier(resolveLocalMidiDeviceIdentifier(savedMidiDeviceId, savedMidiDeviceName));
         processor.setAudioInputChannelIndex((int) v.getProperty("audioInputChannel", -1));
         processor.setAudioTakeIdentifier(v.getProperty("audioTakeIdentifier", juce::String()).toString());
 
@@ -293,6 +334,7 @@ bool SessionIO::saveSession(const juce::File& file,
     root->setProperty("tempo", mainComponent.getGlobalTempo());
     root->setProperty("tempoSyncEnabled", mainComponent.isTempoSyncEnabled());
     root->setProperty("tempoSyncDeviceIdentifier", mainComponent.getTempoSyncDeviceIdentifier());
+    root->setProperty("tempoSyncDeviceName", resolveMidiDeviceName(mainComponent.getTempoSyncDeviceIdentifier()));
 
     root->setProperty("recordingsFolder", mainComponent.getRecordingsFolder().getFullPathName());
     root->setProperty("recordingSilenceTimeoutSeconds", mainComponent.getRecordingSilenceTimeoutSeconds());
@@ -381,7 +423,11 @@ bool SessionIO::loadSession(const juce::File& file,
 
     mainComponent.setMasterVolume((float) (double) parsed.getProperty("masterVolume", 1.0));
     mainComponent.setGlobalTempo((double) parsed.getProperty("tempo", 120.0));
-    mainComponent.setTempoSyncDeviceIdentifier(parsed.getProperty("tempoSyncDeviceIdentifier", juce::String()).toString());
+    {
+        auto savedSyncId   = parsed.getProperty("tempoSyncDeviceIdentifier", juce::String()).toString();
+        auto savedSyncName = parsed.getProperty("tempoSyncDeviceName", juce::String()).toString();
+        mainComponent.setTempoSyncDeviceIdentifier(resolveLocalMidiDeviceIdentifier(savedSyncId, savedSyncName));
+    }
     mainComponent.setTempoSyncEnabled((bool) parsed.getProperty("tempoSyncEnabled", false));
 
     mainComponent.setRecordingsFolder(juce::File(parsed.getProperty("recordingsFolder", juce::String()).toString()));
