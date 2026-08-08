@@ -448,7 +448,7 @@ void MainComponent::timerCallback()
             toggleTransportPlaying();
     }
 
-    if (quitRequestedByMidi.exchange(false, std::memory_order_relaxed))
+    if (quitRequestedByMidi.exchange(false, std::memory_order_relaxed) && debounceOneShotMidiAction())
     {
         // Same choke point every other quit path already funnels through -
         // see quitRequestedByMidi's own header comment.
@@ -468,22 +468,27 @@ void MainComponent::timerCallback()
         }
     }
 
-    if (saveAsRequestedByMidi.exchange(false, std::memory_order_relaxed))
+    // Debounced as a group (see debounceOneShotMidiAction()'s own comment) -
+    // in particular, a momentary hardware button that sends a press value
+    // then a release value of 0 as two separate CC9 messages would
+    // otherwise fire Save and Save As back to back from a single press,
+    // since CC9 splits its action by exactly that value.
+    if (saveAsRequestedByMidi.exchange(false, std::memory_order_relaxed) && debounceOneShotMidiAction())
     {
         if (onSaveAsRequested) onSaveAsRequested();
     }
 
-    if (saveRequestedByMidi.exchange(false, std::memory_order_relaxed))
+    if (saveRequestedByMidi.exchange(false, std::memory_order_relaxed) && debounceOneShotMidiAction())
     {
         if (onSaveRequested) onSaveRequested();
     }
 
-    if (openSessionRequestedByMidi.exchange(false, std::memory_order_relaxed))
+    if (openSessionRequestedByMidi.exchange(false, std::memory_order_relaxed) && debounceOneShotMidiAction())
     {
         if (onOpenSessionRequested) onOpenSessionRequested();
     }
 
-    if (openStarterRequestedByMidi.exchange(false, std::memory_order_relaxed))
+    if (openStarterRequestedByMidi.exchange(false, std::memory_order_relaxed) && debounceOneShotMidiAction())
     {
         if (onOpenStarterRequested) onOpenStarterRequested();
     }
@@ -505,6 +510,15 @@ void MainComponent::timerCallback()
 
     recordingManager.pollForAutoStop();
     recordingManager.pollMidiCapture();
+}
+
+bool MainComponent::debounceOneShotMidiAction()
+{
+    auto now = juce::Time::getMillisecondCounter();
+    if (now - lastOneShotMidiActionMs < (juce::uint32) oneShotMidiDebounceMs)
+        return false;
+    lastOneShotMidiActionMs = now;
+    return true;
 }
 
 void MainComponent::discardIncidentalDirtyFlags()

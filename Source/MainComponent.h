@@ -380,6 +380,22 @@ private:
     std::atomic<bool> openSessionRequestedByMidi { false };
     std::atomic<bool> openStarterRequestedByMidi { false };
 
+    // Shared debounce for the one-shot MIDI commands above (quit/save/
+    // save-as/open-session/open-starter, not the level-based arm/record/
+    // play/tempo-step ones, which are already idempotent by construction).
+    // A single momentary hardware button can send a press value and a
+    // release value of 0 as two separate CC messages for what's really one
+    // user gesture - CC9 in particular splits its action by exactly that
+    // value (0 vs nonzero), so an unguarded press+release pair would fire
+    // Save AND Save As back to back from one press. debounceOneShotMidiAction()
+    // just ignores any one-shot trigger arriving within
+    // oneShotMidiDebounceMs of the last one that fired, regardless of
+    // which command it was - simple, and these are all occasional,
+    // deliberate actions where a short shared cooldown is no real loss.
+    static constexpr int oneShotMidiDebounceMs = 250;
+    juce::uint32 lastOneShotMidiActionMs = 0;
+    bool debounceOneShotMidiAction();
+
     // CC100 - each message is a discrete +1/-1 BPM step (value >= 64 =
     // +1, < 64 = -1), not a level like the commands above - a fast-spun
     // hardware encoder can send several ticks within one poll window, so
