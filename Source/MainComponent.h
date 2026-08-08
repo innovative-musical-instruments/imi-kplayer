@@ -51,6 +51,18 @@ public:
     // Called on the message thread once PluginManager's background scan finishes.
     void onScanComplete();
 
+    // Called between the background scan finishing and the still-slower
+    // synchronous startup work that follows it at launch (Kadabra recovery/
+    // starter auto-load - see Main.cpp's scanPluginsAsync completion
+    // callback) - swaps the overlay's text from "Scanning plugins..." to a
+    // generic "warming up" message before that work (which blocks the
+    // message thread directly, freezing the overlay's own animation/repaints
+    // for its duration) begins, so what's frozen on screen doesn't wrongly
+    // imply scanning is still what's happening. No-op if there's no overlay
+    // up (e.g. called outside the startup path). See
+    // LoadingOverlayComponent::setWarmingUp() for the rest of the reasoning.
+    void showWarmingUpOverlay();
+
     // Settings dialog's "Rescan Plugins" button - replays exactly what
     // startup already does (same scanPluginsAsync call, same
     // LoadingOverlayComponent), so newly-installed plugins are picked up
@@ -469,6 +481,14 @@ private:
 
     std::unique_ptr<LoadingOverlayComponent> loadingOverlay;
     bool pluginsReady = false;
+
+    // Set by showWarmingUpOverlay() - stops timerCallback()'s live scan-
+    // status poll from overwriting the overlay's "warming up" message back
+    // to a scanning one (the poll can't actually fire during the blocking
+    // work that follows anyway, since that runs on this same message
+    // thread, but this keeps the two states from ever fighting if that
+    // ever changes).
+    bool overlayShowingWarmup = false;
 
     // Keyed by MidiInput device identifier so each channel can be routed to
     // a specific (device, channel-number) pair per spec 7.1.

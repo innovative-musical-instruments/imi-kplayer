@@ -142,6 +142,15 @@ target_compile_definitions(IMI_KPlayer PRIVATE
     # docs/kplayer-take-recording-playback-spec.md section 9) - off by
     # default in JUCE, unlike WAV/AIFF/FLAC/OggVorbis.
     JUCE_USE_MP3AUDIOFORMAT=1
+    # Off by default in JUCE (0). Needed for MessageManager::
+    # runDispatchLoopUntil() - see MainComponent::showWarmingUpOverlay(),
+    # the one place this app actually needs a real, synchronous pump of the
+    # event loop (forcing the loading overlay's startup message to actually
+    # paint before a long blocking call). Every other blocking-UI pattern in
+    # this codebase deliberately stays async (AlertWindow::showAsync,
+    # FileChooser::launchAsync, etc.) - this narrow opt-in doesn't change
+    # that, it only unlocks the one JUCE API that needed it.
+    JUCE_MODAL_LOOPS_PERMITTED=1
     JUCE_APPLICATION_NAME_STRING="$<TARGET_PROPERTY:IMI_KPlayer,JUCE_PRODUCT_NAME>"
     JUCE_APPLICATION_VERSION_STRING="$<TARGET_PROPERTY:IMI_KPlayer,JUCE_VERSION>"
 )
