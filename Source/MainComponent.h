@@ -154,6 +154,20 @@ public:
     std::function<void(int newCount)> onChannelCountChangeRequested;
     std::function<void()> onSettingsRequested;
 
+    // Same reasoning - Save/Save As live in Main.cpp's MainWindow (file
+    // dialogs, currentSessionFile, recent-files list), not here. Fired from
+    // MIDI (CC9 on channel 16, see timerCallback()) - see the atomic flags
+    // below for the value split.
+    std::function<void()> onSaveRequested;
+    std::function<void()> onSaveAsRequested;
+
+    // Same reasoning again - Open Session's file picker and loading
+    // Starter.kplayer both live in Main.cpp's MainWindow. Fired from MIDI
+    // (CC3 any value = open picker, CC99 value 0 = load Starter.kplayer
+    // directly, see the atomic flags below).
+    std::function<void()> onOpenSessionRequested;
+    std::function<void()> onOpenStarterRequested;
+
     // Window size round-trips through the session the same way tempo does:
     // MainWindow (which actually owns the DocumentWindow) writes its current
     // size here right before SessionIO::saveSession(), and reads it back
@@ -324,8 +338,10 @@ private:
     std::unique_ptr<juce::FileChooser> recordingFolderChooser;
 
     // Master-level MIDI commands (arm = CC104, record = CC102, play = CC105,
-    // quit = CC6 value 0), reserved on MIDI channel 16 of the Kadabra port
-    // specifically - written from the audio thread in
+    // quit = CC6 value 0, tempo step = CC100, save/save-as = CC9, open
+    // session picker = CC3, open Starter.kplayer = CC99 value 0), reserved
+    // on MIDI channel 16 of the Kadabra port specifically - written from
+    // the audio thread in
     // audioDeviceIOCallbackWithContext(), consumed by timerCallback() the
     // same exchange-and-reset pattern as every other MIDI-driven flag in
     // this app. Record/Play are deliberately separate CCs (not one combined
@@ -349,6 +365,31 @@ private:
     // path when Kadabra is connected (which it always is here, by
     // definition - this only ever arrives on the Kadabra port).
     std::atomic<bool> quitRequestedByMidi { false };
+
+    // CC9 - another one-shot trigger, same shape as quitRequestedByMidi:
+    // value 0 -> Save As, any other value -> Save. Split into two flags
+    // rather than one flag + a pending value, since the value only ever
+    // matters at the instant the message arrives (which action to fire),
+    // not as an ongoing state to compare against.
+    std::atomic<bool> saveRequestedByMidi { false };
+    std::atomic<bool> saveAsRequestedByMidi { false };
+
+    // CC3 (any value) - Open Session's file picker. CC99 value 0 - load
+    // Starter.kplayer directly, no picker (unlike CC3, only the exact
+    // value 0 triggers it, no "else" action for other values).
+    std::atomic<bool> openSessionRequestedByMidi { false };
+    std::atomic<bool> openStarterRequestedByMidi { false };
+
+    // CC100 - each message is a discrete +1/-1 BPM step (value >= 64 =
+    // +1, < 64 = -1), not a level like the commands above - a fast-spun
+    // hardware encoder can send several ticks within one poll window, so
+    // this accumulates net steps (fetch_add on the audio thread) rather
+    // than just remembering the latest value, which would silently drop
+    // all but one tick. Applying the whole net delta at once in
+    // timerCallback() is mathematically identical to rounding-then-±1 per
+    // individual tick, since every step after the first rounding is
+    // already a whole number.
+    std::atomic<int> tempoStepAccumulator { 0 };
 
     // Set by triggerPanic() (message thread, e.g. the master panic button or
     // a menu command), consumed and reset at the top of the very next audio
