@@ -350,6 +350,15 @@ void MainComponent::timerCallback()
         loadingOverlay->setScanStatus(pluginManager.getCurrentlyScanningPluginName(),
                                        pluginManager.getScanProgress());
 
+    // Transport time readout (mm:ss) - see GlobalSectionComponent::
+    // setDisplayedTime()'s own comment for why this single clock covers
+    // both "is the playhead actually moving" and recording-elapsed.
+    {
+        double seconds = (double) sessionTransport.getPositionSamples() / currentSampleRate;
+        int totalSeconds = (int) seconds;
+        globalSection.setDisplayedTime(juce::String::formatted("%02d:%02d", totalSeconds / 60, totalSeconds % 60));
+    }
+
     // Drain every processor's flag unconditionally (not short-circuiting on
     // the first hit) so none are left set from this tick to linger into the
     // next one, then notify at most once regardless of how many fired.
@@ -406,7 +415,7 @@ void MainComponent::timerCallback()
     // audioDeviceIOCallbackWithContext) - level-based, only acted on when
     // they actually disagree with the current state, so a continuously-
     // streaming controller (e.g. Kadabra motion) re-sending the same value
-    // doesn't repeatedly re-trigger a start/stop or arm/disarm.
+    // doesn't repeatedly re-trigger a start/stop, arm/disarm, or play/pause.
     if (masterArmChangedByMidi.exchange(false, std::memory_order_relaxed))
     {
         setMasterArmed(pendingMasterArmValueFromMidi.load(std::memory_order_relaxed));
@@ -415,9 +424,35 @@ void MainComponent::timerCallback()
 
     if (recordStateChangedByMidi.exchange(false, std::memory_order_relaxed))
     {
-        bool desiredRecording = pendingRecordStateValueFromMidi.load(std::memory_order_relaxed);
-        if (desiredRecording != recordingManager.isRecording())
-            toggleRecording(); // MIDI-triggered failures fail quietly, same as a live-arm track-creation failure - see RecordingManager::setChannelArmed's comment
+        // "On" covers both Record Ready (armed) and actively recording -
+        // toggleRecordArm() already does the right thing from either state
+        // (idle -> armed, or straight to recording if the transport's
+        // already playing; armed -> cancel; recording -> stop), same as a
+        // click on the Record button itself. MIDI-triggered failures fail
+        // quietly, same as a live-arm track-creation failure - see
+        // RecordingManager::setChannelArmed's comment.
+        bool desiredOn = pendingRecordStateValueFromMidi.load(std::memory_order_relaxed);
+        bool currentlyOn = recordingManager.isRecording() || recordArmedForNextPlay;
+        if (desiredOn != currentlyOn)
+            toggleRecordArm();
+    }
+
+    if (playStateChangedByMidi.exchange(false, std::memory_order_relaxed))
+    {
+        // Separate CC from Record above (deliberately, not one combined
+        // control) - a level-based mirror of the Play/Pause button itself,
+        // same debounce pattern. A Kadabra hardware combo that wants "arm
+        // then play" just sends both CCs.
+        bool desiredPlaying = pendingPlayStateValueFromMidi.load(std::memory_order_relaxed);
+        if (desiredPlaying != sessionTransport.isPlaying())
+            toggleTransportPlaying();
+    }
+
+    if (quitRequestedByMidi.exchange(false, std::memory_order_relaxed))
+    {
+        // Same choke point every other quit path already funnels through -
+        // see quitRequestedByMidi's own header comment.
+        juce::JUCEApplication::getInstance()->systemRequestedQuit();
     }
 
     if (anyDirty)
@@ -694,14 +729,19 @@ void MainComponent::startArmedRecording()
             notifyDirty();
 
             auto error = toggleRecording();
-            if (error.isNotEmpty())
+            // Work Mode protects against a likely mistake (armed nothing,
+            // wasn't expecting silence); Show Mode trusts the performer's
+            // choice and just lets it quietly record nothing rather than
+            // interrupting the live flow with a dialog - see
+            // isShowModeEnabled()'s own comment.
+            if (error.isNotEmpty() && ! isShowModeEnabled())
                 juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, "Recording", error);
         });
         return;
     }
 
     auto error = toggleRecording();
-    if (error.isNotEmpty())
+    if (error.isNotEmpty() && ! isShowModeEnabled())
         juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, "Recording", error);
 }
 
@@ -857,14 +897,19 @@ void MainComponent::audioDeviceIOCallbackWithContext(
         midiSnapshot.swap(pendingMidiByDevice);
     }
 
-    // Master-level MIDI commands: arm = CC104, record start/stop = CC102,
-    // reserved on MIDI channel 16 of the Kadabra port specifically (not any
-    // device's channel 16 - master has no per-channel device selector of
-    // its own to scope this by, so it's tied to the same port the
-    // channel-auto-assign scheme already treats as "the" Kadabra input).
+    // Master-level MIDI commands: arm = CC104, record = CC102, play = CC105,
+    // quit = CC6 value 0, reserved on MIDI channel 16 of the Kadabra port
+    // specifically (not any device's channel 16 - master has no per-channel
+    // device selector of its own to scope this by, so it's tied to the same
+    // port the channel-auto-assign scheme already treats as "the" Kadabra
+    // input). Record and Play are deliberately separate CCs, each a level-
+    // based mirror of its own GUI button - see timerCallback()'s handling
+    // for why.
     // Only reports the request here (audio thread) - timerCallback() is
-    // what actually calls setMasterArmed()/toggleRecording(), since those
-    // touch juce::Component state that must stay on the message thread.
+    // what actually calls setMasterArmed()/toggleRecordArm()/
+    // toggleTransportPlaying()/systemRequestedQuit(), since those touch
+    // juce::Component state
+    // that must stay on the message thread.
     auto kadabraId = getKadabraDeviceIdentifier();
     if (kadabraId.isNotEmpty())
     {
@@ -887,6 +932,15 @@ void MainComponent::audioDeviceIOCallbackWithContext(
                 {
                     pendingRecordStateValueFromMidi.store(msg.getControllerValue() >= 64, std::memory_order_relaxed);
                     recordStateChangedByMidi.store(true, std::memory_order_relaxed);
+                }
+                else if (cc == 105)
+                {
+                    pendingPlayStateValueFromMidi.store(msg.getControllerValue() >= 64, std::memory_order_relaxed);
+                    playStateChangedByMidi.store(true, std::memory_order_relaxed);
+                }
+                else if (cc == 6 && msg.getControllerValue() == 0)
+                {
+                    quitRequestedByMidi.store(true, std::memory_order_relaxed);
                 }
             }
         }

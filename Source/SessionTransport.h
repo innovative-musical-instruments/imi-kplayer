@@ -23,6 +23,11 @@ public:
     void rtz()   { positionSamples.store(0, std::memory_order_relaxed); }
     bool isPlaying() const { return playing.load(std::memory_order_relaxed); }
 
+    // For UI display only (e.g. a transport time readout) - samples, not
+    // seconds, since this class has no sample-rate concept of its own; the
+    // caller converts using whatever rate is currently live.
+    juce::int64 getPositionSamples() const { return positionSamples.load(std::memory_order_relaxed); }
+
     // Audio thread, once per callback: returns the position at the *start*
     // of this block (what MidiTakePlayer::renderBlock should render
     // against), then advances the stored position by numSamples if

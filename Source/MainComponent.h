@@ -323,15 +323,32 @@ private:
     // must outlive the async dialog itself.
     std::unique_ptr<juce::FileChooser> recordingFolderChooser;
 
-    // Master-level MIDI commands (arm = CC104, record start/stop = CC102),
-    // reserved on MIDI channel 16 of the Kadabra port specifically - written
-    // from the audio thread in audioDeviceIOCallbackWithContext(), consumed
-    // by timerCallback() the same exchange-and-reset pattern as every other
-    // MIDI-driven flag in this app.
+    // Master-level MIDI commands (arm = CC104, record = CC102, play = CC105,
+    // quit = CC6 value 0), reserved on MIDI channel 16 of the Kadabra port
+    // specifically - written from the audio thread in
+    // audioDeviceIOCallbackWithContext(), consumed by timerCallback() the
+    // same exchange-and-reset pattern as every other MIDI-driven flag in
+    // this app. Record/Play are deliberately separate CCs (not one combined
+    // control) - each is a level-based mirror of its own GUI button
+    // (toggleRecordArm()/toggleTransportPlaying()), so a Kadabra hardware
+    // combo that wants "arm then play" just sends both.
     std::atomic<bool> masterArmChangedByMidi { false };
     std::atomic<bool> pendingMasterArmValueFromMidi { false };
     std::atomic<bool> recordStateChangedByMidi { false };
     std::atomic<bool> pendingRecordStateValueFromMidi { false };
+    std::atomic<bool> playStateChangedByMidi { false };
+    std::atomic<bool> pendingPlayStateValueFromMidi { false };
+
+    // CC6 value 0 - a one-shot trigger (not a level, unlike the above),
+    // same shape as panicRequested below: set once on the audio thread,
+    // exchanged-and-consumed once in timerCallback(), which routes it
+    // through the exact same juce::JUCEApplication::systemRequestedQuit()
+    // choke point every other quit path (Cmd+Q, Dock quit, File > Quit,
+    // window close) already funnels through - guarantees this behaves
+    // identically to those, including the silent-save-to-recover.kplayer
+    // path when Kadabra is connected (which it always is here, by
+    // definition - this only ever arrives on the Kadabra port).
+    std::atomic<bool> quitRequestedByMidi { false };
 
     // Set by triggerPanic() (message thread, e.g. the master panic button or
     // a menu command), consumed and reset at the top of the very next audio

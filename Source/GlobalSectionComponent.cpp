@@ -49,6 +49,12 @@ GlobalSectionComponent::GlobalSectionComponent(int initialChannelCount, int maxC
 
     addAndMakeVisible(tempoSyncComponent);
 
+    timeDisplayLabel.setText("00:00", juce::dontSendNotification);
+    timeDisplayLabel.setFont(juce::Font(16.0f, juce::Font::bold));
+    timeDisplayLabel.setJustificationType(juce::Justification::centred);
+    timeDisplayLabel.setColour(juce::Label::textColourId, juce::Colours::white);
+    addAndMakeVisible(timeDisplayLabel);
+
     // Icons are vector-drawn by TransportButtonLookAndFeel rather than
     // Unicode glyphs - see that class's header comment (font-coverage gap
     // hit on Windows for the original Play/Pause/RTZ icons).
@@ -119,6 +125,11 @@ void GlobalSectionComponent::setChannelCount(int count)
 {
     channelCount = juce::jlimit(1, maxChannels, count);
     updateChannelButtons();
+}
+
+void GlobalSectionComponent::setDisplayedTime(const juce::String& text)
+{
+    timeDisplayLabel.setText(text, juce::dontSendNotification);
 }
 
 void GlobalSectionComponent::setInputSectionCollapsed(bool collapsed)
@@ -260,6 +271,11 @@ void GlobalSectionComponent::resized()
     area.removeFromTop(197 - area.getY());
     tempoSyncComponent.setBounds(area.removeFromTop(TempoSyncComponent::preferredHeight));
     area.removeFromTop(10);
+
+    // Transport time readout, between Tempo/Sync and the transport row
+    // below - see setDisplayedTime()'s own header comment.
+    timeDisplayLabel.setBounds(area.removeFromTop(20));
+    area.removeFromTop(6);
 
     // Panic pinned to the very bottom, Work/Show mode directly above it -
     // both always reachable regardless of how much space the rest of this
