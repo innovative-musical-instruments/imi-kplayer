@@ -62,6 +62,14 @@ public:
             mainWindow->setMinimised(false);
             mainWindow->toFront(true);
         }
+        else
+        {
+            // Arrived before mainWindow exists yet - still inside the brief
+            // device-init/plugin-scan startup window. Remember it and honor
+            // it as soon as the window actually exists (see initialise()),
+            // rather than silently doing nothing.
+            focusRequestPendingFromStartup = true;
+        }
     }
 
     void initialise(const juce::String&) override
@@ -93,6 +101,16 @@ public:
             mainWindow.reset(new MainWindow(getApplicationName(),
                                             deviceManager,
                                             pluginManager));
+
+            // Honor a second-launch focus request that arrived while this
+            // window didn't exist yet - see anotherInstanceStarted()'s
+            // else branch.
+            if (focusRequestPendingFromStartup)
+            {
+                focusRequestPendingFromStartup = false;
+                mainWindow->setMinimised(false);
+                mainWindow->toFront(true);
+            }
 
             if (splashScreen != nullptr)
                 splashScreen->setProgress(1.0f);
@@ -492,6 +510,21 @@ public:
             confirmDiscardUnsavedChanges(onProceed);
         }
 
+        // Show Mode: skip the confirm prompt entirely, running proceed()
+        // straight away - it's the user's own call to make in Show Mode
+        // (see MainComponent::isShowModeEnabled()'s comment for the
+        // reasoning). Work Mode (default): gated behind
+        // confirmDiscardUnsavedChanges() as usual. Shared by openSession(),
+        // openRecentFile(), and openStarterSession() below - all three
+        // wanted this exact same two-line branch.
+        void proceedOrConfirmDiscard(std::function<void()> proceed)
+        {
+            if (mainComponent->isShowModeEnabled())
+                proceed();
+            else
+                confirmDiscardUnsavedChanges(proceed);
+        }
+
         // Gates any action that would discard the current session (opening
         // another one, quitting) behind a Save/Discard/Cancel prompt when
         // there are unsaved changes. Runs onProceed immediately if the
@@ -525,6 +558,14 @@ public:
         {
             auto proceed = [this]
             {
+                // Guard against a second open/save-as trigger landing while
+                // one's already in flight (more reachable now via MIDI CC3/
+                // CC9 than it was mouse-only) - reassigning fileChooser here
+                // would destroy the first dialog out from under the user
+                // with no completion callback for their original action.
+                if (fileChooser != nullptr)
+                    return;
+
                 fileChooser = std::make_unique<juce::FileChooser>(
                     "Open Session", juce::File(), "*.kplayer");
 
@@ -533,17 +574,13 @@ public:
                     [this](const juce::FileChooser& fc)
                     {
                         auto file = fc.getResult();
+                        fileChooser.reset();
                         if (file.existsAsFile())
                             loadSessionFile(file);
                     });
             };
 
-            // Show Mode: skip the confirm prompt entirely, same reasoning as
-            // openRecentFile() below - see MainComponent::isShowModeEnabled().
-            if (mainComponent->isShowModeEnabled())
-                proceed();
-            else
-                confirmDiscardUnsavedChanges(proceed);
+            proceedOrConfirmDiscard(proceed);
         }
 
         void openRecentFile(const juce::File& file)
@@ -554,10 +591,7 @@ public:
                     loadSessionFile(file);
             };
 
-            if (mainComponent->isShowModeEnabled())
-                proceed();
-            else
-                confirmDiscardUnsavedChanges(proceed);
+            proceedOrConfirmDiscard(proceed);
         }
 
         // Import Audio to Track (Increment E, see
@@ -728,10 +762,7 @@ public:
                     loadSessionFile(starterFile, false);
             };
 
-            if (mainComponent->isShowModeEnabled())
-                proceed();
-            else
-                confirmDiscardUnsavedChanges(proceed);
+            proceedOrConfirmDiscard(proceed);
         }
 
         // A saved window size is 0x0 for a fresh session or a file saved
@@ -775,6 +806,12 @@ public:
 
         void saveSessionAs(std::function<void(bool)> onComplete = nullptr)
         {
+            // Same guard as openSession() - both share the fileChooser
+            // member, and a concurrent trigger reassigning it mid-flight
+            // would yank whichever dialog was already open.
+            if (fileChooser != nullptr)
+                return;
+
             mainComponent->setWindowSize(getWidth(), getHeight());
 
             fileChooser = std::make_unique<juce::FileChooser>(
@@ -785,6 +822,7 @@ public:
                 [this, onComplete](const juce::FileChooser& fc)
                 {
                     auto file = fc.getResult();
+                    fileChooser.reset();
                     if (file == juce::File())
                     {
                         if (onComplete)
@@ -985,6 +1023,12 @@ private:
     PluginManager pluginManager;
     std::unique_ptr<MainWindow> mainWindow;
     std::unique_ptr<AboutScreenComponent> splashScreen;
+
+    // Set when anotherInstanceStarted() arrives before mainWindow exists
+    // yet (still inside the brief device-init/plugin-scan startup window) -
+    // consumed as soon as the window is actually constructed, see
+    // initialise() and anotherInstanceStarted() above.
+    bool focusRequestPendingFromStartup = false;
 };
 
 START_JUCE_APPLICATION(KPlayerApplication)
