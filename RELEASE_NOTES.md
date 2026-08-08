@@ -1,0 +1,99 @@
+# Kadabra K-Player — Release Notes
+
+## v0.9.5 — 2026-08-08
+
+A live-use robustness pass: a reworked control layout, faster song
+switching, a full MIDI control scheme for the Kadabra hardware, and several
+real bugs fixed from tester reports.
+
+### New Features
+
+- **Master strip / Global section split** — the old single master column is
+  now two: a dedicated Master strip (inserts, fader, ARM) next to the
+  channel rack, and a Global section (branding, channel count, Settings,
+  channel I/O collapse, tempo/sync, transport, Record Ready, Work/Show
+  Mode, Panic) as its own rightmost strip.
+- **Record Ready** — the REC button is now a 3-state idle → armed
+  (blinking) → recording control instead of immediate start/stop. Arm it,
+  and the next Play starts recording (or starts immediately if playback is
+  already running); stopping recording leaves playback running.
+- **Work Mode / Show Mode** — a new toggle in the Global section. Work Mode
+  (default) keeps today's Save/Discard/Cancel prompt before any session
+  load that would discard unsaved changes. Show Mode skips that prompt for
+  session loads — mid-set song switching stays uninterrupted, on the
+  understanding that it's the performer's call in the moment. Quit is
+  unaffected either way; a Kadabra-connected quit still silently saves a
+  recovery snapshot regardless of mode.
+- **Delta session load** — switching between songs on the same rig no
+  longer tears down and reloads every plugin from scratch. A slot with the
+  same plugin already loaded gets its new state pushed in place instead
+  (skipping the ~1s+ per-slot HISE/Kontakt safety sleeps entirely); only a
+  genuinely different plugin does a full reload. Turns same-rig
+  song-to-song switching from roughly 1.6s per populated slot into tens of
+  milliseconds. Audio device reinitialization is now skipped too when the
+  saved device configuration is unchanged.
+- **Full MIDI control scheme, Kadabra port channel 16** — Record (CC102),
+  Play (CC105), Master Arm (CC104), Quit (CC6=0), Tempo step ±1 BPM
+  (CC100), Save/Save As (CC9), Open Session picker (CC3), load
+  Starter.kplayer directly (CC99=0). Per-channel plugin bypass toggles
+  (CC84–89 for slots 0–5) were already in place from earlier work.
+- **Panic button** — sends all-notes-off/all-sound-off into every loaded
+  instrument across all 16 MIDI channels, regardless of a channel's own
+  routing. Fixes stuck notes left behind if an external source (e.g.
+  Kadabra OS) crashes mid-performance.
+- **Rescan Plugins** — a button in Settings that reuses the startup scan
+  path on demand, rather than requiring an app restart to pick up newly
+  installed plugins.
+- **Live scan status** — during any plugin scan (startup or Rescan), the
+  loading overlay now shows which plugin is currently being scanned and a
+  progress indicator, instead of sitting on an unexplained blank screen
+  during a slow scan.
+- **Transport time readout** — a mm:ss clock in the Global section, between
+  Tempo/Sync and the transport row. Doubles as a recording-elapsed display
+  while Record Ready is active, since the two are always in lockstep.
+- **Settings dialog** is now non-modal (click the Settings button again, or
+  the window's own close button, to dismiss it) and lives under
+  **File > Settings…** instead of its own menu bar entry.
+
+### Fixes
+
+- **Bluetooth MIDI pairing crash** — clicking "Bluetooth MIDI…" in Settings
+  hard-crashed the app due to a missing `NSBluetoothAlwaysUsageDescription`
+  entitlement; macOS aborts the process outright rather than denying
+  access gracefully when that's absent. Found via a tester-supplied crash
+  log.
+- **Cross-platform Starter.kplayer relink** — a Mac-saved
+  `Starter.kplayer` loaded empty on Windows via the automatic Kadabra
+  recovery/starter load, but loaded correctly when manually reopened via
+  File > Open Session. Root cause: the auto-load was running before the
+  plugin scan had populated the list it needed to relink saved plugins
+  against. Fixed by sequencing the auto-load to run only after the scan
+  completes.
+- **Multiple simultaneous instances on Windows** — a tester reported two
+  K-Player processes running at once, fighting over the same MIDI devices.
+  Launching K-Player while an instance is already running now brings the
+  existing window to front instead of opening a second one.
+- **Plugin scan robustness** — the scanning plugin's name no longer lags a
+  step behind what's actually being scanned; Rescan now actually removes
+  plugins that were uninstalled, not just adds new ones; a scan-crash
+  notification no longer repeats indefinitely for a plugin that's already
+  been skipped and marked failed.
+- A handful of smaller robustness fixes from a code-review pass over this
+  release's MIDI control changes: the one-shot MIDI commands (Quit, Save,
+  Save As, Open Session, Open Starter) are now debounced against a stray
+  burst of controller messages firing an action more than once; opening a
+  file picker while one is already in flight (more reachable now via MIDI
+  than when it was mouse-only) no longer yanks the first dialog out from
+  under the user; a second launch arriving in the brief startup window
+  before the main window exists is no longer silently dropped.
+
+### Known limitations
+
+- An AU-only plugin (Mac-only format) scanned into a saved session can't
+  be relinked on Windows, by design — AU doesn't exist there. None of the
+  current HISE-based K-Samplers are AU-only in practice.
+- Windows still has no signed/notarized release pipeline — a Windows
+  "release" build today is a local `Release` config build, fine for
+  testing but not for general distribution as-is.
+
+---
