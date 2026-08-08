@@ -455,6 +455,39 @@ void MainComponent::timerCallback()
         juce::JUCEApplication::getInstance()->systemRequestedQuit();
     }
 
+    if (int steps = tempoStepAccumulator.exchange(0, std::memory_order_relaxed); steps != 0)
+    {
+        // Same "manual edits don't apply while sync is driving tempo" rule
+        // the Tempo/Sync control's own onTempoChanged already enforces -
+        // sync would just overwrite this immediately anyway.
+        if (! tempoSyncEnabled)
+        {
+            double newTempo = juce::jlimit(20.0, 300.0, (double) (juce::roundToInt(currentTempo) + steps));
+            setGlobalTempo(newTempo);
+            notifyDirty();
+        }
+    }
+
+    if (saveAsRequestedByMidi.exchange(false, std::memory_order_relaxed))
+    {
+        if (onSaveAsRequested) onSaveAsRequested();
+    }
+
+    if (saveRequestedByMidi.exchange(false, std::memory_order_relaxed))
+    {
+        if (onSaveRequested) onSaveRequested();
+    }
+
+    if (openSessionRequestedByMidi.exchange(false, std::memory_order_relaxed))
+    {
+        if (onOpenSessionRequested) onOpenSessionRequested();
+    }
+
+    if (openStarterRequestedByMidi.exchange(false, std::memory_order_relaxed))
+    {
+        if (onOpenStarterRequested) onOpenStarterRequested();
+    }
+
     if (anyDirty)
         notifyDirty();
 
@@ -898,17 +931,20 @@ void MainComponent::audioDeviceIOCallbackWithContext(
     }
 
     // Master-level MIDI commands: arm = CC104, record = CC102, play = CC105,
-    // quit = CC6 value 0, reserved on MIDI channel 16 of the Kadabra port
-    // specifically (not any device's channel 16 - master has no per-channel
-    // device selector of its own to scope this by, so it's tied to the same
-    // port the channel-auto-assign scheme already treats as "the" Kadabra
-    // input). Record and Play are deliberately separate CCs, each a level-
-    // based mirror of its own GUI button - see timerCallback()'s handling
-    // for why.
+    // quit = CC6 value 0, tempo step = CC100, save (nonzero)/save-as
+    // (value 0) = CC9, open session picker = CC3 (any value), open
+    // Starter.kplayer = CC99 value 0, reserved on MIDI channel 16 of the
+    // Kadabra port specifically (not any device's channel 16 - master has
+    // no per-channel device selector of its own to scope this by, so it's
+    // tied to the same port the channel-auto-assign scheme already treats
+    // as "the" Kadabra input). Record and Play are deliberately separate
+    // CCs, each a level-based mirror of its own GUI button - see
+    // timerCallback()'s handling for why.
     // Only reports the request here (audio thread) - timerCallback() is
     // what actually calls setMasterArmed()/toggleRecordArm()/
-    // toggleTransportPlaying()/systemRequestedQuit(), since those touch
-    // juce::Component state
+    // toggleTransportPlaying()/systemRequestedQuit()/setGlobalTempo()/
+    // onSaveRequested()/onSaveAsRequested()/onOpenSessionRequested()/
+    // onOpenStarterRequested(), since those touch juce::Component state
     // that must stay on the message thread.
     auto kadabraId = getKadabraDeviceIdentifier();
     if (kadabraId.isNotEmpty())
@@ -941,6 +977,25 @@ void MainComponent::audioDeviceIOCallbackWithContext(
                 else if (cc == 6 && msg.getControllerValue() == 0)
                 {
                     quitRequestedByMidi.store(true, std::memory_order_relaxed);
+                }
+                else if (cc == 100)
+                {
+                    tempoStepAccumulator.fetch_add(msg.getControllerValue() >= 64 ? 1 : -1, std::memory_order_relaxed);
+                }
+                else if (cc == 9)
+                {
+                    if (msg.getControllerValue() == 0)
+                        saveAsRequestedByMidi.store(true, std::memory_order_relaxed);
+                    else
+                        saveRequestedByMidi.store(true, std::memory_order_relaxed);
+                }
+                else if (cc == 3)
+                {
+                    openSessionRequestedByMidi.store(true, std::memory_order_relaxed);
+                }
+                else if (cc == 99 && msg.getControllerValue() == 0)
+                {
+                    openStarterRequestedByMidi.store(true, std::memory_order_relaxed);
                 }
             }
         }

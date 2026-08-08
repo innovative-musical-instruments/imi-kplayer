@@ -39,6 +39,31 @@ public:
     const juce::String getApplicationVersion() override
         { return JUCE_APPLICATION_VERSION_STRING; }
 
+    // Single-instance enforcement (reported anomaly: a Windows tester had
+    // two K-Player processes running simultaneously, fighting over the
+    // same MIDI devices). Default JUCEApplication behaviour allows
+    // multiple instances; returning false here makes JUCE's own
+    // moreThanOneInstanceAllowed()/anotherInstanceStarted() machinery (an
+    // OS-level IPC handshake, no extra setup needed - enabled by default
+    // for every platform except iOS/Android) detect an already-running
+    // instance *before* initialise() ever runs for the new launch attempt
+    // - the second process forwards its command line and exits immediately
+    // without touching audio devices, scanning plugins, or creating a
+    // window at all.
+    bool moreThanOneInstanceAllowed() override { return false; }
+
+    // Called on the *existing* instance when a second launch attempt was
+    // just turned away above - bring it to the front instead of the user
+    // wondering why nothing happened.
+    void anotherInstanceStarted(const juce::String&) override
+    {
+        if (mainWindow != nullptr)
+        {
+            mainWindow->setMinimised(false);
+            mainWindow->toFront(true);
+        }
+    }
+
     void initialise(const juce::String&) override
     {
         // Splash covers the blank/delay period before the main window
@@ -69,14 +94,6 @@ public:
                                             deviceManager,
                                             pluginManager));
 
-            // Kadabra-connected-only recovery/starter auto-load (see
-            // MainWindow::tryAutoLoadKadabraSession()) - sequenced before
-            // the splash screen comes down since SessionIO::loadSession is
-            // synchronous and can take a while for a large rig, so the
-            // splash naturally covers that instead of the window sitting
-            // there frozen with no explanation.
-            mainWindow->tryAutoLoadKadabraSession();
-
             if (splashScreen != nullptr)
                 splashScreen->setProgress(1.0f);
             splashScreen.reset();
@@ -84,7 +101,29 @@ public:
             pluginManager.scanPluginsAsync([this]
             {
                 if (mainWindow != nullptr)
+                {
+                    // Kadabra-connected-only recovery/starter auto-load
+                    // (see MainWindow::tryAutoLoadKadabraSession()) -
+                    // deliberately sequenced *after* the scan completes,
+                    // not before. It used to run before scanPluginsAsync()
+                    // was even called, which meant SessionIO::loadSession()'s
+                    // plugin relinking (SessionIO::resolveLocalDescription(),
+                    // matched against PluginManager::getPluginList()) always
+                    // ran against a still-empty list - PluginManager's
+                    // constructor never pre-loads the plugin cache, only
+                    // scanPlugins() does. Harmless on the same machine a
+                    // session was saved on (the saved absolute path still
+                    // resolves directly, no relink needed), but silently
+                    // produced an empty rig for a cross-platform session
+                    // (e.g. Mac-saved, opened fresh on Windows) - manually
+                    // re-opening the same file minutes later, by which time
+                    // the scan had finished, always worked, which is what
+                    // gave this away. Still covered by MainComponent's
+                    // LoadingOverlayComponent throughout - its dismissal via
+                    // onScanComplete() below now also covers this.
+                    mainWindow->tryAutoLoadKadabraSession();
                     mainWindow->mainComponent->onScanComplete();
+                }
             });
         });
     }
@@ -253,6 +292,10 @@ public:
             // Settings DialogWindow).
             mainComponent->onChannelCountChangeRequested = [this](int newCount) { requestChannelCountChange(newCount); };
             mainComponent->onSettingsRequested = [this] { showSettings(); };
+            mainComponent->onSaveRequested = [this] { saveSession(); };
+            mainComponent->onSaveAsRequested = [this] { saveSessionAs(); };
+            mainComponent->onOpenSessionRequested = [this] { openSession(); };
+            mainComponent->onOpenStarterRequested = [this] { openStarterSession(); };
             setContentOwned(mainComponent, true);
             setResizable(true, true);
             centreWithSize(1152, 800);
@@ -666,6 +709,29 @@ public:
             auto starterFile = getStarterSessionFile();
             if (starterFile.existsAsFile())
                 loadSessionFile(starterFile, false);
+        }
+
+        // MIDI-triggered (CC99 value 0, see MainComponent::
+        // onOpenStarterRequested) - explicit "reload the factory starter"
+        // request, as opposed to tryAutoLoadKadabraSession()'s launch-time
+        // fallback above. Same loadSessionFile(..., false) call (doesn't
+        // track Starter.kplayer as the current file, so a later Save
+        // doesn't silently overwrite the read-only factory copy), and the
+        // same Show/Work Mode discard-confirmation openSession()/
+        // openRecentFile() already use.
+        void openStarterSession()
+        {
+            auto starterFile = getStarterSessionFile();
+            auto proceed = [this, starterFile]
+            {
+                if (starterFile.existsAsFile())
+                    loadSessionFile(starterFile, false);
+            };
+
+            if (mainComponent->isShowModeEnabled())
+                proceed();
+            else
+                confirmDiscardUnsavedChanges(proceed);
         }
 
         // A saved window size is 0x0 for a fresh session or a file saved
