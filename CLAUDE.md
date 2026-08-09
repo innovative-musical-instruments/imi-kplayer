@@ -30,6 +30,12 @@ deferred, why), read the master backlog first rather than asking Vinch to
 restate it. Note this repo is private, so — unlike the public K-Sampler
 repos — it's fine for this file to reference `imi-common-docs` directly.
 
+**When you add a new entry to `RELEASE_NOTES.md` (i.e. a version ships),
+say so explicitly at the end of your response** — e.g. "v0.9.x shipped,
+worth syncing status to imi-common-docs/strategy/master-backlog.md
+Section 7." That's the prompt for Vinch to actually do the sync, instead
+of it drifting for days.
+
 ## Build
 
 JUCE 8 SDK is required separately (not vendored in this repo) — see
