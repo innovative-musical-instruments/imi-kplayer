@@ -86,6 +86,27 @@ real bugs fixed from tester reports.
   than when it was mouse-only) no longer yanks the first dialog out from
   under the user; a second launch arriving in the brief startup window
   before the main window exists is no longer silently dropped.
+- **Open Session dialog not appearing on Windows** — in Work Mode, opening
+  a session (or Save As) while there were unsaved changes and choosing
+  "Discard and Continue" from the confirm prompt silently failed to show
+  the file picker on Windows — no error, it just never appeared. Caused by
+  starting a second native modal dialog from inside the first one's own
+  teardown/callback stack; fixed by deferring to a fresh message-loop tick,
+  the same technique already used for the equivalent quit-time case.
+- **Cross-platform MIDI input relink** — a session with channels routed to
+  "Kadabra" (or any other MIDI input) saved on one platform showed those
+  channels as "None selected" (yellow warning) when opened on the other,
+  same underlying cause as the plugin relink fixed for v0.9.4: the saved
+  device identifier is a platform-specific string that never matches
+  directly across Mac/Windows. Now falls back to matching by device name
+  when the raw identifier doesn't match, same as plugin relinking already
+  does — works retroactively on already-saved sessions, no re-save needed.
+- **Startup loading message** — launching with Kadabra connected (auto-
+  loading your last session) showed a frozen "Scanning plugins..." for the
+  entire load, however long that took, even though the actual plugin scan
+  had already finished in a fraction of that time. Now shows "Warming up
+  and getting ready..." once scanning is genuinely done, so the message
+  on screen matches what's actually happening.
 
 ### Known limitations
 
