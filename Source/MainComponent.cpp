@@ -211,6 +211,52 @@ void MainComponent::setChannelCount(int newCount)
     resized();
 }
 
+void MainComponent::resetToDefaultSession()
+{
+    // See the header comment - rebuild the channel rig completely from
+    // scratch rather than going through setChannelCount() (which clamps to
+    // a minimum of 1 and so always leaves one pre-existing channel
+    // surviving, plugins and all). Clearing every vector first destroys
+    // every ChannelProcessor/ChannelComponent outright, unloading every
+    // plugin along the way, then addChannel() rebuilds defaultChannelCount
+    // fresh ones exactly as MainComponent's own constructor does. Same
+    // audio-callback detach as setChannelCount() while the vectors it
+    // reads on the audio thread are out from under it.
+    deviceManager.removeAudioCallback(this);
+
+    channelComponents.clear();
+    channelProcessors.clear();
+    midiTakePlayers.clear();
+    audioTakePlayers.clear();
+
+    for (int i = 0; i < defaultChannelCount; ++i)
+        addChannel(i);
+
+    recordingManager.setChannelCount(defaultChannelCount);
+
+    deviceManager.addAudioCallback(this);
+    globalSection.setChannelCount(defaultChannelCount);
+    resized();
+
+    for (int slot = 0; slot < MasterChainProcessor::numSlots; ++slot)
+        masterChainProcessor.unloadPlugin(slot);
+
+    setMasterVolume(1.0f);
+    setGlobalTempo(120.0);
+    setTempoSyncEnabled(false);
+    setTempoSyncDeviceIdentifier({});
+    setRecordingsFolder({});
+    setRecordingSilenceTimeoutSeconds(60.0);
+    setMasterArmed(false);
+    setInputSectionCollapsedState(false);
+    setLastLoadedFormatVersion(SessionMigrator::kCurrentFormatVersion);
+    setLastLoadedExtraFields({});
+
+    refreshMasterChainUI();
+    for (int i = 0; i < getNumChannels(); ++i)
+        refreshChannelUI(i);
+}
+
 void MainComponent::setInputSectionCollapsedState(bool collapsed)
 {
     inputSectionCollapsed = collapsed;
@@ -389,11 +435,22 @@ void MainComponent::timerCallback()
     // Drain every processor's flag unconditionally (not short-circuiting on
     // the first hit) so none are left set from this tick to linger into the
     // next one, then notify at most once regardless of how many fired.
+    // While a post-load suppression window is active (see
+    // suppressPostLoadDirtyFlags()), parametersDirty is still drained every
+    // tick - just not allowed to actually mark anyDirty - so a plugin's
+    // delayed post-load settling notification can't pile up and fire the
+    // instant the window ends. Only this specific flag is gated: the
+    // MIDI-driven ones just below (gain/pan/bypass/arm) are never spurious
+    // in the first place, since nothing sets them without a real incoming
+    // MIDI message.
+    bool suppressingPostLoadDirty = (juce::int64) juce::Time::getMillisecondCounter() < postLoadDirtySuppressionEndMs;
     bool anyDirty = false;
     for (size_t i = 0; i < channelProcessors.size(); ++i)
     {
         auto& processor = channelProcessors[i];
-        anyDirty |= processor->consumeParametersDirtyFlag();
+        bool parametersDirty = processor->consumeParametersDirtyFlag();
+        if (! suppressingPostLoadDirty)
+            anyDirty |= parametersDirty;
 
         // A MIDI CC7 message just changed this channel's gain (see
         // ChannelProcessor::processBlock) - refresh its fader to match, and
@@ -436,7 +493,9 @@ void MainComponent::timerCallback()
             anyDirty = true;
         }
     }
-    anyDirty |= masterChainProcessor.consumeParametersDirtyFlag();
+    bool masterParametersDirty = masterChainProcessor.consumeParametersDirtyFlag();
+    if (! suppressingPostLoadDirty)
+        anyDirty |= masterParametersDirty;
 
     // Master-level commands on the Kadabra port's MIDI channel 16 (see
     // audioDeviceIOCallbackWithContext) - level-based, only acted on when
@@ -553,6 +612,11 @@ void MainComponent::discardIncidentalDirtyFlags()
     for (auto& processor : channelProcessors)
         processor->consumeParametersDirtyFlag();
     masterChainProcessor.consumeParametersDirtyFlag();
+}
+
+void MainComponent::suppressPostLoadDirtyFlags()
+{
+    postLoadDirtySuppressionEndMs = (juce::int64) juce::Time::getMillisecondCounter() + postLoadDirtySuppressionMs;
 }
 
 void MainComponent::setGlobalTempo(double bpm)
@@ -1173,15 +1237,17 @@ void MainComponent::resized()
 {
     auto area = getLocalBounds().reduced(20);
 
-    // Rightmost: Global section (branding, channel count, Settings, I/O
-    // collapse, tempo/sync, transport, Record Ready, Panic) - see
-    // GlobalSectionComponent's own resized() for its internal layout.
-    auto globalArea = area.removeFromRight(150);
+    // Bottom: Global section (branding, channel count, Settings, I/O
+    // collapse, tempo/sync, transport, Record Ready, Panic) - a horizontal
+    // bar spanning the full window width, pinned to the bottom edge. See
+    // GlobalSectionComponent's own resized() for its internal left/center/
+    // right zone layout.
+    auto globalArea = area.removeFromBottom(GlobalSectionComponent::preferredHeight);
     globalSection.setBounds(globalArea);
-    area.removeFromRight(12);
+    area.removeFromBottom(12);
 
-    // Master strip: inserts, gain fader/meters, ARM only - between the
-    // channel rack and the global section.
+    // Master strip: inserts, gain fader/meters, ARM only - to the right of
+    // the channel rack, above the global bar.
     auto masterChainArea = area.removeFromRight(110);
     masterChainComponent.setBounds(masterChainArea);
     area.removeFromRight(20);

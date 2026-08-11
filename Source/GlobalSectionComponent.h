@@ -6,17 +6,63 @@
 #include "TransportButtonLookAndFeel.h"
 #include "GearButtonLookAndFeel.h"
 
-// The rightmost, always-visible strip: branding, channel-count control,
-// access to Settings, the global channel-I/O collapse toggle, tempo/sync,
-// session transport (Play/Rec/RTZ), and Panic - everything that isn't
-// scoped to a single channel or to the master bus signal chain (that's
-// MasterChainComponent, its own separate strip immediately to this one's
-// left - see MainComponent::resized() for the actual strip order).
+// The bottom, always-visible bar: branding, channel-count control, access
+// to Settings, the global channel-I/O collapse toggle, tempo/sync, session
+// transport (Play/Rec/RTZ), and Panic - everything that isn't scoped to a
+// single channel or to the master bus signal chain (that's
+// MasterChainComponent, its own separate vertical strip above this bar -
+// see MainComponent::resized() for the actual layout). Laid out as three
+// horizontal zones (see resized()): left (IMI logo, Channels, Settings,
+// Hide/Show I/O), centered (Tempo/Sync + port selector, time display,
+// Play, Rec Ready, RTZ), and right (Work/Show Mode, Panic, Tribal Tools
+// logo).
 class GlobalSectionComponent : public juce::Component,
                                private juce::Timer
 {
 public:
     enum class RecordState { idle, armed, recording };
+
+    // Fixed bar height MainComponent::resized() reserves along the bottom
+    // edge - tall enough for TempoSyncComponent's own two-row layout
+    // (preferredHeight 48) plus this bar's own top/bottom padding.
+    static constexpr int preferredHeight = 64;
+
+    // Per-element widths used by resized() - named here rather than left as
+    // inline literals so minimumWindowWidth below is computed from the same
+    // numbers the actual layout uses and can't silently drift out of sync
+    // with it (that drift is exactly what let the left/center/right zones
+    // overlap at a narrow window width before this got a real minimum).
+    static constexpr int logoWidth             = 50;
+    static constexpr int channelsWidth         = 100;
+    static constexpr int settingsWidth         = 40;
+    static constexpr int hideIOWidth           = 80;
+    static constexpr int panicWidth            = 70;
+    static constexpr int showModeWidth         = 90;
+    static constexpr int timeWidth             = 64;
+    // Play/Rec/RTZ, and (independently, in TempoSyncComponent) its Sync
+    // button - all sized to match so the whole transport cluster reads as
+    // one consistent size.
+    static constexpr int transportButtonWidth  = 64;
+    static constexpr int zoneGap               = 8;
+
+    static constexpr int leftZoneWidth   = logoWidth + zoneGap + channelsWidth + zoneGap
+                                          + settingsWidth + zoneGap + hideIOWidth;
+    static constexpr int rightZoneWidth  = panicWidth + zoneGap + showModeWidth + zoneGap + logoWidth;
+    static constexpr int centerZoneWidth = TempoSyncComponent::preferredWidth + zoneGap + timeWidth
+                                          + zoneGap + transportButtonWidth * 3 + zoneGap * 2;
+
+    // Smallest full window width at which the left/center/right zones
+    // still fit without overlapping (the centered zone is positioned
+    // relative to the *whole* bar width, not the leftover space after the
+    // other two - see resized() - so a too-narrow window lets it collide
+    // with whichever side zone is wider). MainWindow's constructor feeds
+    // this straight into setResizeLimits(). The +40/+20/+20 account for
+    // MainComponent::resized()'s own reduced(20) margin on each side, this
+    // component's own reduced(10, 8) horizontal inset, and a little
+    // breathing room, respectively.
+    static constexpr int minimumWindowWidth =
+        2 * ((leftZoneWidth > rightZoneWidth ? leftZoneWidth : rightZoneWidth) + zoneGap)
+        + centerZoneWidth + 40 + 20 + 20;
 
     GlobalSectionComponent(int initialChannelCount, int maxChannelCount);
     ~GlobalSectionComponent() override;
@@ -81,7 +127,11 @@ public:
 private:
     void timerCallback() override; // drives the armed-state blink only
 
-    BrandingStripComponent brandingStrip;
+    // Pinned to opposite ends of the bar (see resized()) rather than one
+    // combined side-by-side strip - see BrandingStripComponent's own header
+    // comment for why.
+    BrandingStripComponent imiLogo    { BrandingStripComponent::Logo::imi };
+    BrandingStripComponent tribalLogo { BrandingStripComponent::Logo::tribal };
 
     juce::Label channelsLabel;
     juce::TextButton channelMinusButton;

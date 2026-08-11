@@ -7,6 +7,7 @@
 #include "PluginBrowserComponent.h"
 #include "SessionIO.h"
 #include "AboutScreenComponent.h"
+#include "KPlayerLookAndFeel.h"
 
 // See KPlayerApplication::MainWindow::showSettings() - the Settings dialog
 // is deliberately non-modal, so nothing else auto-deletes it once it's
@@ -74,6 +75,10 @@ public:
 
     void initialise(const juce::String&) override
     {
+        // Before anything else gets painted (including the splash right
+        // below) - see KPlayerLookAndFeel's own header comment.
+        juce::LookAndFeel::setDefaultLookAndFeel(&lookAndFeel);
+
         // Splash covers the blank/delay period before the main window
         // exists (device init + MainWindow construction, both synchronous)
         // - separate from the LoadingOverlayComponent shown inside the
@@ -159,7 +164,14 @@ public:
         });
     }
 
-    void shutdown() override { mainWindow = nullptr; splashScreen = nullptr; }
+    void shutdown() override
+    {
+        mainWindow = nullptr;
+        splashScreen = nullptr;
+        // No Component still references lookAndFeel past this point - safe
+        // to drop the default before this object itself is destroyed.
+        juce::LookAndFeel::setDefaultLookAndFeel(nullptr);
+    }
     // Central choke point for every quit path (Cmd+Q, Dock quit, File >
     // Quit's cmdQuit command, and the window's close button all route here)
     // - guarding it once here covers all of them, rather than duplicating
@@ -183,7 +195,8 @@ public:
 
     enum CommandIDs
     {
-        cmdOpenSession = 1,
+        cmdNewSession = 1,
+        cmdOpenSession,
         cmdSaveSession,
         cmdSaveSessionAs,
         cmdImportAudioTrack,
@@ -191,7 +204,15 @@ public:
         cmdSettings,
         cmdAbout,
         cmdHelp,
-        cmdQuit
+        cmdQuit,
+        // Not on any menu - registered purely so its default keypress (see
+        // getCommandInfo()) reaches the shared transport playhead via the
+        // commandManager.getKeyMappings() key listener already added to
+        // this window (see the constructor). Spacebar has no built-in JUCE
+        // Button binding to collide with (Button::keyPressed() only
+        // reacts to Return, confirmed against juce_Button.cpp), so this is
+        // safe to bind window-wide without a modifier key.
+        cmdPlayPause
     };
 
     struct MainWindow : public juce::DocumentWindow,
@@ -329,6 +350,13 @@ public:
             mainComponent->onOpenStarterRequested = [this] { openStarterSession(); };
             setContentOwned(mainComponent, true);
             setResizable(true, true);
+            // Floor width at whatever the global bar's own left/center/
+            // right zones need to stay non-overlapping (including both
+            // logos) - see GlobalSectionComponent::minimumWindowWidth's own
+            // comment. Height floor is just a sane "still usable" minimum,
+            // not tied to any particular content requirement. Both maxima
+            // left effectively unbounded.
+            setResizeLimits(GlobalSectionComponent::minimumWindowWidth, 500, 0x7fffffff, 0x7fffffff);
             centreWithSize(1152, 800);
             updateWindowTitle();
 
@@ -364,6 +392,7 @@ public:
             juce::PopupMenu menu;
             if (index == 0)
             {
+                menu.addCommandItem(&commandManager, cmdNewSession);
                 menu.addCommandItem(&commandManager, cmdOpenSession);
                 menu.addCommandItem(&commandManager, cmdSaveSession);
                 menu.addCommandItem(&commandManager, cmdSaveSessionAs);
@@ -407,14 +436,18 @@ public:
 
         void getAllCommands(juce::Array<juce::CommandID>& commands) override
         {
-            commands.addArray({ cmdOpenSession, cmdSaveSession, cmdSaveSessionAs, cmdImportAudioTrack,
-                                cmdPanic, cmdSettings, cmdAbout, cmdHelp, cmdQuit });
+            commands.addArray({ cmdNewSession, cmdOpenSession, cmdSaveSession, cmdSaveSessionAs, cmdImportAudioTrack,
+                                cmdPanic, cmdSettings, cmdAbout, cmdHelp, cmdQuit, cmdPlayPause });
         }
 
         void getCommandInfo(juce::CommandID commandID, juce::ApplicationCommandInfo& result) override
         {
             switch (commandID)
             {
+                case cmdNewSession:
+                    result.setInfo("New Session", "Start a new, empty session", "File", 0);
+                    result.addDefaultKeypress('n', juce::ModifierKeys::commandModifier);
+                    break;
                 case cmdOpenSession:
                     result.setInfo("Open Session...", "Open a saved session", "File", 0);
                     result.addDefaultKeypress('o', juce::ModifierKeys::commandModifier);
@@ -447,6 +480,12 @@ public:
                     result.setInfo("Quit", "Quit the application", "File", 0);
                     result.addDefaultKeypress('q', juce::ModifierKeys::commandModifier);
                     break;
+                case cmdPlayPause:
+                    // Deliberately not on any menu - see the enum entry's
+                    // own comment.
+                    result.setInfo("Play/Pause", "Play or pause the shared transport playhead", "Transport", 0);
+                    result.addDefaultKeypress(juce::KeyPress::spaceKey, juce::ModifierKeys::noModifiers);
+                    break;
                 default:
                     break;
             }
@@ -456,6 +495,7 @@ public:
         {
             switch (info.commandID)
             {
+                case cmdNewSession:    newSession();        return true;
                 case cmdOpenSession:   openSession();      return true;
                 case cmdSaveSession:   saveSession();       return true;
                 case cmdSaveSessionAs: saveSessionAs();      return true;
@@ -465,6 +505,7 @@ public:
                 case cmdAbout:         showAboutDialog();    return true;
                 case cmdHelp:          openHelpWebsite();    return true;
                 case cmdQuit:          juce::JUCEApplication::getInstance()->systemRequestedQuit(); return true;
+                case cmdPlayPause:     mainComponent->toggleTransportPlaying(); return true;
                 default: return false;
             }
         }
@@ -492,9 +533,13 @@ public:
 
         void updateWindowTitle()
         {
+            // Always appends ".kplayer" itself rather than trusting
+            // currentSessionFile's own on-disk extension casing - purely
+            // cosmetic, so "Untitled" and a real saved file's name both end
+            // up formatted the same way regardless.
             auto name = currentSessionFile != juce::File() ? currentSessionFile.getFileNameWithoutExtension()
-                                                             : juce::String("Untitled Session");
-            setName(name + (sessionDirty ? " *" : ""));
+                                                             : juce::String("Untitled");
+            setName(name + ".kplayer" + (sessionDirty ? " *" : ""));
         }
 
         // Called instead of confirmDiscardUnsavedChanges() at quit time
@@ -576,6 +621,28 @@ public:
                         juce::MessageManager::callAsync(onProceed);
                     // result == 0 (Cancel): do nothing.
                 });
+        }
+
+        // File > New Session - drops back to exactly the blank rig
+        // MainComponent starts in at launch when there's no
+        // recover.kplayer/Starter.kplayer to auto-load (see
+        // tryAutoLoadKadabraSession()'s "no Kadabra port connected"
+        // fallback) - see MainComponent::resetToDefaultSession() for what
+        // that actually resets. currentSessionFile is cleared same as a
+        // never-saved session, so the window title falls back to "Untitled
+        // Session" and the first manual Save behaves like Save As. Same
+        // Show/Work Mode discard-confirmation as openSession()/
+        // openRecentFile()/openStarterSession().
+        void newSession()
+        {
+            auto proceed = [this]
+            {
+                mainComponent->resetToDefaultSession();
+                currentSessionFile = juce::File();
+                clearDirty();
+            };
+
+            proceedOrConfirmDiscard(proceed);
         }
 
         void openSession()
@@ -746,6 +813,12 @@ public:
                 saveRecentFilesList();
             }
             clearDirty();
+            // Rides out plugins' own delayed post-load settling (HISE-
+            // based K-Samplers, Kontakt, Surge XT) that can otherwise
+            // dirty the session within the first second or two with zero
+            // real user/Kadabra input - see
+            // MainComponent::suppressPostLoadDirtyFlags()'s own comment.
+            mainComponent->suppressPostLoadDirtyFlags();
             applyLoadedWindowSize();
             return true;
         }
@@ -976,7 +1049,7 @@ public:
 
         void openHelpWebsite()
         {
-            juce::URL("https://www.innovativemusicalinstruments.com/Kplayer/help").launchInDefaultBrowser();
+            juce::URL("https://www.innovativemusicalinstruments.com/kplayerhelp").launchInDefaultBrowser();
         }
 
         // Grow applies immediately (adding empty channels is never
@@ -1043,6 +1116,12 @@ public:
     };
 
 private:
+    // Declared first (constructed first, destroyed last) so it's already
+    // the default LookAndFeel before anything else in this class exists,
+    // and stays valid through every other member's own destruction. See
+    // KPlayerLookAndFeel's own header comment for what this is for.
+    KPlayerLookAndFeel lookAndFeel;
+
     juce::AudioDeviceManager deviceManager;
     PluginManager pluginManager;
     std::unique_ptr<MainWindow> mainWindow;

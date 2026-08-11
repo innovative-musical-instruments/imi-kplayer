@@ -208,6 +208,20 @@ public:
     // reads them directly on the audio thread with no lock.
     void setChannelCount(int newCount);
 
+    // "New Session" (File menu, Main.cpp) - drops the whole rig back to
+    // exactly the blank state MainComponent starts in at launch when
+    // there's no recover.kplayer/Starter.kplayer to auto-load (see Main.cpp's
+    // tryAutoLoadKadabraSession() and its "no Kadabra port connected"
+    // fallback): defaultChannelCount fresh, empty channels, no plugins
+    // anywhere (channels or master chain), and every other session-scoped
+    // field (tempo, master volume, tempo sync, recordings folder, arm
+    // state, input-section collapse) back to its construction-time
+    // default. Caller's job to gate this behind the usual unsaved-changes
+    // prompt and clear its own notion of "current file" - this only
+    // touches in-memory rig state, same division of responsibility as
+    // SessionIO::loadSession().
+    void resetToDefaultSession();
+
     bool channelHasLoadedPlugin(int index) const;
 
     float getMasterVolume() const { return masterVolume; }
@@ -237,6 +251,23 @@ public:
     // discussion of why the "flag reappears immediately after saving"
     // behavior turned out to be correct, not a bug.
     void discardIncidentalDirtyFlags();
+
+    // Extends the one-shot discard above into a brief window - call once,
+    // right after a session load, alongside (not instead of)
+    // discardIncidentalDirtyFlags(). Some plugins (HISE-based K-Samplers,
+    // Kontakt, Surge XT - all with async init/sample-streaming behavior
+    // already documented elsewhere in this codebase) settle on their own
+    // schedule and can fire a change notification on a message-thread tick
+    // *after* that one synchronous discard already ran, which the very next
+    // 300ms timerCallback() poll then wrongly treats as a real edit - the
+    // reported symptom this exists to fix: the dirty flag appearing right
+    // after opening a session with no Kadabra motion or any other user
+    // action at all. Deliberately load-only, not applied after a save - see
+    // discardIncidentalDirtyFlags()'s own comment for why suppressing there
+    // would hide genuine live Kadabra-driven edits mid-performance; nothing
+    // equivalent is at stake right after a load, where a real edit in the
+    // first second is implausible.
+    void suppressPostLoadDirtyFlags();
 
     // Work Mode (default) vs. Show Mode: live MIDI-driven parameter changes
     // (see discardIncidentalDirtyFlags's comment just above) deliberately
@@ -294,6 +325,14 @@ private:
     // fast. This is deliberately not on the hot path.
     void timerCallback() override;
     static constexpr int dirtyPollIntervalMs = 300;
+
+    // 0 = no active suppression window; otherwise a juce::Time::
+    // getMillisecondCounter() deadline - see suppressPostLoadDirtyFlags()'s
+    // own comment. timerCallback() keeps draining (not just single-shot
+    // discarding) every plugin's parametersDirty flag without acting on it
+    // until this deadline passes.
+    juce::int64 postLoadDirtySuppressionEndMs = 0;
+    static constexpr int postLoadDirtySuppressionMs = 1000;
 
     juce::AudioDeviceManager& deviceManager;
     PluginManager& pluginManager;

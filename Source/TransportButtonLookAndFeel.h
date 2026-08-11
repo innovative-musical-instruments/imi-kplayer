@@ -48,13 +48,20 @@ public:
                                  icon.getX() + barWidth * 1.6f, icon.getCentreY());
             g.fillPath(triangle);
         }
-        else // "PLAY"
+        else if (text == "PLAY")
         {
             juce::Path triangle;
             triangle.addTriangle(icon.getX(), icon.getY(),
                                  icon.getX(), icon.getBottom(),
                                  icon.getRight(), icon.getCentreY());
             g.fillPath(triangle);
+        }
+        else // "REC" - GlobalSectionComponent's Record Ready button. Same
+             // icon bounding box (halfSize above) as Play/Pause/RTZ use, so
+             // the record dot reads as proportional to the Play arrow
+             // rather than an independently-sized glyph.
+        {
+            g.fillEllipse(icon);
         }
     }
 };

@@ -1,5 +1,62 @@
 # Kadabra K-Player — Release Notes
 
+## v0.9.6 — 2026-08-12
+
+A live-performance and polish pass: insert-slot MIDI control for Kadabra
+motion, a redesigned global control bar, brand typography, and a couple of
+real bugs fixed along the way.
+
+### New Features
+
+- **Insert slots now receive MIDI** — previously only slot 0 (the
+  instrument slot) got any MIDI at all; insert slots 1–5 were hard-wired to
+  an empty buffer. Insert-slot plugins now get the same channel-filtered
+  MIDI stream slot 0 already did (respecting the channel's assigned MIDI
+  device/channel), so Kadabra's motion-controller CC output can now drive
+  an effect's own MIDI-learned parameters in any insert slot, not just an
+  instrument in slot 0. CC7/10/84–89/103 stay reserved for this app's own
+  gain/pan/bypass/arm handling and aren't forwarded, so an insert's
+  MIDI-learn can't collide with those.
+- **New Session** — first item in the File menu (⌘N). Resets the whole rig
+  back to the same blank state KPlayer starts in at launch with no Kadabra
+  port connected: default channel count, no plugins anywhere, gain/pan/
+  tempo/master volume/MIDI routing all back to their defaults.
+- **Global bar redesign** — the control strip (branding, channel count,
+  Settings, channel I/O collapse, tempo/sync, transport, Record Ready,
+  Work/Show Mode, Panic) moved from a narrow vertical strip on the right to
+  a horizontal bar spanning the full window width along the bottom: IMI
+  logo/Channels/Settings/Hide I/O on the left, Tempo/Sync + transport
+  centered, Work/Show Mode/Panic/Tribal Tools logo on the right. The window
+  can no longer be resized narrower than what the bar's own content needs,
+  so nothing overlaps.
+- **Space Grotesk UI typeface** — the app's general UI text now uses the
+  IMI brand style guide's Space Grotesk (Regular/Bold) instead of the
+  platform default sans-serif, applied globally via a single LookAndFeel
+  change. Azonix (the style guide's display/headline font) is unchanged -
+  still About-screen-title only.
+- **Spacebar play/pause** — with the main window focused, Space now
+  toggles the shared transport playhead, same action as clicking Play/
+  Pause. Doesn't interfere with typing in any text field or search box -
+  a focused text editor always gets first claim on the keystroke.
+- Window title now shows the `.kplayer` extension explicitly (e.g.
+  `Untitled.kplayer`, `Performance Rig 1.kplayer *`) instead of a bare
+  session name.
+- Help menu now opens the correct KPlayer help page
+  (innovativemusicalinstruments.com/kplayerhelp - was pointing at a
+  dead link).
+
+### Fixes
+
+- **False "unsaved changes" right after opening a session** — some loaded
+  plugins (HISE-based K-Samplers, Kontakt, Surge XT) do async post-load
+  housekeeping that can fire a change notification on a message-thread
+  tick shortly after a session finishes loading, which the dirty-flag
+  poller then wrongly treated as a real edit - showing the unsaved-changes
+  asterisk with zero actual user or Kadabra input. A 1-second post-load
+  grace window now drains (without acting on) that flag; save behavior is
+  untouched; live Kadabra-driven edits still dirty the session immediately,
+  same as before.
+
 ## v0.9.5 — 2026-08-08
 
 A live-use robustness pass: a reworked control layout, faster song

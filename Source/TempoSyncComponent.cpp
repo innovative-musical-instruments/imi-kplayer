@@ -54,22 +54,38 @@ TempoSyncComponent::TempoSyncComponent()
 
 TempoSyncComponent::~TempoSyncComponent() = default;
 
-void TempoSyncComponent::paint(juce::Graphics&) {}
+void TempoSyncComponent::paint(juce::Graphics& g)
+{
+    // Same bordered-box convention used throughout the rest of the app
+    // (ChannelComponent, MasterChainComponent, GlobalSectionComponent
+    // itself) - drawn tightly around just the "Tempo" heading + its live
+    // value, visually grouping that pair rather than the whole component.
+    g.setColour(juce::Colour(0xff3d5a80));
+    g.drawRoundedRectangle(tempoFrameArea.toFloat(), 6.0f, 1.5f);
+}
 
 void TempoSyncComponent::resized()
 {
+    // 2x2 grid, both rows sharing the same left-column width (64, matching
+    // GlobalSectionComponent's Play button) so Sync lines up directly under
+    // "Tempo" and the port selector lines up directly under the tempo
+    // value:
+    //   Tempo   120.0
+    //   [Sync]  [None v]
     auto area = getLocalBounds();
 
-    auto tempoRow = area.removeFromTop(20);
-    tempoLabel.setBounds(tempoRow.removeFromLeft(44));
-    tempoValueLabel.setBounds(tempoRow);
+    auto row1 = area.removeFromTop(20);
+    tempoFrameArea = row1.expanded(4, 2);
+    tempoLabel.setBounds(row1.removeFromLeft(64));
+    row1.removeFromLeft(6);
+    tempoValueLabel.setBounds(row1);
 
     area.removeFromTop(4);
 
-    auto syncRow = area.removeFromTop(24);
-    syncButton.setBounds(syncRow.removeFromLeft(44));
-    syncRow.removeFromLeft(4);
-    syncDeviceBox.setBounds(syncRow);
+    auto row2 = area.removeFromTop(24);
+    syncButton.setBounds(row2.removeFromLeft(64));
+    row2.removeFromLeft(6);
+    syncDeviceBox.setBounds(row2);
 }
 
 void TempoSyncComponent::setDisplayedTempo(double bpm)
