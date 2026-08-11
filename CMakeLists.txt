@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(IMI_KPlayer VERSION 0.9.5)
+project(IMI_KPlayer VERSION 0.9.6)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -26,6 +26,8 @@ juce_add_binary_data(KPlayerAssets SOURCES
     Assets/branding/tribal-tools-logo.png
     Assets/about/kplayer-256.png
     Assets/about/Azonix.otf
+    Assets/fonts/SpaceGrotesk-Regular.ttf
+    Assets/fonts/SpaceGrotesk-Bold.ttf
 )
 
 juce_add_gui_app(IMI_KPlayer

@@ -1,17 +1,17 @@
-# Kadabra K-Player — User Guide
+# Kadabra KPlayer — User Guide
 
-Kadabra K-Player is a standalone plugin-host app built around a familiar
+Kadabra KPlayer is a standalone plugin-host app built around a familiar
 "channel strip" mixer layout. Each channel loads an instrument plugin plus a
 chain of effect inserts, and gives you gain, pan, mute/solo, MIDI routing,
 and audio-input routing, all in one rack. A master bus at the right of the
 rack applies its own insert chain and final output gain to the combined mix.
-K-Player also includes multitrack recording, session save/load, and MIDI
+KPlayer also includes multitrack recording, session save/load, and MIDI
 Take capture/playback, so you can build a rig, perform with it, and record
 the result — all from one app.
 
 ## Table of Contents
 
-1. [Launching K-Player](#1-launching-k-player)
+1. [Launching KPlayer](#1-launching-kplayer)
 2. [The Main Window at a Glance](#2-the-main-window-at-a-glance)
 3. [Channel Strip Anatomy](#3-channel-strip-anatomy)
 4. [Loading and Managing Plugins](#4-loading-and-managing-plugins)
@@ -34,11 +34,11 @@ the result — all from one app.
 
 ---
 
-## 1. Launching K-Player
+## 1. Launching KPlayer
 
-When you start K-Player, a splash screen appears briefly while your audio
+When you start KPlayer, a splash screen appears briefly while your audio
 devices initialize and the main window is built. Once the main window is
-visible, K-Player scans your computer for installed VST3 (and, on Mac, Audio
+visible, KPlayer scans your computer for installed VST3 (and, on Mac, Audio
 Unit) plugins in the background. A "Scanning plugins…" overlay covers the
 window while this happens, showing the name of the plugin currently being
 scanned and a progress bar. The plugin browser is unavailable until the scan
@@ -49,27 +49,30 @@ On a completely fresh launch, you'll see an empty rack of 12 channels with
 no plugins loaded, ready to build a rig from scratch.
 
 **If you use Kadabra hardware:** when a Kadabra device is connected at
-launch, K-Player automatically loads your most recent session (a "recovery"
+launch, KPlayer automatically loads your most recent session (a "recovery"
 snapshot saved automatically the last time you quit with Kadabra connected)
 or, if none exists yet, a factory starter session. See
 [Kadabra Hardware Integration](#18-kadabra-hardware-integration) for details.
 
 ## 2. The Main Window at a Glance
 
-The main window is organized into three areas, left to right:
+The main window is organized into two areas:
 
-- **Channel rack** (scrollable) — one vertical strip per channel, each
-  holding an instrument, insert effects, routing, and mix controls.
-- **Master strip** — the master bus's own insert chain, output fader, and
-  meters.
-- **Global section** (rightmost, always visible) — channel count controls,
-  a Settings button, a global collapse toggle for each channel's I/O rows,
-  tempo/sync controls, the session transport (Play/Pause, RTZ), Record
-  Ready, Show/Work Mode, and Panic.
+- **Channel rack + Master strip** (top) — the scrollable channel rack
+  holds one vertical strip per channel, each with an instrument, insert
+  effects, routing, and mix controls; the master strip immediately to its
+  right applies the master bus's own insert chain, output fader, and
+  meters to the combined mix.
+- **Global bar** (bottom, always visible, spans the full window width) —
+  left to right: the IMI logo, channel count controls, a Settings button,
+  and a collapse toggle for each channel's I/O rows; centered, tempo/sync
+  controls with a MIDI sync device selector, a transport time readout, the
+  session transport (Play/Pause, RTZ), and Record Ready; then Show/Work
+  Mode, Panic, and the Tribal Tools logo.
 
 If your channel count doesn't fit on screen, scroll the channel rack
-horizontally to reach the rest — the master strip and global section stay
-fixed on the right.
+horizontally to reach the rest — the master strip stays fixed on the
+right, and the global bar stays fixed along the bottom.
 
 ## 3. Channel Strip Anatomy
 
@@ -87,9 +90,9 @@ Each channel strip is divided into three sections, top to bottom:
 - **MIDI Ch** — restricts the channel to a specific MIDI channel (1–16) or
   "All".
 
-You can hide these three rows for every channel at once using the global
-"Hide Channel I/O's" button in the global section — handy once your routing
-is set and you want more vertical room for plugin slots.
+You can hide these three rows for every channel at once using the "Hide
+I/O" button in the global bar — handy once your routing is set and you
+want more vertical room for plugin slots.
 
 ### Plugins section
 
@@ -134,7 +137,7 @@ a small menu instead:
 
 ### The plugin browser
 
-The browser lists every plugin K-Player found during its scan, and supports:
+The browser lists every plugin KPlayer found during its scan, and supports:
 
 - **Search** — type to filter by name.
 - **Sort: A-Z / Sort: Manufacturer** — toggle between alphabetical and
@@ -195,8 +198,8 @@ additional input channels there.
 
 ## 7. The Master Bus
 
-The master strip, between the channel rack and the global section, applies
-its own 5-slot insert chain to the combined signal of every channel, after
+The master strip, to the right of the channel rack, applies its own 5-slot
+insert chain to the combined signal of every channel, after
 each channel's own processing and before the final output stage. It works
 the same way a channel's insert slots do — click to load, click a loaded
 slot for the show/hide/bypass/replace/remove menu — just without an
@@ -209,7 +212,7 @@ button for including the master bus in a recording. See
 
 ## 8. Tempo and MIDI Clock Sync
 
-The global section includes a tempo display and Sync control:
+The global bar includes a tempo display and Sync control:
 
 - With sync off, click the BPM value to type a tempo directly (20–300 BPM).
   This tempo is shared by every channel's and the master bus's plugins.
@@ -221,7 +224,7 @@ The global section includes a tempo display and Sync control:
 
 ## 9. Transport: Play, Pause, and Return to Zero
 
-The global section's transport controls a shared playhead used for MIDI
+The global bar's transport controls a shared playhead used for MIDI
 Take playback (and Audio Take playback, which follows the same clock):
 
 - **PLAY / PAUSE** — starts or pauses playback of anything currently
@@ -236,7 +239,7 @@ to disk.
 
 ## 10. Recording
 
-K-Player records every armed channel's processed output (post-fader,
+KPlayer records every armed channel's processed output (post-fader,
 post-inserts) and/or the master bus to individual WAV files, all starting
 and stopping together as a single **take**.
 
@@ -245,8 +248,8 @@ and stopping together as a single **take**.
 1. Click a channel's **Arm (●)** button (or the master strip's **ARM**
    button) for every source you want captured. Armed-but-not-recording
    shows a dim red; armed-and-recording shows solid red.
-2. Click the global **REC** button. This is a two-step "Record Ready"
-   control:
+2. Click the **Record Ready** button (the red dot icon in the global bar's
+   transport controls). This is a two-step "Record Ready" control:
    - First click arms the take (the button blinks) and waits for you to
      press Play.
    - If the transport is already playing, recording starts immediately on
@@ -254,7 +257,7 @@ and stopping together as a single **take**.
    - Clicking REC again while armed (but not yet recording) cancels back
      to idle.
    - Clicking REC while actively recording stops the take.
-3. The first time you record, K-Player asks you to choose a recordings
+3. The first time you record, KPlayer asks you to choose a recordings
    folder if one isn't set yet (also settable in advance from
    [Settings](#14-settings)).
 
@@ -293,7 +296,7 @@ Either case shows you the reason once the take stops.
 ## 11. Importing Audio to a Track
 
 Use **File → Import Audio to Track…** to bring an existing audio file
-(WAV, AIFF, FLAC, Ogg Vorbis, or MP3) into K-Player as if it had been
+(WAV, AIFF, FLAC, Ogg Vorbis, or MP3) into KPlayer as if it had been
 recorded live:
 
 1. Pick the source file.
@@ -310,7 +313,7 @@ slot 0.
 
 ## 12. Saving and Loading Sessions
 
-K-Player sessions are saved as `.kplayer` files (also called a "KPlayer
+KPlayer sessions are saved as `.kplayer` files (also called a "KPlayer
 session"). A session captures:
 
 - Every channel's plugin chain (instrument + inserts), including each
@@ -333,11 +336,11 @@ session"). A session captures:
 - **Recent** — your last several opened/saved sessions, for quick access.
 
 If you have unsaved changes and try to open a different session or quit,
-K-Player prompts you to Save, Discard, or Cancel (unless Show Mode is
+KPlayer prompts you to Save, Discard, or Cancel (unless Show Mode is
 active — see below). The window title shows an asterisk (`*`) whenever
 there are unsaved changes.
 
-Note that K-Player never saves automatically on its own — the asterisk and
+Note that KPlayer never saves automatically on its own — the asterisk and
 the Save/Discard/Cancel prompt are the only things standing between you and
 losing changes, so save deliberately when it matters. One related, expected
 behavior: if a plugin's parameters are being driven live by a controller
@@ -347,7 +350,7 @@ design, not a bug, since the plugin genuinely keeps changing state.
 
 ## 13. Show Mode vs. Work Mode
 
-The global section has a toggle between **Work Mode** (default) and **Show
+The global bar has a toggle between **Work Mode** (default) and **Show
 Mode**:
 
 - **Work Mode** — every session-discarding action (Open Session, opening a
@@ -365,7 +368,7 @@ behavior described below).
 
 ## 14. Settings
 
-Open **Settings** from the global section's Settings button, or **File →
+Open **Settings** from the global bar's Settings button, or **File →
 Settings…**. It's a non-modal window — clicking Settings again while it's
 open just closes it. Settings covers:
 
@@ -379,12 +382,12 @@ open just closes it. Settings covers:
   the app.
 
 Channel count is not in Settings — it's controlled directly from the
-global section's +/− buttons (see below).
+global bar's +/− buttons (see below).
 
 ## 15. Adding and Removing Channels
 
-Use the **+ / −** buttons in the global section (labeled "Channels") to
-grow or shrink the rack, from 1 up to 24 channels. K-Player starts a fresh
+Use the **+ / −** buttons in the global bar (labeled "Channels") to
+grow or shrink the rack, from 1 up to 24 channels. KPlayer starts a fresh
 session with 12.
 
 - Growing the channel count is always immediate — new channels are empty
@@ -395,36 +398,36 @@ session with 12.
 
 ## 16. Panic
 
-The global section's **PANIC** button (also **File → Panic** or
+The global bar's **PANIC** button (also **File → Panic** or
 **Cmd/Ctrl+.**) immediately sends all-notes-off / all-sound-off to every
 loaded instrument — useful if a stuck note or runaway plugin needs
 silencing right away, without having to find and mute the specific channel.
 
 ## 17. Cross-Platform Notes
 
-K-Player runs on both Mac and Windows, and `.kplayer` session files are
+KPlayer runs on both Mac and Windows, and `.kplayer` session files are
 designed to move between them. A session saved on one platform — including
 its loaded VST3 plugins and their internal state — loads correctly on the
 other, as long as the same plugins are installed on both machines;
-K-Player re-matches each saved plugin by its real identity rather than by
+KPlayer re-matches each saved plugin by its real identity rather than by
 the (platform-specific) file path that was saved. One limitation: a plugin
 loaded specifically as an Audio Unit (Mac-only format) has no Windows
 equivalent to relink to, so an AU-loaded slot won't carry over to Windows.
 
 ## 18. Kadabra Hardware Integration
 
-K-Player is designed to pair with Kadabra performance hardware over MIDI.
+KPlayer is designed to pair with Kadabra performance hardware over MIDI.
 When a MIDI device with "Kadabra" in its name is connected:
 
 - Adding a new channel automatically assigns it to the next free MIDI
   channel (1–16) on the Kadabra device, so a fresh rig is ready to play
   without manual MIDI routing.
-- Quitting K-Player silently saves a recovery snapshot of your current
+- Quitting KPlayer silently saves a recovery snapshot of your current
   session, and the next launch (with Kadabra still connected) silently
   reloads it automatically — so a Kadabra-driven quit/relaunch (for
   example, as part of a show or set change) picks up right where you left
   off, with no save/discard prompt in the way. If no recovery snapshot
-  exists yet, K-Player falls back to loading a factory "starter" session
+  exists yet, KPlayer falls back to loading a factory "starter" session
   the first time.
 - A set of transport, recording, tempo, and session commands are available
   as MIDI Control Change (CC) messages on the Kadabra connection, so they
@@ -441,13 +444,13 @@ When a MIDI device with "Kadabra" in its name is connected:
   | 9 | Save / Save As | nonzero saves to the current file, 0 opens Save As |
   | 3 | Open Session… | any value opens the session picker |
   | 99 | Open Starter Session | value 0 loads the factory starter session |
-  | 6 | Quit | value 0 quits K-Player, same as the Quit menu item |
+  | 6 | Quit | value 0 quits KPlayer, same as the Quit menu item |
 
   Each is level-based (like a button, not a knob) and debounced, so a
   controller that continuously re-sends the same value won't repeatedly
   re-trigger the action.
 
-None of this affects K-Player when no Kadabra device is connected — the
+None of this affects KPlayer when no Kadabra device is connected — the
 app behaves exactly as described in the rest of this guide.
 
 ## 19. Troubleshooting
@@ -458,31 +461,31 @@ plugins…" overlay. On a large plugin collection this can take a while;
 wait for it to complete.
 
 **A plugin I installed isn't showing up in the browser.**
-Open Settings and click **Rescan Plugins** — K-Player only picks up new
+Open Settings and click **Rescan Plugins** — KPlayer only picks up new
 installs when it scans, either at launch or via this button.
 
 **A plugin shows up under "Failed to Load."**
-The plugin itself failed K-Player's scan (a corrupted install, a
+The plugin itself failed KPlayer's scan (a corrupted install, a
 crash during scanning, or an incompatible build). Try reinstalling the
 plugin, or use the retry option next to its entry in that section.
 
 **My MIDI device or Audio In selection turned orange.**
 This means the channel is pointed at a MIDI device or a recorded Take that
-K-Player can't currently find — a device that's unplugged, or a Take file
+KPlayer can't currently find — a device that's unplugged, or a Take file
 that's been moved/deleted. Hover over the selector for a tooltip explaining
 which. The routing itself isn't cleared automatically, in case the device
 reconnects.
 
 **Recording won't start.**
 Make sure at least one channel or the master bus is armed, and that a
-recordings folder is set (K-Player will prompt you for one automatically
+recordings folder is set (KPlayer will prompt you for one automatically
 the first time if not).
 
 **A session saved on my other machine loaded with missing plugins.**
 Confirm the same plugin (same format — VST3 vs. Audio Unit matters, see
 [Cross-Platform Notes](#17-cross-platform-notes)) is actually installed
 on this machine, then try **Rescan Plugins** in Settings before reloading
-the session — K-Player can only relink to plugins its scan already knows
+the session — KPlayer can only relink to plugins its scan already knows
 about.
 
 ## 20. Keyboard Shortcuts and Menu Reference
@@ -501,7 +504,7 @@ about.
 
 ---
 
-*This guide covers Kadabra K-Player's features as currently shipped. Some
+*This guide covers Kadabra KPlayer's features as currently shipped. Some
 capabilities described in internal design documents (e.g. a Kadabra MIDI
 SysEx protocol for tighter OS/Player integration) are still in development
 and aren't part of the app yet.*

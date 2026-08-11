@@ -17,30 +17,48 @@ public:
         g.setColour(button.findColour(juce::TextButton::textColourOffId)
                           .withMultipliedAlpha(button.isEnabled() ? 1.0f : 0.5f));
 
-        juce::Font font(14.0f);
-        g.setFont(font);
+        juce::Point<float> centre;
+        float outerRadius;
 
-        // Sized off the font itself, not the button - proportional to the
-        // text it sits next to rather than filling whatever room the
-        // button happens to have.
-        float iconDiameter = font.getHeight() * 0.65f;
+        // Icon-only mode (empty button text, GlobalSectionComponent's
+        // Settings button in the horizontal global bar - no room to spare
+        // for a label there) - one big gear filling most of the button
+        // rather than a small one next to a label.
+        if (button.getButtonText().isEmpty())
+        {
+            auto bounds = button.getLocalBounds().toFloat();
+            outerRadius = juce::jmin(bounds.getWidth(), bounds.getHeight()) * 0.24f;
+            centre = bounds.getCentre();
+        }
+        else
+        {
+            juce::Font font(14.0f);
+            g.setFont(font);
 
-        // Fixed inset each side rather than tightly measuring the text and
-        // centring an exact-width block - that measured width and what
-        // drawText() actually lays out didn't quite agree, which clipped
-        // the label. A generous fixed inset keeps the label clear of the
-        // left edge and the icon clear of the right edge ("towards the
-        // middle") with no truncation risk regardless of button text.
-        auto bounds = button.getLocalBounds().toFloat();
-        bounds.removeFromLeft(17.0f);
-        bounds.removeFromRight(18.0f);
-        auto iconArea = bounds.removeFromRight(iconDiameter);
-        bounds.removeFromRight(6.0f);
+            // Sized off the font itself, not the button - proportional to
+            // the text it sits next to rather than filling whatever room
+            // the button happens to have.
+            float iconDiameter = font.getHeight() * 0.65f;
 
-        g.drawText(button.getButtonText(), bounds.toNearestInt(), juce::Justification::centredLeft);
+            // Fixed inset each side rather than tightly measuring the text
+            // and centring an exact-width block - that measured width and
+            // what drawText() actually lays out didn't quite agree, which
+            // clipped the label. A generous fixed inset keeps the label
+            // clear of the left edge and the icon clear of the right edge
+            // ("towards the middle") with no truncation risk regardless of
+            // button text.
+            auto bounds = button.getLocalBounds().toFloat();
+            bounds.removeFromLeft(17.0f);
+            bounds.removeFromRight(18.0f);
+            auto iconArea = bounds.removeFromRight(iconDiameter);
+            bounds.removeFromRight(6.0f);
 
-        auto centre = iconArea.getCentre();
-        float outerRadius = iconDiameter * 0.5f;
+            g.drawText(button.getButtonText(), bounds.toNearestInt(), juce::Justification::centredLeft);
+
+            centre = iconArea.getCentre();
+            outerRadius = iconDiameter * 0.5f;
+        }
+
         float innerRadius = outerRadius * 0.42f;
         float toothLength  = outerRadius * 0.4f;
         float toothWidth   = outerRadius * 0.55f;

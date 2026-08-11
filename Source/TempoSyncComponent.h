@@ -16,6 +16,12 @@ class TempoSyncComponent : public juce::Component,
 {
 public:
     static constexpr int preferredHeight = 48;
+    // Width GlobalSectionComponent's center zone reserves for this
+    // component - see resized()'s own layout: row 1 is the live tempo
+    // value plus a narrow (~8-character) MIDI sync device selector, row 2
+    // is the Sync toggle (sized to match GlobalSectionComponent's Play
+    // button) plus the "Tempo" heading.
+    static constexpr int preferredWidth = 160;
 
     // Fired when the user edits the BPM value directly (only possible while
     // sync is off - the value label isn't editable while synced).
@@ -55,6 +61,12 @@ private:
     juce::Label tempoValueLabel;
     juce::TextButton syncButton;
     juce::ComboBox   syncDeviceBox;
+
+    // "Tempo" + its live value framed together as one visual group (see
+    // paint()) - cached here in resized() rather than recomputed in
+    // paint(), since it's just tempoLabel's and tempoValueLabel's combined
+    // bounds with a little padding, and resized() already has both handy.
+    juce::Rectangle<int> tempoFrameArea;
 
     juce::Array<juce::MidiDeviceInfo> availableMidiInputs;
     juce::MidiDeviceListConnection midiDeviceListConnection;

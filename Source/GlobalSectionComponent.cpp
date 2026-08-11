@@ -3,7 +3,8 @@
 GlobalSectionComponent::GlobalSectionComponent(int initialChannelCount, int maxChannelCount)
     : channelCount(initialChannelCount), maxChannels(maxChannelCount)
 {
-    addAndMakeVisible(brandingStrip);
+    addAndMakeVisible(imiLogo);
+    addAndMakeVisible(tribalLogo);
 
     channelsLabel.setText("Channels", juce::dontSendNotification);
     channelsLabel.setFont(juce::Font(11.0f));
@@ -37,13 +38,16 @@ GlobalSectionComponent::GlobalSectionComponent(int initialChannelCount, int maxC
     updateChannelButtons();
 
     gearButtonLookAndFeel = std::make_unique<GearButtonLookAndFeel>();
-    settingsButton.setButtonText("Settings");
+    // Icon-only (empty text) in this bar - see GearButtonLookAndFeel's
+    // drawButtonText(), which draws one big centred gear instead of its
+    // small-icon-next-to-a-label mode whenever the button text is empty.
+    settingsButton.setButtonText("");
     settingsButton.setTooltip("Settings");
     settingsButton.setLookAndFeel(gearButtonLookAndFeel.get());
     settingsButton.onClick = [this] { if (onSettingsRequested) onSettingsRequested(); };
     addAndMakeVisible(settingsButton);
 
-    collapseInputButton.setButtonText("Hide Channel I/O's");
+    collapseInputButton.setButtonText("Hide I/O");
     collapseInputButton.onClick = [this] { if (onCollapseToggled) onCollapseToggled(); };
     addAndMakeVisible(collapseInputButton);
 
@@ -72,8 +76,14 @@ GlobalSectionComponent::GlobalSectionComponent(int initialChannelCount, int maxC
 
     updateTransportButtons();
 
-    recordButton.setButtonText(juce::String::charToString((juce::juce_wchar) 0x25CF) + " REC");
+    // "REC" is a sentinel TransportButtonLookAndFeel dispatches on (like
+    // "PLAY"/"PAUSE"/"RTZ" above), not shown to the user - it draws a
+    // vector-filled circle sized off the same icon bounding box the Play
+    // triangle uses, so the two read as proportional rather than an
+    // independently-sized glyph.
+    recordButton.setButtonText("REC");
     recordButton.onClick = [this] { if (onRecordButtonClicked) onRecordButtonClicked(); };
+    recordButton.setLookAndFeel(transportButtonLookAndFeel.get());
     addAndMakeVisible(recordButton);
     updateRecordButtonColour();
 
@@ -112,6 +122,7 @@ GlobalSectionComponent::~GlobalSectionComponent()
     settingsButton.setLookAndFeel(nullptr);
     playPauseButton.setLookAndFeel(nullptr);
     rtzButton.setLookAndFeel(nullptr);
+    recordButton.setLookAndFeel(nullptr);
 }
 
 void GlobalSectionComponent::updateChannelButtons()
@@ -135,7 +146,7 @@ void GlobalSectionComponent::setDisplayedTime(const juce::String& text)
 void GlobalSectionComponent::setInputSectionCollapsed(bool collapsed)
 {
     inputCollapsed = collapsed;
-    collapseInputButton.setButtonText(inputCollapsed ? "Show Channel I/O's" : "Hide Channel I/O's");
+    collapseInputButton.setButtonText(inputCollapsed ? "Show I/O" : "Hide I/O");
 }
 
 void GlobalSectionComponent::setTransportPlaying(bool playing)
@@ -235,60 +246,61 @@ void GlobalSectionComponent::paint(juce::Graphics& g)
 
 void GlobalSectionComponent::resized()
 {
-    auto area = getLocalBounds().reduced(6);
+    // Three independent horizontal zones, each computed from the *full*
+    // bar width rather than whatever's left over after the others - so the
+    // centered transport zone stays visually centered in the window
+    // regardless of how wide the left/right zones happen to be, matching a
+    // conventional toolbar layout rather than "centered in the leftover
+    // gap". This only stays overlap-free because MainWindow enforces
+    // minimumWindowWidth via setResizeLimits() - see that constant's own
+    // comment. A fixed row height (this bar's own preferredHeight minus
+    // this reduced() padding) is shared by every element except
+    // TempoSyncComponent and the Channels stepper, which each split their
+    // own two-row internal layout out of it.
+    auto fullArea = getLocalBounds().reduced(10, 8);
+    const int rowHeight = fullArea.getHeight();
 
-    // Shrunk 5px (was 40) - frees the room needed to get the Channels
-    // +/- row's top lined up with Master's Insert 1 button below (see next
-    // comment), rather than just a cosmetic nudge.
-    brandingStrip.setBounds(area.removeFromTop(35));
-    area.removeFromTop(2);
+    // --- Left zone: IMI logo, Channels, Settings, Hide/Show I/O ---
+    auto leftZone = fullArea;
+    imiLogo.setBounds(leftZone.removeFromLeft(logoWidth));
+    leftZone.removeFromLeft(zoneGap);
 
-    // Channels heading sits directly above its own +/- row (no gap, as
-    // before) - the row's *top* is what's actually aligned to Master's
-    // Insert 1 button top (MasterChainComponent::resized(): 6 + 18 title +
-    // 6 gap + 29 fixed insert offset = 29px into this component, i.e. this
-    // row must start there too, 29px past this component's own top).
-    channelsLabel.setBounds(area.removeFromTop(16));
-    auto channelsRow = area.removeFromTop(24);
-    channelMinusButton.setBounds(channelsRow.removeFromLeft(28));
-    channelsRow.removeFromLeft(4);
-    channelPlusButton.setBounds(channelsRow.removeFromRight(28));
-    channelsRow.removeFromRight(4);
-    channelCountLabel.setBounds(channelsRow);
-    area.removeFromTop(6);
+    // Channels stepper: -/+ flank a two-row stack ("Channels" heading over
+    // the count, rather than side by side) so the whole control is
+    // narrower.
+    auto channelsArea = leftZone.removeFromLeft(channelsWidth);
+    channelMinusButton.setBounds(channelsArea.removeFromLeft(22));
+    channelPlusButton.setBounds(channelsArea.removeFromRight(22));
+    channelsLabel.setBounds(channelsArea.removeFromTop(16));
+    channelCountLabel.setBounds(channelsArea);
+    leftZone.removeFromLeft(zoneGap);
 
-    settingsButton.setBounds(area.removeFromTop(28));
-    area.removeFromTop(4);
-    // Grown to match Settings' own height (was 22).
-    collapseInputButton.setBounds(area.removeFromTop(28));
+    settingsButton.setBounds(leftZone.removeFromLeft(settingsWidth));
+    leftZone.removeFromLeft(zoneGap);
+    collapseInputButton.setBounds(leftZone.removeFromLeft(hideIOWidth));
 
-    // Tempo's own heading lines up with Master's "Output" label
-    // (MasterChainComponent::resized(): 59 insert-1 top + 5*22 slots +
-    // 4*3 slot gaps + 16 "Output" label offset = 197px into this
-    // component) - whatever's left here is genuinely just slack, not a
-    // tightened gap like the ones above; Master's insert chain is simply
-    // taller than this strip's content above Tempo.
-    area.removeFromTop(197 - area.getY());
-    tempoSyncComponent.setBounds(area.removeFromTop(TempoSyncComponent::preferredHeight));
-    area.removeFromTop(10);
+    // --- Right zone: Work/Show Mode, Panic, Tribal Tools logo ---
+    auto rightZone = fullArea;
+    tribalLogo.setBounds(rightZone.removeFromRight(logoWidth));
+    rightZone.removeFromRight(zoneGap);
+    panicButton.setBounds(rightZone.removeFromRight(panicWidth));
+    rightZone.removeFromRight(zoneGap);
+    showModeButton.setBounds(rightZone.removeFromRight(showModeWidth));
 
-    // Transport time readout, between Tempo/Sync and the transport row
-    // below - see setDisplayedTime()'s own header comment.
-    timeDisplayLabel.setBounds(area.removeFromTop(20));
-    area.removeFromTop(6);
-
-    // Panic pinned to the very bottom, Work/Show mode directly above it -
-    // both always reachable regardless of how much space the rest of this
-    // strip's content ends up needing.
-    panicButton.setBounds(area.removeFromBottom(24));
-    area.removeFromBottom(6);
-    showModeButton.setBounds(area.removeFromBottom(24));
-    area.removeFromBottom(10);
-
-    auto transportArea = area.removeFromTop(24);
-    playPauseButton.setBounds(transportArea.removeFromLeft(transportArea.getWidth() / 2).reduced(2, 0));
-    rtzButton.setBounds(transportArea.reduced(2, 0));
-    area.removeFromTop(6);
-
-    recordButton.setBounds(area.removeFromTop(24));
+    // --- Center zone: Tempo/Sync + port selector, time display, Play,
+    // Rec Ready, RTZ - centered as one block within the full bar
+    // (withSizeKeepingCentre) rather than left-aligned in whatever space
+    // remains.
+    auto centerZone = fullArea.withSizeKeepingCentre(centerZoneWidth, rowHeight);
+    tempoSyncComponent.setBounds(centerZone.removeFromLeft(TempoSyncComponent::preferredWidth)
+                                    .withSizeKeepingCentre(TempoSyncComponent::preferredWidth,
+                                                            TempoSyncComponent::preferredHeight));
+    centerZone.removeFromLeft(zoneGap);
+    timeDisplayLabel.setBounds(centerZone.removeFromLeft(timeWidth));
+    centerZone.removeFromLeft(zoneGap);
+    playPauseButton.setBounds(centerZone.removeFromLeft(transportButtonWidth));
+    centerZone.removeFromLeft(zoneGap);
+    recordButton.setBounds(centerZone.removeFromLeft(transportButtonWidth));
+    centerZone.removeFromLeft(zoneGap);
+    rtzButton.setBounds(centerZone.removeFromLeft(transportButtonWidth));
 }
