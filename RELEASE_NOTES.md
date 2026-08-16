@@ -1,5 +1,21 @@
 # Kadabra K-Player — Release Notes
 
+## v0.9.7 — 2026-08-16
+
+A small, targeted fix for a live-use annoyance.
+
+### Fixes
+
+- **Audio device no longer resets on launch** — K-Player always opened on
+  whatever CoreAudio considered the system default device (e.g. a
+  MacBook's built-in speakers), regardless of what interface was actually
+  in use last (e.g. a Focusrite Scarlett), unless a loaded session
+  happened to carry a matching saved device state. Now records the
+  device/sample-rate/buffer-size setup independently of any session file
+  and restores it on the next launch, reconnecting to the same interface
+  if it's available and falling back to the normal default-device pick
+  only if it isn't.
+
 ## v0.9.6 — 2026-08-12
 
 A live-performance and polish pass: insert-slot MIDI control for Kadabra
