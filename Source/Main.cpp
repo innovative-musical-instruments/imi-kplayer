@@ -9,6 +9,22 @@
 #include "AboutScreenComponent.h"
 #include "KPlayerLookAndFeel.h"
 
+// Global (cross-session, cross-launch) audio device state - independent of
+// any particular .kplayer file's own "audioDeviceStateXml" (SessionIO.cpp
+// saves/restores that per-session, but only ever gets applied when a
+// session happens to load - and tryAutoLoadKadabraSession() only fires at
+// all when Kadabra is connected). Without this, every launch fell back to
+// initialiseWithDefaultDevices()'s pick of the OS default device (e.g. a
+// MacBook's built-in output) instead of whatever audio interface was
+// actually in use last, e.g. a Focusrite Scarlett - this is what makes
+// that stick. Same ~/Library/IMI/KPlayer/ convention as
+// getRecentFilesStorageFile()/PluginManager's cache file.
+static juce::File getGlobalAudioDeviceStateFile()
+{
+    return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
+               .getChildFile("IMI").getChildFile("KPlayer").getChildFile("audio_device_state.xml");
+}
+
 // See KPlayerApplication::MainWindow::showSettings() - the Settings dialog
 // is deliberately non-modal, so nothing else auto-deletes it once it's
 // hidden the way a modal DialogWindow would. This is what actually deletes
@@ -30,6 +46,46 @@ struct SettingsDialogCloseWatcher : public juce::ComponentListener
         onClosed = nullptr;
         juce::MessageManager::callAsync(callback);
     }
+};
+
+// Writes deviceManager's current state to getGlobalAudioDeviceStateFile()
+// every time it changes - AudioDeviceManager is a juce::ChangeBroadcaster
+// and notifies on all of device switch, sample rate change, buffer size
+// change, and MIDI I/O enablement, so this is the single hook that keeps
+// the on-disk record current without threading a save call through every
+// place any of those can happen (Settings dialog, MIDI-driven changes,
+// etc). Note sendChangeMessage() dispatches asynchronously (via
+// AsyncUpdater), so the very last change made right before quit isn't
+// guaranteed to have been flushed here yet - shutdown() below also does
+// one final synchronous save as a safety net for that case.
+struct AudioDeviceStatePersister : public juce::ChangeListener
+{
+    explicit AudioDeviceStatePersister(juce::AudioDeviceManager& dm) : deviceManager(dm)
+    {
+        deviceManager.addChangeListener(this);
+    }
+
+    ~AudioDeviceStatePersister() override
+    {
+        deviceManager.removeChangeListener(this);
+    }
+
+    void changeListenerCallback(juce::ChangeBroadcaster*) override
+    {
+        saveNow(deviceManager);
+    }
+
+    static void saveNow(juce::AudioDeviceManager& dm)
+    {
+        if (auto xml = dm.createStateXml())
+        {
+            auto file = getGlobalAudioDeviceStateFile();
+            file.getParentDirectory().createDirectory();
+            file.replaceWithText(xml->toString());
+        }
+    }
+
+    juce::AudioDeviceManager& deviceManager;
 };
 
 class KPlayerApplication : public juce::JUCEApplication
@@ -98,8 +154,25 @@ public:
             // Requests 2 input channels too (was 0) so per-channel audio
             // input routing (Increment 3 item 8) has something live to
             // select by default; the user can add more via Settings >
-            // Audio & MIDI.
-            deviceManager.initialiseWithDefaultDevices(2, 2);
+            // Audio & MIDI. Restores the last-used device/sample-rate/
+            // buffer-size from getGlobalAudioDeviceStateFile() when one was
+            // recorded - AudioDeviceManager::initialise() with a savedState
+            // XML already does exactly the "reconnect to what was open last
+            // if it's available, else fall back to the normal default
+            // device pick" sequence on its own (selectDefaultDeviceOnFailure
+            // = true), so no extra fallback logic is needed here. No file
+            // yet (first run, or an older version that never wrote one)
+            // behaves exactly like the previous initialiseWithDefaultDevices
+            // call did.
+            std::unique_ptr<juce::XmlElement> savedDeviceXml;
+            if (getGlobalAudioDeviceStateFile().existsAsFile())
+                savedDeviceXml = juce::XmlDocument::parse(getGlobalAudioDeviceStateFile());
+            deviceManager.initialise(2, 2, savedDeviceXml.get(), true);
+
+            // Keeps the on-disk record current from here on - see
+            // AudioDeviceStatePersister's own comment.
+            audioDeviceStatePersister = std::make_unique<AudioDeviceStatePersister>(deviceManager);
+
             if (splashScreen != nullptr)
                 splashScreen->setProgress(0.5f);
 
@@ -166,6 +239,12 @@ public:
 
     void shutdown() override
     {
+        // Final synchronous save - see AudioDeviceStatePersister's comment
+        // on why the listener-driven save alone isn't quite enough to
+        // guarantee the very last change is on disk before quit.
+        AudioDeviceStatePersister::saveNow(deviceManager);
+        audioDeviceStatePersister = nullptr;
+
         mainWindow = nullptr;
         splashScreen = nullptr;
         // No Component still references lookAndFeel past this point - safe
@@ -1123,6 +1202,7 @@ private:
     KPlayerLookAndFeel lookAndFeel;
 
     juce::AudioDeviceManager deviceManager;
+    std::unique_ptr<AudioDeviceStatePersister> audioDeviceStatePersister;
     PluginManager pluginManager;
     std::unique_ptr<MainWindow> mainWindow;
     std::unique_ptr<AboutScreenComponent> splashScreen;
