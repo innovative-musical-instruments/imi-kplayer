@@ -1,6 +1,6 @@
 # Kadabra K-Player
 
-JUCE 8 standalone VST3/AU plugin-host app ("channel strip" style: per-channel
+JUCE 9 standalone VST3/AU plugin-host app ("channel strip" style: per-channel
 instrument + 5 inserts, gain/pan, MIDI routing) paired with custom "Kadabra"
 performance hardware. Kadabra OS talks to K-Player primarily over MIDI today;
 a MIDI SysEx protocol and tighter OS/Player launch integration are planned
@@ -38,7 +38,7 @@ of it drifting for days.
 
 ## Build
 
-JUCE 8 SDK is required separately (not vendored in this repo) — see
+JUCE 9 SDK is required separately (not vendored in this repo) — see
 `CMakeLists.txt`'s `if(APPLE)`/`elseif(WIN32)` branches for the expected
 location on each platform: `~/SDKs/JUCE` on Mac, `C:/SDKs/JUCE` on Windows.
 
@@ -74,6 +74,36 @@ Release: no signed/notarized pipeline exists for Windows (unlike Mac's
 `cmake --build build --config Release` in the same `build/` dir, landing at
 `build/IMI_KPlayer_artefacts/Release/Kadabra K-Player.exe`. Fine for local
 testing; not something to hand out as-is until a real signing setup exists.
+
+### JUCE SDK version — 9.0.1 as of 2026-08-20
+
+Migrated from 8.0.14 after tracing a real crash to it: changing the sample
+rate in Settings while input/output are two different physical devices
+(forcing JUCE's `AudioIODeviceCombiner` path) could fire a CoreAudio HAL
+property-change notification (`kAudioObjectPropertyOwnedObjects`/
+`kAudioDevicePropertyDeviceHasChanged`) on the async
+`HALC_ShellObject_Listener Queue` *after* the combiner had already been torn
+down by the same reopen - `CoreAudioInternal::deviceRequestedRestart()` in
+8.0.14's `juce_CoreAudio_mac.cpp` calls `owner.restart()` unconditionally,
+with no liveness check (unlike its sibling `deviceDetailsChanged()`, which
+*is* guarded by `callbacksAllowed`) - so the callback dereferenced freed
+memory and vtable-jumped to garbage (`EXC_BAD_ACCESS`/`SIGBUS`, `PC = 0x1`).
+Confirmed via a real crash report (v0.9.6, immediately reproducible) and by
+reading the 8.0.14 source directly.
+
+JUCE 9.0.0 shipped a ground-up rewrite of the macOS CoreAudio backend that
+defers this kind of notification through `triggerAsyncUpdate()` onto the
+message thread and gates it on an `isOpen()` check before touching
+anything - architecturally the fix this bug needed. Verified locally: same
+repro immediately crashes on the old 8.0.14-built release, doesn't
+reproduce at all on a 9.0.1 rebuild.
+
+The old 8.0.14 SDK is kept at `~/SDKs/JUCE-8.0.14` on this Mac for
+rollback, not deleted. **The Windows machine's `C:/SDKs/JUCE` still needs
+the same swap by hand** - `CMakeLists.txt`'s path itself didn't change (it
+points at the same `~/SDKs/JUCE` / `C:/SDKs/JUCE` either way), only what
+lives there, so there's nothing to `git pull` for this - it's a per-machine
+SDK swap, easy to forget since nothing in the diff will mention it.
 
 ## Architecture — where to look
 
