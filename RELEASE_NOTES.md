@@ -2,7 +2,8 @@
 
 ## v0.9.7 — 2026-08-16
 
-A small, targeted fix for a live-use annoyance.
+A small, targeted fix for a live-use annoyance, plus a crash fix found
+while testing it.
 
 ### Fixes
 
@@ -15,6 +16,17 @@ A small, targeted fix for a live-use annoyance.
   and restores it on the next launch, reconnecting to the same interface
   if it's available and falling back to the normal default-device pick
   only if it isn't.
+- **Fixed a crash when changing sample rate in Settings** — with input and
+  output set to two different physical devices, changing the sample rate
+  could crash K-Player outright (`SIGBUS`/`EXC_BAD_ACCESS`). Root cause was
+  a use-after-free race in the JUCE 8 CoreAudio backend: a device-changed
+  notification from CoreAudio could arrive on a background thread just
+  after K-Player had already started tearing the audio device down for
+  the sample-rate change, so it ended up acting on memory that was already
+  freed. Fixed by moving to JUCE 9.0.1, which rewrote this part of the
+  macOS audio backend to guard against exactly this. Confirmed with a real
+  crash report: the same steps that crashed instantly on the old build no
+  longer reproduce at all on this one.
 
 ## v0.9.6 — 2026-08-12
 
