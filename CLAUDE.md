@@ -69,11 +69,24 @@ The generator name tracks whatever VS version is installed — check `cmake
 --help` for the exact string if this stops matching (e.g. "Visual Studio 17
 2022" on a VS2022 machine).
 
-Release: no signed/notarized pipeline exists for Windows (unlike Mac's
-`scripts/build_release.sh` above) — "build a release" here just means
-`cmake --build build --config Release` in the same `build/` dir, landing at
-`build/IMI_KPlayer_artefacts/Release/Kadabra K-Player.exe`. Fine for local
-testing; not something to hand out as-is until a real signing setup exists.
+Release: `cmake --build build --config Release` in the same `build/` dir
+(no separate release build dir on Windows, unlike Mac's
+`scripts/build_release.sh` above), landing at
+`build/IMI_KPlayer_artefacts/Release/Kadabra K-Player.exe`.
+
+Signing (Azure Artifact Signing, IMI Ltd Organization cert — see
+`imi-common-docs/decisions/2026-08-17-windows-code-signing-path.md`) is
+now wired up and proven against a real build (2026-08-21):
+`../imi-windows-installer/scripts/sign-windows-binary.ps1 -Path <exe>`.
+Requires `az login` as `contact@innovativemusicalinstruments.com` (or
+another identity with the Certificate Profile Signer role) already
+cached — the script itself handles downloading the Artifact Signing
+client and running/verifying `signtool`. No installer/notarization
+equivalent exists yet (that's `imi-windows-installer`'s job, not yet
+built) — today this just produces a signed standalone `.exe`, zipped as
+`Release/Kadabra K-Player v<version> (Win64).zip` for ad-hoc
+distribution, matching the KSamplers' `<Product> v<version> (Win64).zip`
+convention in `common-docs/reference/ksamplers-releases.md`.
 
 ### JUCE SDK version — 9.0.1 as of 2026-08-20
 
