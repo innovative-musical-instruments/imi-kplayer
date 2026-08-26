@@ -35,6 +35,19 @@ MainComponent::MainComponent(juce::AudioDeviceManager& dm, PluginManager& pm)
     masterChainComponent.onVolumeChanged = [this](float linearGain) { masterVolume = linearGain; notifyDirty(); };
     masterChainProcessor.onBypassChanged = [this](int) { masterChainComponent.refresh(); };
     masterChainComponent.onMasterArmToggled = [this](bool armed) { setMasterArmed(armed); notifyDirty(); };
+    masterChainComponent.onArmAllClicked    = [this] { toggleArmAll(); };
+    masterChainComponent.onAudioInputSelected = [this](int channelIndex, const juce::File& takeFolder)
+    {
+        applyMasterAudioInputSelection(channelIndex, takeFolder);
+    };
+    masterChainComponent.onMidiInputSelected = [this](juce::String deviceIdentifier, const juce::File& takeFolder)
+    {
+        applyMasterMidiInputSelection(deviceIdentifier, takeFolder);
+    };
+    masterChainComponent.onBypassChannelsRequested = [this](int channelSlotIndex, bool bypass)
+    {
+        applyBulkBypass(channelSlotIndex, bypass);
+    };
     masterChainComponent.setLevelMeterSources(&masterPeakLeft, &masterPeakRight,
                                               &masterClipFlagLeft, &masterClipFlagRight);
     addAndMakeVisible(masterChainComponent);
@@ -209,6 +222,11 @@ void MainComponent::setChannelCount(int newCount)
     deviceManager.addAudioCallback(this);
     globalSection.setChannelCount(newCount);
     resized();
+
+    // A resize changes what "all" means (new channels always start
+    // unarmed; a shrink can drop the very channels that were making the
+    // aggregate true) - recompute rather than leaving a stale reflection.
+    updateArmAllButtonState();
 }
 
 void MainComponent::resetToDefaultSession()
@@ -661,6 +679,7 @@ void MainComponent::setChannelArmed(int channelIndex, bool armed)
     recordingManager.setChannelArmed(channelIndex, armed, currentTempo);
     if (channelIndex >= 0 && channelIndex < (int) channelComponents.size())
         channelComponents[(size_t) channelIndex]->setArmed(armed);
+    updateArmAllButtonState();
 }
 
 void MainComponent::loadMidiTakeForChannel(int index, const juce::File& file)
@@ -741,6 +760,98 @@ void MainComponent::setMasterArmed(bool armed)
     // See setChannelArmed() above for why this doesn't self-mark dirty.
     recordingManager.setMasterArmed(armed);
     masterChainComponent.setArmed(armed);
+    updateArmAllButtonState();
+}
+
+void MainComponent::updateArmAllButtonState()
+{
+    bool allArmed = isMasterArmed();
+    for (int i = 0; allArmed && i < (int) channelComponents.size(); ++i)
+        allArmed = isChannelArmed(i);
+    masterChainComponent.setArmAllState(allArmed);
+}
+
+void MainComponent::toggleArmAll()
+{
+    // Same "is everything already armed?" check updateArmAllButtonState()
+    // does, just deciding an action from it instead of a display state:
+    // arm whatever isn't armed yet if anything's missing, otherwise unarm
+    // everything. setChannelArmed()/setMasterArmed() don't self-mark dirty
+    // (see their own comments - session load reuses them), so this
+    // UI-driven action marks dirty itself, once, same as the individual
+    // arm-toggle callbacks do.
+    bool allArmed = isMasterArmed();
+    for (int i = 0; allArmed && i < (int) channelComponents.size(); ++i)
+        allArmed = isChannelArmed(i);
+
+    bool newState = ! allArmed;
+    for (int i = 0; i < (int) channelComponents.size(); ++i)
+        setChannelArmed(i, newState);
+    setMasterArmed(newState);
+    notifyDirty();
+}
+
+void MainComponent::applyMasterAudioInputSelection(int liveChannelIndex, const juce::File& takeFolder)
+{
+    for (int i = 0; i < (int) channelComponents.size(); ++i)
+    {
+        if (takeFolder != juce::File())
+        {
+            auto file = recordingManager.findChannelFileInTakeFolder(i, takeFolder, "wav");
+            if (file != juce::File())
+                channelComponents[(size_t) i]->selectAudioTake(file);
+            // Channel wasn't recorded in this take - left untouched, per
+            // the user request that introduced this ("selected for each
+            // channel that was recorded in that take", nothing else).
+        }
+        else
+        {
+            channelComponents[(size_t) i]->selectLiveAudioInput(liveChannelIndex);
+        }
+    }
+    notifyDirty();
+}
+
+void MainComponent::applyMasterMidiInputSelection(const juce::String& liveDeviceIdentifier,
+                                                  const juce::File& takeFolder)
+{
+    for (int i = 0; i < (int) channelComponents.size(); ++i)
+    {
+        if (takeFolder != juce::File())
+        {
+            auto file = recordingManager.findChannelFileInTakeFolder(i, takeFolder, "mid");
+            if (file != juce::File())
+                channelComponents[(size_t) i]->selectMidiTake(file);
+        }
+        else
+        {
+            channelComponents[(size_t) i]->selectLiveMidiInput(liveDeviceIdentifier);
+        }
+    }
+    notifyDirty();
+}
+
+void MainComponent::applyBulkBypass(int channelSlotIndex, bool bypass)
+{
+    // Empty slots get the flag too, same as a plugin loaded there later
+    // would inherit it - harmless (see ChannelProcessor::setBypassed(), a
+    // plain field write), and simpler than special-casing per channel.
+    // Each call fires the processor's own onBypassChanged, already wired
+    // (see addChannel()) to refresh that channel's UI - no manual refresh
+    // needed here.
+    for (auto& processor : channelProcessors)
+    {
+        if (channelSlotIndex < 0)
+        {
+            for (int slot = 0; slot < ChannelProcessor::totalSlotCount; ++slot)
+                processor->setBypassed(slot, bypass);
+        }
+        else
+        {
+            processor->setBypassed(channelSlotIndex, bypass);
+        }
+    }
+    notifyDirty();
 }
 
 juce::String MainComponent::toggleRecording()
@@ -757,6 +868,7 @@ juce::String MainComponent::toggleRecording()
             refreshChannelTakeList(i);
             refreshChannelAudioTakeList(i);
         }
+        refreshMasterTakeGroups();
         return {};
     }
 

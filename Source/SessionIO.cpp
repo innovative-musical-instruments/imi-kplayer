@@ -431,6 +431,11 @@ bool SessionIO::loadSession(const juce::File& file,
     mainComponent.setTempoSyncEnabled((bool) parsed.getProperty("tempoSyncEnabled", false));
 
     mainComponent.setRecordingsFolder(juce::File(parsed.getProperty("recordingsFolder", juce::String()).toString()));
+    // Picks up this session's Take groups for the Master section's bulk
+    // Audio In/MIDI In selectors - same timing as refreshChannelTakeList()/
+    // refreshChannelAudioTakeList() below, just once for the whole session
+    // rather than per channel.
+    mainComponent.refreshMasterTakeGroups();
     mainComponent.setRecordingSilenceTimeoutSeconds((double) parsed.getProperty("recordingSilenceTimeoutSeconds", 60.0));
     mainComponent.setMasterArmed((bool) parsed.getProperty("masterArmed", false));
 

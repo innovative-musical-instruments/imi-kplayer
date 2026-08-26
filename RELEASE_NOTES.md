@@ -1,5 +1,50 @@
 # Kadabra K-Player — Release Notes
 
+## v0.9.8 — 2026-08-27
+
+Three Master section workflow additions driven by real live-use experience,
+all aimed at doing to the whole rig at once what previously required
+clicking through every channel individually.
+
+### New Features
+
+- **Arm All** — the master ARM button is now two buttons: the same master
+  arm toggle as before (now a dot glyph, matching a channel's own arm
+  button, since it shares its row with the new button next to it), plus
+  **All**, which arms or unarms every channel and the master together in
+  one click. Arm All's own on/off look is never independently tracked - it
+  always reflects whether every channel + master genuinely are all armed
+  right now, recomputed after every arm change (by click or MIDI) and after
+  any channel-count resize, so it can't drift out of sync with reality.
+- **Master Audio In / MIDI In selectors** — two new dropdowns above the
+  master inserts (following the Hide I/O toggle, same as a channel's own
+  selectors) broadcast a live input/device to every channel at once, or
+  bulk-clear every channel back to None. They also list **Take groups** -
+  one entry per past recording pass that has at least one channel's file in
+  it - and applying one assigns each channel its own recording from that
+  take (skipping channels that weren't recorded in it; the master channel
+  itself is never touched, since it has no input of its own). Each
+  dropdown is a one-shot action, not a persisted selection - it always
+  snaps back to its "Set All..." placeholder afterward rather than
+  displaying a value that could misrepresent per-channel state once
+  channels diverge again.
+- **Byp/Act. bulk bypass/activate menu** — a new button above the master
+  inserts opens a menu to bypass or activate every plugin at once, or just
+  one slot position across the whole rig (every channel's slot 0-5, plus
+  the master bus's own inserts for slot positions 1-5, which it shares
+  with channels' insert slots 1-5 one-to-one - slot 0 is the channel-only
+  instrument/effect slot, so a Slot 0 action never touches the master bus).
+
+### Notes
+
+- All three were verified against a real multi-channel session with loaded
+  instruments and recorded Takes. Along the way, confirmed that a Debug
+  config build can fail to play back a heavy session at all (frozen
+  transport, silent, no crash) purely from not keeping up with the DSP
+  load - the identical code played correctly once built as Release. Not a
+  bug in this release; worth remembering next time playback looks broken
+  while testing a Debug build specifically.
+
 ## v0.9.7 — 2026-08-16
 
 A small, targeted fix for a live-use annoyance, plus a crash fix found

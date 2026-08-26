@@ -200,6 +200,13 @@ public:
     MasterChainProcessor& getMasterChainProcessor() { return masterChainProcessor; }
     void refreshMasterChainUI() { masterChainComponent.refresh(); }
 
+    // Re-scans Take groups for the Master section's bulk Audio In/MIDI In
+    // selectors - called by SessionIO::loadSession() right after it sets
+    // the recordings folder, and by toggleRecording() right after a
+    // recording finishes, same timing as refreshChannelTakeList()/
+    // refreshChannelAudioTakeList() above.
+    void refreshMasterTakeGroups() { masterChainComponent.refreshTakeGroups(); }
+
     // Bulk resize (Increment 2). Clamped to [1, maxChannels]; growing adds
     // fresh empty channels, shrinking discards the truncated ones (and any
     // plugins loaded in them) - callers are responsible for confirming that
@@ -362,13 +369,26 @@ private:
     juce::Component channelRackContent;
     juce::Viewport  channelViewport;
 
+    // Declared here (ahead of its usual spot further down) rather than
+    // where RecordingManager's own session-persisted-config comment would
+    // otherwise put it - masterChainComponent's default member initializer
+    // below takes a reference to it and calls real methods on it
+    // (findAudioTakeGroups()/findMidiTakeGroups(), for its bulk Audio In/
+    // MIDI In selectors), so it must already be a fully-constructed object
+    // by then. Member init order follows declaration order, not
+    // initializer-list order - a reference bound to a not-yet-constructed
+    // RecordingManager would be fine, but *calling a method on it* before
+    // that, like this constructor does, would not be.
+    RecordingManager recordingManager;
+
     // Master bus insert chain (Increment 3) - applied once to the post-sum
     // stereo signal, after every channel but before the master volume
     // stage. masterChainComponent must be declared after masterChainProcessor
-    // (member init order follows declaration order, and its constructor
-    // takes a reference to it).
+    // (and after recordingManager, see just above - member init order
+    // follows declaration order, and its constructor takes references to
+    // both and uses them immediately).
     MasterChainProcessor masterChainProcessor;
-    MasterChainComponent masterChainComponent { masterChainProcessor };
+    MasterChainComponent masterChainComponent { masterChainProcessor, deviceManager, recordingManager };
 
     // Rightmost strip: branding, channel count, Settings access, the I/O
     // collapse toggle, tempo/sync (owns the actual TempoSyncComponent -
@@ -381,7 +401,6 @@ private:
     bool tempoSyncEnabled = false;
     juce::String tempoSyncDeviceIdentifier;
 
-    RecordingManager recordingManager;
     // Kept alive for the duration of the lazy folder-picker prompt shown
     // when Record is clicked with no recordings folder configured yet (see
     // toggleRecording()'s caller in the constructor) - JUCE's FileChooser
@@ -470,6 +489,39 @@ private:
     bool recordArmedForNextPlay = false;
     void toggleRecordArm();
     void startArmedRecording();
+
+    // Arm All (master section) - a pure derived toggle, not independent
+    // state: clicking it arms every channel + master if any of them
+    // weren't already armed, or unarms all of them if every last one
+    // already was. updateArmAllButtonState() recomputes the reflected
+    // aggregate and pushes it to masterChainComponent.setArmAllState()
+    // after anything that can change the answer (a channel or the master
+    // arming/unarming, by click or MIDI - both funnel through
+    // setChannelArmed()/setMasterArmed() below - or the channel count
+    // changing).
+    void toggleArmAll();
+    void updateArmAllButtonState();
+
+    // Master bulk Audio In/MIDI In selectors (v0.9.8) - MasterChainComponent
+    // only reports the resolved choice (see its own onAudioInputSelected/
+    // onMidiInputSelected comments); only MainComponent can see every
+    // channel, so it's the one that decides what the choice means for each
+    // and applies it. A non-null takeFolder means "this Take group" -
+    // applied only to the channels actually recorded in it (found via
+    // RecordingManager::findChannelFileInTakeFolder(), skipped if that
+    // channel has no file there); otherwise it's a live input/device
+    // broadcast identically to every channel (liveChannelIndex -1 / an
+    // empty identifier = None, i.e. bulk-clear). Neither ever touches the
+    // master channel itself, which has no input concept of its own.
+    void applyMasterAudioInputSelection(int liveChannelIndex, const juce::File& takeFolder);
+    void applyMasterMidiInputSelection(const juce::String& liveDeviceIdentifier, const juce::File& takeFolder);
+
+    // Master bulk Bypass/Activate menu (v0.9.8) - MasterChainComponent
+    // applies its own inserts directly and only reports what every channel
+    // should do (see its onBypassChannelsRequested comment).
+    // channelSlotIndex -1 means every slot (0..5); otherwise one specific
+    // slot on every channel.
+    void applyBulkBypass(int channelSlotIndex, bool bypass);
 
     // Cached identifier of the first connected MIDI device whose name
     // contains "kadabra" (see findKadabraMidiDeviceIdentifier() in

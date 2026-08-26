@@ -48,6 +48,43 @@ juce::Array<juce::File> RecordingManager::findChannelAudioTakes(int channelIndex
     return findChannelTakeFiles(channelIndex, "wav");
 }
 
+juce::Array<juce::File> RecordingManager::findTakeGroupFolders(const juce::String& extension) const
+{
+    juce::Array<juce::File> result;
+    if (! recordingsFolder.isDirectory())
+        return result;
+
+    juce::Array<juce::File> takeFolders;
+    for (const auto& entry : juce::RangedDirectoryIterator(recordingsFolder, false, "*", juce::File::findDirectories))
+        takeFolders.add(entry.getFile());
+    takeFolders.sort(); // take-folder names are %Y-%m-%d_%H-%M-%S, so lexicographic order == chronological order
+
+    for (int i = takeFolders.size(); --i >= 0;) // newest-first
+    {
+        bool hasChannelFile = false;
+        for (const auto& entry : juce::RangedDirectoryIterator(takeFolders.getReference(i), false,
+                                                                "Channel *." + extension, juce::File::findFiles))
+        {
+            hasChannelFile = true;
+            break;
+        }
+        if (hasChannelFile)
+            result.add(takeFolders.getReference(i));
+    }
+
+    return result;
+}
+
+juce::File RecordingManager::findChannelFileInTakeFolder(int channelIndex, const juce::File& takeFolder,
+                                                          const juce::String& extension) const
+{
+    juce::String baseName = "Channel " + juce::String(channelIndex + 1);
+    for (const auto& entry : juce::RangedDirectoryIterator(takeFolder, false, baseName + "*." + extension,
+                                                            juce::File::findFiles))
+        return entry.getFile();
+    return {};
+}
+
 juce::String RecordingManager::encodeTakeIdentifier(const juce::File& takeFile) const
 {
     return juce::String(takeIdentifierPrefix) + takeFile.getRelativePathFrom(recordingsFolder);
