@@ -69,10 +69,22 @@ The generator name tracks whatever VS version is installed — check `cmake
 --help` for the exact string if this stops matching (e.g. "Visual Studio 17
 2022" on a VS2022 machine).
 
-Release: `cmake --build build --config Release` in the same `build/` dir
-(no separate release build dir on Windows, unlike Mac's
+Release: **`scripts/build_release_windows.ps1`**. It forces a fresh
+configure (`cmake --fresh`) before building Release in the same `build/`
+dir (no separate release build dir on Windows, unlike Mac's
 `scripts/build_release.sh` above), landing at
 `build/IMI_KPlayer_artefacts/Release/Kadabra K-Player.exe`.
+
+The fresh configure matters: JUCE bakes FILEVERSION/PRODUCTVERSION into a
+resource generated **at configure time** from `project(... VERSION ...)`,
+and a plain `cmake --build --config Release --target IMI_KPlayer` skips
+ZERO_CHECK under the VS generator — so after a version bump it can link a
+stale FILEVERSION while everything else is current (this shipped a
+0.9.7-stamped "0.9.8" installer binary once, 2026-08-28). A WIN32
+post-build guard (`cmake/AssertExeVersion.cmake`) now hard-fails any
+`project(VERSION)` vs. linked-`.exe` mismatch on every Windows build, so a
+bare `cmake --build` can no longer produce a mislabelled binary silently —
+it just errors and tells you to reconfigure.
 
 Signing (Azure Artifact Signing, IMI Ltd Organization cert — see
 `imi-common-docs/decisions/2026-08-17-windows-code-signing-path.md`) is

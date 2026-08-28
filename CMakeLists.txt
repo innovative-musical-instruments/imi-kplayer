@@ -86,6 +86,22 @@ if(KPLAYER_RELEASE_BUILD)
     )
 endif()
 
+# --- Windows: fail the build if the linked .exe's FILEVERSION drifted
+# from project(VERSION). JUCE generates that version resource at configure
+# time; a targeted VS-generator build skips ZERO_CHECK, so a bare
+# project() version bump can otherwise ship a stale-stamped binary
+# silently (it did once - 2026-08-28). See cmake/AssertExeVersion.cmake. ---
+if(WIN32)
+    add_custom_command(TARGET IMI_KPlayer POST_BUILD
+        COMMAND "${CMAKE_COMMAND}"
+                "-DEXE_PATH=$<TARGET_FILE:IMI_KPlayer>"
+                "-DEXPECTED_VERSION=${PROJECT_VERSION}"
+                -P "${CMAKE_SOURCE_DIR}/cmake/AssertExeVersion.cmake"
+        VERBATIM
+        COMMENT "Verifying Kadabra K-Player.exe FILEVERSION == ${PROJECT_VERSION}"
+    )
+endif()
+
 target_sources(IMI_KPlayer PRIVATE
     Source/Main.cpp
     Source/MainComponent.cpp
