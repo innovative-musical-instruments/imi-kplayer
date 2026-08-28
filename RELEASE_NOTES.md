@@ -35,6 +35,16 @@ clicking through every channel individually.
   with channels' insert slots 1-5 one-to-one - slot 0 is the channel-only
   instrument/effect slot, so a Slot 0 action never touches the master bus).
 
+### Fixes
+
+- **Master Take-group selector could silently load the wrong channel's
+  recording** — in a session with 10+ channels, the new Master "Set All
+  Audio/MIDI In → Take group" action matched each channel's file with a
+  wildcard that could also match a different channel whose number starts
+  with the same digits (e.g. channel 1's pattern also matching channel
+  10/12/19...), so the wrong recording could get assigned with no error
+  shown. Caught in code review and fixed before this build shipped.
+
 ### Notes
 
 - All three were verified against a real multi-channel session with loaded
