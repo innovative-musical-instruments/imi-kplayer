@@ -11,6 +11,14 @@ git. This file is the one piece of context guaranteed to be present on
 either machine — prefer updating it over relying on session memory, which is
 local to whichever machine wrote it.
 
+## Status (2026-08-28)
+
+v0.9.8 Mac release build (signed + notarized universal binary, via
+`scripts/build_release.sh`) completed today — DMG built and signed. Windows
+build/sign of v0.9.8 is still pending — that's the next step on the Windows
+machine (see the Windows signing steps under Build below). Remove this note
+once the Windows build/sign is done.
+
 ## Cross-repo context
 
 Shared strategy, brand, and spec docs live in `imi-common-docs`, a private
