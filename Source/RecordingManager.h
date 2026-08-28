@@ -262,6 +262,20 @@ private:
     // matching channel file) rather than one channel's files within them.
     juce::Array<juce::File> findTakeGroupFolders(const juce::String& extension) const;
 
+    // recordingsFolder's immediate subdirectories (one per recording pass),
+    // newest first. Take-folder names are %Y-%m-%d_%H-%M-%S, so lexicographic
+    // sort order is chronological order. Shared by findChannelTakeFiles() and
+    // findTakeGroupFolders() so the enumeration/sort logic lives in one place.
+    juce::Array<juce::File> takeFoldersNewestFirst() const;
+
+    // Wildcard pattern matching exactly this channel's plain take file
+    // ("Channel N.ext") or one of uniqueTakeFile()'s de-dup suffixes
+    // ("Channel N (2).ext", "Channel N (3).ext", ...) - deliberately NOT the
+    // simpler "Channel N*.ext", which would also match other channels whose
+    // number starts with the same digits (e.g. channel 1 matching channel
+    // 10/12/19...).
+    static juce::String channelFileWildcard(int channelIndex, const juce::String& extension);
+
     std::unique_ptr<RecordingTrack> createTrack(const juce::File& file, double sampleRate, int numChannels);
 
     // Same as createTrack() above, but also attaches a MidiCapture ready to

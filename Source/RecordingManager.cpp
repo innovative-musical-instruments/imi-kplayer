@@ -20,19 +20,10 @@ RecordingManager::~RecordingManager()
 juce::Array<juce::File> RecordingManager::findChannelTakeFiles(int channelIndex, const juce::String& extension) const
 {
     juce::Array<juce::File> result;
-    if (! recordingsFolder.isDirectory())
-        return result;
-
-    juce::String baseName = "Channel " + juce::String(channelIndex + 1);
-
-    juce::Array<juce::File> takeFolders;
-    for (const auto& entry : juce::RangedDirectoryIterator(recordingsFolder, false, "*", juce::File::findDirectories))
-        takeFolders.add(entry.getFile());
-    takeFolders.sort(); // take-folder names are %Y-%m-%d_%H-%M-%S, so lexicographic order == chronological order
-
-    for (int i = takeFolders.size(); --i >= 0;) // newest-first
-        for (const auto& entry : juce::RangedDirectoryIterator(takeFolders.getReference(i), false,
-                                                                baseName + "*." + extension, juce::File::findFiles))
+    for (const auto& takeFolder : takeFoldersNewestFirst())
+        for (const auto& entry : juce::RangedDirectoryIterator(takeFolder, false,
+                                                                channelFileWildcard(channelIndex, extension),
+                                                                juce::File::findFiles))
             result.add(entry.getFile());
 
     return result;
@@ -51,25 +42,17 @@ juce::Array<juce::File> RecordingManager::findChannelAudioTakes(int channelIndex
 juce::Array<juce::File> RecordingManager::findTakeGroupFolders(const juce::String& extension) const
 {
     juce::Array<juce::File> result;
-    if (! recordingsFolder.isDirectory())
-        return result;
-
-    juce::Array<juce::File> takeFolders;
-    for (const auto& entry : juce::RangedDirectoryIterator(recordingsFolder, false, "*", juce::File::findDirectories))
-        takeFolders.add(entry.getFile());
-    takeFolders.sort(); // take-folder names are %Y-%m-%d_%H-%M-%S, so lexicographic order == chronological order
-
-    for (int i = takeFolders.size(); --i >= 0;) // newest-first
+    for (const auto& takeFolder : takeFoldersNewestFirst())
     {
         bool hasChannelFile = false;
-        for (const auto& entry : juce::RangedDirectoryIterator(takeFolders.getReference(i), false,
+        for (const auto& entry : juce::RangedDirectoryIterator(takeFolder, false,
                                                                 "Channel *." + extension, juce::File::findFiles))
         {
             hasChannelFile = true;
             break;
         }
         if (hasChannelFile)
-            result.add(takeFolders.getReference(i));
+            result.add(takeFolder);
     }
 
     return result;
@@ -78,11 +61,38 @@ juce::Array<juce::File> RecordingManager::findTakeGroupFolders(const juce::Strin
 juce::File RecordingManager::findChannelFileInTakeFolder(int channelIndex, const juce::File& takeFolder,
                                                           const juce::String& extension) const
 {
-    juce::String baseName = "Channel " + juce::String(channelIndex + 1);
-    for (const auto& entry : juce::RangedDirectoryIterator(takeFolder, false, baseName + "*." + extension,
+    for (const auto& entry : juce::RangedDirectoryIterator(takeFolder, false,
+                                                            channelFileWildcard(channelIndex, extension),
                                                             juce::File::findFiles))
         return entry.getFile();
     return {};
+}
+
+juce::Array<juce::File> RecordingManager::takeFoldersNewestFirst() const
+{
+    juce::Array<juce::File> takeFolders;
+    if (! recordingsFolder.isDirectory())
+        return takeFolders;
+
+    for (const auto& entry : juce::RangedDirectoryIterator(recordingsFolder, false, "*", juce::File::findDirectories))
+        takeFolders.add(entry.getFile());
+    takeFolders.sort(); // take-folder names are %Y-%m-%d_%H-%M-%S, so lexicographic order == chronological order
+
+    juce::Array<juce::File> newestFirst;
+    for (int i = takeFolders.size(); --i >= 0;)
+        newestFirst.add(takeFolders.getReference(i));
+    return newestFirst;
+}
+
+juce::String RecordingManager::channelFileWildcard(int channelIndex, const juce::String& extension)
+{
+    auto baseName = "Channel " + juce::String(channelIndex + 1);
+    // Multiple wildcard patterns are semicolon-separated (RangedDirectoryIterator).
+    // Matches only this exact channel's plain file or uniqueTakeFile()'s " (2)"/
+    // " (3)"/... de-dup suffix - not other channels whose number starts with the
+    // same digits, the way a single "Channel N*.ext" wildcard would (e.g.
+    // channel 1 also matching channel 10/12/19...).
+    return baseName + "." + extension + ";" + baseName + " (*)." + extension;
 }
 
 juce::String RecordingManager::encodeTakeIdentifier(const juce::File& takeFile) const
