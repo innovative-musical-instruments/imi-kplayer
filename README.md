@@ -1,4 +1,4 @@
-# Kadabra K-Player
+# Kadabra KPlayer
 
 A JUCE standalone VST3/AU plugin-host app — a "channel strip" style rack
 (per-channel instrument + 5 inserts, gain/pan, MIDI routing) paired with
