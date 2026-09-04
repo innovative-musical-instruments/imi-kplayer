@@ -599,7 +599,9 @@ void MainComponent::timerCallback()
         // sync would just overwrite this immediately anyway.
         if (! tempoSyncEnabled)
         {
-            double newTempo = juce::jlimit(20.0, 300.0, (double) (juce::roundToInt(currentTempo) + steps));
+            double newTempo = juce::jlimit(TempoSyncComponent::minimumTempoBpm,
+                                            TempoSyncComponent::maximumTempoBpm,
+                                            (double) (juce::roundToInt(currentTempo) + steps));
             setGlobalTempo(newTempo);
             notifyDirty();
         }

@@ -23,6 +23,17 @@ public:
     // button) plus the "Tempo" heading.
     static constexpr int preferredWidth = 160;
 
+    // Range a tempo may be typed or nudged to. The upper bound is
+    // deliberately far above what reads as a musical tempo: Kadabra's own
+    // sequencer runs well past the conventional ~300 ceiling, K-Player's
+    // MIDI-clock sync has always followed it up there without complaint
+    // (the detector doesn't clamp at all), and it was only the two manual
+    // entry paths that refused - so typing a tempo couldn't reach one that
+    // syncing arrived at perfectly happily. Kept here rather than as
+    // literals at each site so the two can't drift apart again.
+    static constexpr double minimumTempoBpm = 20.0;
+    static constexpr double maximumTempoBpm = 1200.0;
+
     // Fired when the user edits the BPM value directly (only possible while
     // sync is off - the value label isn't editable while synced).
     std::function<void(double)> onTempoChanged;

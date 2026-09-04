@@ -120,7 +120,7 @@ void TempoSyncComponent::labelTextChanged(juce::Label* label)
     if (label != &tempoValueLabel || syncEnabled)
         return;
 
-    double bpm = juce::jlimit(20.0, 300.0, tempoValueLabel.getText().getDoubleValue());
+    double bpm = juce::jlimit(minimumTempoBpm, maximumTempoBpm, tempoValueLabel.getText().getDoubleValue());
     displayedBpm = bpm;
     updateTempoValueLabel();
     if (onTempoChanged) onTempoChanged(bpm);
