@@ -69,6 +69,13 @@ MainComponent::MainComponent(juce::AudioDeviceManager& dm, PluginManager& pm)
     // see toggleRecordArm()'s own comment for the full state machine.
     globalSection.onRecordButtonClicked = [this] { toggleRecordArm(); };
     globalSection.onShowModeToggled = [this] { setShowModeEnabled(! showModeEnabled); };
+
+    globalSection.onLoopToggled       = [this] { toggleRangeLoop(); };
+    globalSection.onFullToggled       = [this] { toggleRangeFull(); };
+    globalSection.onCaptureRangeStart = [this] { captureRangeStartFromPlayhead(); };
+    globalSection.onCaptureRangeEnd   = [this] { captureRangeEndFromPlayhead(); };
+    globalSection.onRangeStartEdited  = [this](int seconds) { setUserRange(seconds, rangeUserSet ? rangeUserEndSeconds : materialLengthSeconds); };
+    globalSection.onRangeEndEdited    = [this](int seconds) { setUserRange(rangeUserSet ? rangeUserStartSeconds : 0, seconds); };
     addAndMakeVisible(globalSection);
 
     // Loaded here (not via an in-class initializer, since globalSection
@@ -456,6 +463,17 @@ void MainComponent::timerCallback()
     if (sessionTransport.consumeStoppedAtRangeEnd())
         globalSection.setTransportPlaying(false);
 
+    // The playhead moves continuously, so which capture button would invert
+    // the range changes continuously too - dimming the offender makes the
+    // invalid range unreachable rather than silently corrected. Start floors
+    // and end ceils, matching what the buttons themselves capture.
+    {
+        int playheadSeconds = getPlayheadSeconds();
+        int ceiledPlayheadSeconds = (int) std::ceil((double) sessionTransport.getPositionSamples() / currentSampleRate);
+        globalSection.setCaptureButtonsEnabled(playheadSeconds < effectiveRangeEndSeconds,
+                                                ceiledPlayheadSeconds > effectiveRangeStartSeconds);
+    }
+
     // Transport time readout (mm:ss) - see GlobalSectionComponent::
     // setDisplayedTime()'s own comment for why this single clock covers
     // both "is the playhead actually moving" and recording-elapsed.
@@ -655,10 +673,18 @@ void MainComponent::suppressPostLoadDirtyFlags()
 void MainComponent::setGlobalTempo(double bpm)
 {
     currentTempo = bpm;
+    // The audio thread's own copy - MIDI Take playback converts ticks to
+    // samples against this every block, which is what makes a tempo change
+    // audible immediately instead of only on the next reselect.
+    tempoForAudioThread.store(bpm, std::memory_order_relaxed);
     for (auto& channel : channelProcessors)
         channel->setTempo(bpm);
     masterChainProcessor.setTempo(bpm);
     globalSection.getTempoSyncComponent().setDisplayedTempo(bpm);
+
+    // A MIDI Take is a fixed number of ticks, so how many seconds of
+    // material that is just changed - and with it the default Range.
+    updateTransportRange();
 }
 
 void MainComponent::setTempoSyncEnabled(bool enabled)
@@ -702,9 +728,10 @@ void MainComponent::loadMidiTakeForChannel(int index, const juce::File& file)
     if (index < 0 || index >= (int) midiTakePlayers.size())
         return;
 
-    auto* device = deviceManager.getCurrentAudioDevice();
-    double sampleRate = device != nullptr ? device->getCurrentSampleRate() : currentSampleRate;
-    midiTakePlayers[(size_t) index]->loadTake(file, sampleRate, currentTempo);
+    // No sample rate or tempo needed any more: the take is kept in ticks
+    // and converted per block, so it follows the tempo live rather than
+    // being frozen at whatever it happened to be when selected.
+    midiTakePlayers[(size_t) index]->loadTake(file);
     updateTransportRange();
 }
 
@@ -753,19 +780,114 @@ void MainComponent::updateTransportRange()
     // impossible to get out of sync with what is genuinely loaded and
     // therefore genuinely audible.
     juce::int64 longestTakeSamples = 0;
+    // A MIDI Take's length in wall-clock terms depends on the tempo it's
+    // being played at, so this is re-measured whenever the tempo moves as
+    // well as whenever the selection changes - see setGlobalTempo().
+    double perTick = MidiTakePlayer::samplesPerTick(currentTempo, currentSampleRate);
     for (auto& player : midiTakePlayers)
-        longestTakeSamples = juce::jmax(longestTakeSamples, player->getLengthSamples());
+        longestTakeSamples = juce::jmax(longestTakeSamples,
+                                         (juce::int64) std::ceil((double) player->getLengthTicks() * perTick));
     for (auto& player : audioTakePlayers)
         longestTakeSamples = juce::jmax(longestTakeSamples, player->getLengthSamples());
 
-    if (longestTakeSamples <= 0)
-    {
+    materialLengthSeconds = longestTakeSamples > 0
+        ? (int) std::ceil((double) longestTakeSamples / currentSampleRate)
+        : 0;
+
+    refreshRangeState();
+}
+
+void MainComponent::refreshRangeState()
+{
+    bool haveMaterial = materialLengthSeconds > 0;
+
+    // FULL only means anything once there is a user range for it to differ
+    // from, so it can't be left engaged once that range is gone.
+    if (! rangeUserSet)
+        rangeFullEnabled = false;
+
+    bool showingFull = rangeFullEnabled || ! rangeUserSet;
+    int startSeconds = showingFull ? 0 : rangeUserStartSeconds;
+    int endSeconds   = showingFull ? materialLengthSeconds : rangeUserEndSeconds;
+
+    effectiveRangeStartSeconds = startSeconds;
+    effectiveRangeEndSeconds   = endSeconds;
+
+    if (haveMaterial)
+        sessionTransport.setRange((juce::int64) (startSeconds * currentSampleRate),
+                                   (juce::int64) (endSeconds * currentSampleRate));
+    else
         sessionTransport.clearRange();
-        return;
+
+    sessionTransport.setLoopEnabled(rangeLoopEnabled);
+
+    globalSection.setRangeControlsEnabled(haveMaterial);
+    // Ghosted only while FULL is actively overriding a range the user set -
+    // the plain default range (nothing set yet) is shown as the ordinary,
+    // truthful thing it is rather than as someone else's values.
+    globalSection.setRangeValues(startSeconds, endSeconds, rangeFullEnabled);
+    globalSection.setFullState(rangeUserSet, rangeFullEnabled);
+    globalSection.setLoopEnabled(rangeLoopEnabled);
+}
+
+int MainComponent::getPlayheadSeconds() const
+{
+    return (int) ((double) sessionTransport.getPositionSamples() / currentSampleRate);
+}
+
+void MainComponent::toggleRangeLoop()
+{
+    rangeLoopEnabled = ! rangeLoopEnabled;
+    refreshRangeState();
+    notifyDirty();
+}
+
+void MainComponent::toggleRangeFull()
+{
+    if (! rangeUserSet)
+        return; // nothing to expand from - the range already is the material
+
+    rangeFullEnabled = ! rangeFullEnabled;
+    refreshRangeState();
+}
+
+void MainComponent::setUserRange(int startSeconds, int endSeconds)
+{
+    startSeconds = juce::jmax(0, startSeconds);
+    endSeconds   = juce::jmax(0, endSeconds);
+
+    // An inverted range is refused outright rather than silently swapped -
+    // the capture buttons prevent it by dimming, and a typed one should
+    // behave the same way. refreshRangeState() below puts the real values
+    // back on screen either way.
+    if (endSeconds > startSeconds)
+    {
+        rangeUserSet          = true;
+        rangeUserStartSeconds = startSeconds;
+        rangeUserEndSeconds   = endSeconds;
+        // Setting a range is the gesture that says "this one is mine", so
+        // it drops out of FULL - which exists precisely to show the range
+        // that isn't.
+        rangeFullEnabled = false;
+        notifyDirty();
     }
 
-    auto wholeSeconds = (juce::int64) std::ceil((double) longestTakeSamples / currentSampleRate);
-    sessionTransport.setRange(0, (juce::int64) (wholeSeconds * currentSampleRate));
+    refreshRangeState();
+}
+
+void MainComponent::captureRangeStartFromPlayhead()
+{
+    // Floor the start and ceil the end (below), so the range the user gets
+    // always contains the moment they gestured at rather than clipping it.
+    setUserRange(getPlayheadSeconds(),
+                 rangeUserSet ? rangeUserEndSeconds : materialLengthSeconds);
+}
+
+void MainComponent::captureRangeEndFromPlayhead()
+{
+    auto positionSamples = sessionTransport.getPositionSamples();
+    int ceiledSeconds = (int) std::ceil((double) positionSamples / currentSampleRate);
+    setUserRange(rangeUserSet ? rangeUserStartSeconds : 0, ceiledSeconds);
 }
 
 void MainComponent::resolveAudioTakeSelectionForChannel(int index)
@@ -946,6 +1068,7 @@ void MainComponent::refreshRecordingUI()
     // looping or stopping there. Suspending rather than clearing keeps the
     // user's bounds intact (and on screen) for when the take finishes.
     sessionTransport.setRangeSuspended(active);
+    globalSection.setRecordingInProgress(active);
 
     globalSection.setRecordState(active ? GlobalSectionComponent::RecordState::recording
                                         : GlobalSectionComponent::RecordState::idle);
@@ -1290,6 +1413,13 @@ void MainComponent::audioDeviceIOCallbackWithContext(
     auto transportBlockStart = sessionTransport.advanceAndGetBlockStartPosition(numSamples);
     bool transportIsPlaying  = sessionTransport.isPlaying();
 
+    // Read once per callback, not per channel, so every channel's Take
+    // renders against the same tempo this block even if the message thread
+    // moves it underneath us mid-callback (MIDI-clock sync can move it at
+    // any moment) - the same reason the transport position is read once
+    // above.
+    double blockTempo = tempoForAudioThread.load(std::memory_order_relaxed);
+
     for (int channelIndex = 0; channelIndex < (int) channelProcessors.size(); ++channelIndex)
     {
         auto& channel = channelProcessors[(size_t) channelIndex];
@@ -1328,7 +1458,8 @@ void MainComponent::audioDeviceIOCallbackWithContext(
         if (RecordingManager::isTakeIdentifier(deviceId))
         {
             midiTakePlayers[(size_t) channelIndex]->renderBlock(transportBlockStart, numSamples,
-                                                                 transportIsPlaying, channelMidi);
+                                                                 transportIsPlaying, blockTempo,
+                                                                 currentSampleRate, channelMidi);
         }
         else if (deviceId.isNotEmpty())
         {

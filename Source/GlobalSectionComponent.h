@@ -38,18 +38,38 @@ public:
     static constexpr int hideIOWidth           = 80;
     static constexpr int panicWidth            = 70;
     static constexpr int showModeWidth         = 90;
-    static constexpr int timeWidth             = 64;
-    // Play/Rec/RTZ, and (independently, in TempoSyncComponent) its Sync
-    // button - all sized to match so the whole transport cluster reads as
-    // one consistent size.
+    // Play/Rec/RTZ, LOOP/FULL above them, and (independently, in
+    // TempoSyncComponent) its Sync button - all sized to match so the whole
+    // transport cluster reads as one consistent size. This doubles as the
+    // uniform column width the whole two-row transport block is built on:
+    // it's the narrowest column that still fits an mm:ss field in a
+    // monospaced font, which is why adding the Range controls didn't have
+    // to move it.
     static constexpr int transportButtonWidth  = 64;
     static constexpr int zoneGap               = 8;
+
+    // The transport block is two 22px rows with a 4px gap - 48px total,
+    // exactly TempoSyncComponent's own height, so the two sit level.
+    static constexpr int transportRowHeight    = 22;
+    static constexpr int transportRowGap       = 4;
+
+    // The Range start/end pair spans two grid columns plus the gap between
+    // them, and the capture-arrow row below spans exactly the same width -
+    // that shared span is the one alignment rule the whole cluster is built
+    // on (see resized()). The arrows sit flush against its two outer edges,
+    // which is what puts the position readout dead centre between them
+    // rather than needing to be centred separately.
+    static constexpr int rangeGroupWidth       = transportButtonWidth * 2 + zoneGap;
+    static constexpr int captureArrowWidth     = 30;
+    static constexpr int positionReadoutWidth  = 60;
+
+    // Play/Rec/RTZ across the bottom row, then the range group.
+    static constexpr int transportBlockWidth   = transportButtonWidth * 3 + zoneGap * 3 + rangeGroupWidth;
 
     static constexpr int leftZoneWidth   = logoWidth + zoneGap + channelsWidth + zoneGap
                                           + settingsWidth + zoneGap + hideIOWidth;
     static constexpr int rightZoneWidth  = panicWidth + zoneGap + showModeWidth + zoneGap + logoWidth;
-    static constexpr int centerZoneWidth = TempoSyncComponent::preferredWidth + zoneGap + timeWidth
-                                          + zoneGap + transportButtonWidth * 3 + zoneGap * 2;
+    static constexpr int centerZoneWidth = TempoSyncComponent::preferredWidth + zoneGap + transportBlockWidth;
 
     // Smallest full window width at which the left/center/right zones
     // still fit without overlapping (the centered zone is positioned
@@ -124,6 +144,52 @@ public:
     // state to reflect back in, unlike Record Ready/Show Mode above.
     std::function<void()> onPanicClicked;
 
+    // ---- Range ----------------------------------------------------------
+    // The span of the session the transport plays, sitting on the row above
+    // Play/Rec/RTZ. Like every other control in this bar these are dumb
+    // reflectors: they report the gesture and MainComponent (which owns the
+    // range state and pushes it into SessionTransport) decides what it
+    // means and pushes the result back through the setters below.
+    //
+    // LOOP wraps at the range end instead of stopping there. FULL
+    // temporarily shows the material's own bounds while remembering the
+    // user's range. The two capture buttons pull the current playhead into
+    // the start/end field above them - the reason there's a readout between
+    // them at all.
+    std::function<void()> onLoopToggled;
+    std::function<void()> onFullToggled;
+    std::function<void()> onCaptureRangeStart;
+    std::function<void()> onCaptureRangeEnd;
+
+    // Fired with the typed value already parsed to whole seconds (mm:ss, or
+    // a bare number of seconds) - never with unparseable text, which is
+    // simply reverted to what was displayed before.
+    std::function<void(int)> onRangeStartEdited;
+    std::function<void(int)> onRangeEndEdited;
+
+    void setLoopEnabled(bool enabled);
+
+    // ghosted = these are the material's bounds rather than the user's own
+    // range (FULL engaged), drawn greyed and italic to say so.
+    void setRangeValues(int startSeconds, int endSeconds, bool ghosted);
+
+    // No Take selected anywhere means there is nothing for a range to span,
+    // so the whole cluster goes dead - LOOP included. Play/Rec/RTZ stay
+    // live throughout: you can still record with no range.
+    void setRangeControlsEnabled(bool enabled);
+
+    // FULL only means something once there is a user range for it to differ
+    // from, so it's disabled until then. `on` lights it.
+    void setFullState(bool available, bool on);
+
+    // Dims whichever capture button would produce an inverted range, so the
+    // invalid state is unreachable rather than silently corrected.
+    void setCaptureButtonsEnabled(bool startEnabled, bool endEnabled);
+
+    // LOOP dims while recording - a record pass runs linearly past the
+    // range end and never wraps - while the range values stay readable.
+    void setRecordingInProgress(bool recording);
+
 private:
     void timerCallback() override; // drives the armed-state blink only
 
@@ -160,6 +226,36 @@ private:
     RecordState recordState = RecordState::idle;
     bool blinkPhaseOn = false;
     void updateRecordButtonColour();
+
+    // ---- Range cluster (see the callbacks/setters above) ----
+    juce::TextButton loopButton;
+    juce::Label      rangeCaptionLabel;   // "RANGE" + arrow, pointing at the fields
+    juce::TextButton fullButton;
+    juce::Label      rangeStartField;     // editable, mm:ss
+    juce::Label      rangeEndField;
+    juce::TextButton captureStartButton;  // pulls the playhead into the field above it
+    juce::TextButton captureEndButton;
+
+    bool loopEnabled       = false;
+    bool rangeEnabled      = false;
+    bool fullAvailable     = false;
+    bool fullEnabled       = false;
+    bool recordingInProgress = false;
+
+    // What setRangeValues() last put on screen, so an unparseable edit can
+    // be reverted to it without the owner having to push a correction.
+    int displayedRangeStartSeconds = 0;
+    int displayedRangeEndSeconds   = 0;
+    bool rangeValuesGhosted        = false;
+
+    // The two toggles share one look (same "lit" treatment as Show Mode) -
+    // centralised so LOOP's extra recording-dim rule is the only difference
+    // between them.
+    void updateLoopButton();
+    void updateFullButton();
+    static void applyToggleColours(juce::TextButton& button, bool on, bool enabled);
+    void configureRangeField(juce::Label& field, std::function<void(int)>& callback);
+    static juce::String formatSeconds(int seconds);
 
     juce::TextButton showModeButton;
     bool showModeEnabled = false;

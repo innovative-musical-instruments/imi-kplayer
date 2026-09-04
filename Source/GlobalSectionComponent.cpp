@@ -54,7 +54,7 @@ GlobalSectionComponent::GlobalSectionComponent(int initialChannelCount, int maxC
     addAndMakeVisible(tempoSyncComponent);
 
     timeDisplayLabel.setText("00:00", juce::dontSendNotification);
-    timeDisplayLabel.setFont(juce::Font(16.0f, juce::Font::bold));
+    timeDisplayLabel.setFont(juce::Font(13.0f, juce::Font::bold));
     timeDisplayLabel.setJustificationType(juce::Justification::centred);
     timeDisplayLabel.setColour(juce::Label::textColourId, juce::Colours::white);
     addAndMakeVisible(timeDisplayLabel);
@@ -86,6 +86,49 @@ GlobalSectionComponent::GlobalSectionComponent(int initialChannelCount, int maxC
     recordButton.setLookAndFeel(transportButtonLookAndFeel.get());
     addAndMakeVisible(recordButton);
     updateRecordButtonColour();
+
+    // ---- Range cluster, on the row above Play/Rec/RTZ ----
+    loopButton.setButtonText("LOOP");
+    loopButton.onClick = [this] { if (onLoopToggled) onLoopToggled(); };
+    addAndMakeVisible(loopButton);
+
+    // A caption, not a control - it labels the two fields to its right.
+    // Plain "RANGE" rather than the arrow the layout study drew: an arrow
+    // glyph is exactly the Unicode font-coverage risk on Windows that
+    // TransportButtonLookAndFeel exists to avoid, and it isn't worth a
+    // vector-drawn icon for a caption.
+    rangeCaptionLabel.setText("RANGE", juce::dontSendNotification);
+    rangeCaptionLabel.setFont(juce::Font(10.0f));
+    rangeCaptionLabel.setJustificationType(juce::Justification::centred);
+    rangeCaptionLabel.setColour(juce::Label::textColourId, juce::Colour(0xffaaaaaa));
+    addAndMakeVisible(rangeCaptionLabel);
+
+    fullButton.setButtonText("FULL");
+    fullButton.onClick = [this] { if (onFullToggled) onFullToggled(); };
+    addAndMakeVisible(fullButton);
+
+    configureRangeField(rangeStartField, onRangeStartEdited);
+    configureRangeField(rangeEndField, onRangeEndEdited);
+
+    // "CAPTURE" is a sentinel TransportButtonLookAndFeel dispatches on (like
+    // "PLAY"/"REC" above) - it draws an up arrow, pointing at the field this
+    // button feeds.
+    captureStartButton.setButtonText("CAPTURE");
+    captureStartButton.setTooltip("Set the range start to the current playhead position");
+    captureStartButton.setLookAndFeel(transportButtonLookAndFeel.get());
+    captureStartButton.onClick = [this] { if (onCaptureRangeStart) onCaptureRangeStart(); };
+    addAndMakeVisible(captureStartButton);
+
+    captureEndButton.setButtonText("CAPTURE");
+    captureEndButton.setTooltip("Set the range end to the current playhead position");
+    captureEndButton.setLookAndFeel(transportButtonLookAndFeel.get());
+    captureEndButton.onClick = [this] { if (onCaptureRangeEnd) onCaptureRangeEnd(); };
+    addAndMakeVisible(captureEndButton);
+
+    setRangeControlsEnabled(false);
+    setRangeValues(0, 0, false);
+    setFullState(false, false);
+    updateLoopButton();
 
     showModeButton.onClick = [this] { if (onShowModeToggled) onShowModeToggled(); };
     addAndMakeVisible(showModeButton);
@@ -123,6 +166,8 @@ GlobalSectionComponent::~GlobalSectionComponent()
     playPauseButton.setLookAndFeel(nullptr);
     rtzButton.setLookAndFeel(nullptr);
     recordButton.setLookAndFeel(nullptr);
+    captureStartButton.setLookAndFeel(nullptr);
+    captureEndButton.setLookAndFeel(nullptr);
 }
 
 void GlobalSectionComponent::updateChannelButtons()
@@ -221,6 +266,176 @@ void GlobalSectionComponent::updateRecordButtonColour()
     recordButton.setTooltip(tooltip);
 }
 
+juce::String GlobalSectionComponent::formatSeconds(int seconds)
+{
+    seconds = juce::jmax(0, seconds);
+    return juce::String::formatted("%02d:%02d", seconds / 60, seconds % 60);
+}
+
+void GlobalSectionComponent::configureRangeField(juce::Label& field, std::function<void(int)>& callback)
+{
+    field.setJustificationType(juce::Justification::centred);
+    field.setColour(juce::Label::backgroundColourId, juce::Colour(0xff14141f));
+    field.setColour(juce::Label::textColourId, juce::Colours::white);
+    field.setFont(juce::Font(12.0f));
+    // Double-click rather than single: this bar gets clicked at speed in a
+    // dark venue, and a stray single click dropping a range point into an
+    // edit box mid-set would be its own small disaster. The capture buttons
+    // below are the fast path; typing is the precise one.
+    field.setEditable(false, true, false);
+    field.setTooltip("Double-click to type a time as mm:ss, or as a plain number of seconds");
+
+    field.onTextChange = [this, &field, &callback]
+    {
+        auto text = field.getText().trim();
+        int seconds = -1;
+
+        if (text.containsChar(':'))
+        {
+            auto minutesPart = text.upToFirstOccurrenceOf(":", false, false).trim();
+            auto secondsPart = text.fromFirstOccurrenceOf(":", false, false).trim();
+            if (minutesPart.containsOnly("0123456789") && secondsPart.containsOnly("0123456789")
+                && minutesPart.isNotEmpty() && secondsPart.isNotEmpty())
+                seconds = minutesPart.getIntValue() * 60 + secondsPart.getIntValue();
+        }
+        else if (text.isNotEmpty() && text.containsOnly("0123456789"))
+        {
+            seconds = text.getIntValue();
+        }
+
+        if (seconds >= 0 && callback)
+        {
+            // The owner decides what the typed value actually becomes (it
+            // may refuse an inverted range) and pushes the outcome back
+            // through setRangeValues() - so nothing is written back here.
+            callback(seconds);
+        }
+        else
+        {
+            // Unparseable, or nobody listening: revert rather than leaving
+            // the field showing something that isn't the range.
+            setRangeValues(displayedRangeStartSeconds, displayedRangeEndSeconds, rangeValuesGhosted);
+        }
+    };
+
+    addAndMakeVisible(field);
+}
+
+void GlobalSectionComponent::applyToggleColours(juce::TextButton& button, bool on, bool enabled)
+{
+    // Same muted green "engaged" treatment as Show Mode and the active Play
+    // button, so a lit control means the same thing everywhere in this bar.
+    auto background = on ? juce::Colour(0xff2a6b3d) : juce::Colour(0xff2a2a3e);
+    auto text       = on ? juce::Colours::white     : juce::Colour(0xffaaaaaa);
+
+    if (! enabled)
+    {
+        background = juce::Colour(0xff21212e);
+        text       = juce::Colour(0xff5a5a68);
+    }
+
+    button.setColour(juce::TextButton::buttonColourId, background);
+    button.setColour(juce::TextButton::textColourOffId, text);
+    button.setEnabled(enabled);
+}
+
+void GlobalSectionComponent::updateLoopButton()
+{
+    // LOOP is meaningless without a range, and equally meaningless while
+    // recording - a record pass runs linearly straight past the range end
+    // and never wraps, so the control dims to say the setting isn't in
+    // force right now rather than silently lying about what will happen.
+    bool available = rangeEnabled && ! recordingInProgress;
+    applyToggleColours(loopButton, loopEnabled, available);
+    loopButton.setTooltip(recordingInProgress
+        ? "Loop is off while recording - a take records straight past the range end"
+        : (loopEnabled ? "Looping the range - click to stop at the range end instead"
+                       : "Stopping at the range end - click to loop the range instead"));
+}
+
+void GlobalSectionComponent::updateFullButton()
+{
+    applyToggleColours(fullButton, fullEnabled, fullAvailable && rangeEnabled);
+    fullButton.setTooltip(fullAvailable
+        ? (fullEnabled ? "Showing the whole of the recorded material - click to get your own range back"
+                       : "Temporarily play the whole of the recorded material, keeping your range")
+        : "Set a range first - Full swaps between your range and the whole of the material");
+}
+
+void GlobalSectionComponent::setLoopEnabled(bool enabled)
+{
+    loopEnabled = enabled;
+    updateLoopButton();
+}
+
+void GlobalSectionComponent::setFullState(bool available, bool on)
+{
+    fullAvailable = available;
+    fullEnabled   = on;
+    updateFullButton();
+}
+
+void GlobalSectionComponent::setRecordingInProgress(bool recording)
+{
+    recordingInProgress = recording;
+    updateLoopButton();
+}
+
+void GlobalSectionComponent::setRangeValues(int startSeconds, int endSeconds, bool ghosted)
+{
+    displayedRangeStartSeconds = startSeconds;
+    displayedRangeEndSeconds   = endSeconds;
+    rangeValuesGhosted         = ghosted;
+
+    // Nothing selected: the fields show that there is no range rather than
+    // a pair of zeroes that look like a real (empty) one.
+    auto startText = rangeEnabled ? formatSeconds(startSeconds) : juce::String("--:--");
+    auto endText   = rangeEnabled ? formatSeconds(endSeconds)   : juce::String("--:--");
+
+    rangeStartField.setText(startText, juce::dontSendNotification);
+    rangeEndField.setText(endText, juce::dontSendNotification);
+
+    // Greyed and italic while Full is showing the material's bounds - these
+    // are real values, they're just not the ones the user chose.
+    auto textColour = ! rangeEnabled ? juce::Colour(0xff5a5a68)
+                                     : (ghosted ? juce::Colour(0xff8a8a9a) : juce::Colours::white);
+    auto font = juce::Font(12.0f);
+    if (ghosted)
+        font = font.italicised();
+
+    for (auto* field : { &rangeStartField, &rangeEndField })
+    {
+        field->setColour(juce::Label::textColourId, textColour);
+        field->setFont(font);
+    }
+}
+
+void GlobalSectionComponent::setRangeControlsEnabled(bool enabled)
+{
+    rangeEnabled = enabled;
+
+    rangeStartField.setEditable(false, enabled, false);
+    rangeEndField.setEditable(false, enabled, false);
+    rangeCaptionLabel.setColour(juce::Label::textColourId,
+                                enabled ? juce::Colour(0xffaaaaaa) : juce::Colour(0xff5a5a68));
+
+    if (! enabled)
+        setCaptureButtonsEnabled(false, false);
+
+    updateLoopButton();
+    updateFullButton();
+    setRangeValues(displayedRangeStartSeconds, displayedRangeEndSeconds, rangeValuesGhosted);
+}
+
+void GlobalSectionComponent::setCaptureButtonsEnabled(bool startEnabled, bool endEnabled)
+{
+    // Called every timer tick as the playhead moves, so it leans on
+    // Component::setEnabled()/TextButton's own no-op-when-unchanged
+    // behaviour rather than repainting on every tick.
+    captureStartButton.setEnabled(rangeEnabled && startEnabled);
+    captureEndButton.setEnabled(rangeEnabled && endEnabled);
+}
+
 void GlobalSectionComponent::setShowModeEnabled(bool enabled)
 {
     showModeEnabled = enabled;
@@ -287,8 +502,8 @@ void GlobalSectionComponent::resized()
     rightZone.removeFromRight(zoneGap);
     showModeButton.setBounds(rightZone.removeFromRight(showModeWidth));
 
-    // --- Center zone: Tempo/Sync + port selector, time display, Play,
-    // Rec Ready, RTZ - centered as one block within the full bar
+    // --- Center zone: Tempo/Sync + port selector, then the two-row
+    // transport block - centered as one block within the full bar
     // (withSizeKeepingCentre) rather than left-aligned in whatever space
     // remains.
     auto centerZone = fullArea.withSizeKeepingCentre(centerZoneWidth, rowHeight);
@@ -296,11 +511,45 @@ void GlobalSectionComponent::resized()
                                     .withSizeKeepingCentre(TempoSyncComponent::preferredWidth,
                                                             TempoSyncComponent::preferredHeight));
     centerZone.removeFromLeft(zoneGap);
-    timeDisplayLabel.setBounds(centerZone.removeFromLeft(timeWidth));
-    centerZone.removeFromLeft(zoneGap);
-    playPauseButton.setBounds(centerZone.removeFromLeft(transportButtonWidth));
-    centerZone.removeFromLeft(zoneGap);
-    recordButton.setBounds(centerZone.removeFromLeft(transportButtonWidth));
-    centerZone.removeFromLeft(zoneGap);
-    rtzButton.setBounds(centerZone.removeFromLeft(transportButtonWidth));
+
+    // The transport block: LOOP / RANGE / FULL / start / end across the top,
+    // Play / Rec / RTZ / capture-arrows-around-the-readout below, every
+    // column on the same transportButtonWidth grid. Its two rows come to
+    // exactly TempoSyncComponent's own height, so the two blocks sit level
+    // and the bar's height doesn't change.
+    auto transportBlock = centerZone.removeFromLeft(transportBlockWidth)
+                              .withSizeKeepingCentre(transportBlockWidth,
+                                                      transportRowHeight * 2 + transportRowGap);
+    auto topRow = transportBlock.removeFromTop(transportRowHeight);
+    transportBlock.removeFromTop(transportRowGap);
+    auto bottomRow = transportBlock;
+
+    loopButton.setBounds(topRow.removeFromLeft(transportButtonWidth));
+    topRow.removeFromLeft(zoneGap);
+    rangeCaptionLabel.setBounds(topRow.removeFromLeft(transportButtonWidth));
+    topRow.removeFromLeft(zoneGap);
+    fullButton.setBounds(topRow.removeFromLeft(transportButtonWidth));
+    topRow.removeFromLeft(zoneGap);
+    // What's left of topRow is exactly rangeGroupWidth - the span the row
+    // below has to line up with.
+    rangeStartField.setBounds(topRow.removeFromLeft(transportButtonWidth));
+    topRow.removeFromLeft(zoneGap);
+    rangeEndField.setBounds(topRow);
+
+    playPauseButton.setBounds(bottomRow.removeFromLeft(transportButtonWidth));
+    bottomRow.removeFromLeft(zoneGap);
+    recordButton.setBounds(bottomRow.removeFromLeft(transportButtonWidth));
+    bottomRow.removeFromLeft(zoneGap);
+    rtzButton.setBounds(bottomRow.removeFromLeft(transportButtonWidth));
+    bottomRow.removeFromLeft(zoneGap);
+
+    // The one alignment rule the cluster is built on: what's left of
+    // bottomRow is the same rangeGroupWidth span the two fields above fill,
+    // and the capture buttons go flush against its outer edges - so each
+    // arrow sits under the field it feeds, and the position readout lands
+    // dead centre between them as a consequence rather than as a separate
+    // adjustment.
+    captureStartButton.setBounds(bottomRow.removeFromLeft(captureArrowWidth));
+    captureEndButton.setBounds(bottomRow.removeFromRight(captureArrowWidth));
+    timeDisplayLabel.setBounds(bottomRow.withSizeKeepingCentre(positionReadoutWidth, transportRowHeight));
 }

@@ -449,6 +449,17 @@ void RecordingManager::drainAndFinalizeMidi(RecordingTrack& track, double record
 
     capture.sequence.updateMatchedPairs();
 
+    // Record what the take was actually played at. Every timestamp above is
+    // in ticks derived from captureBpm, so without this the file is only
+    // interpretable by someone who happens to remember that number -
+    // K-Player itself guessed with the current session tempo, and any other
+    // software opening the file assumed a default 120. Playback inside
+    // K-Player still follows the session tempo rather than this event (see
+    // MidiTakePlayer::loadTake), so this changes nothing about how a take
+    // sounds here - it just stops the file lying about itself.
+    capture.sequence.addEvent(juce::MidiMessage::tempoMetaEvent(
+        (int) std::round(60000000.0 / juce::jmax(1.0, capture.captureBpm))), 0.0);
+
     juce::MidiFile midiFile;
     midiFile.setTicksPerQuarterNote(ticksPerQuarterNote);
     midiFile.addTrack(capture.sequence);

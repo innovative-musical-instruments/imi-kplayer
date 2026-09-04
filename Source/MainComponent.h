@@ -361,10 +361,58 @@ private:
     // channel's MIDI and Audio Takes from the same take stay in lockstep.
     std::vector<std::unique_ptr<AudioTakePlayer>> audioTakePlayers;
     SessionTransport sessionTransport;
+
+    // The audio thread's copy of the session tempo, written by
+    // setGlobalTempo() and read once per callback by MIDI Take playback -
+    // same atomic-double shape KPlayerAudioPlayHead already uses to get the
+    // tempo across to the audio thread.
+    std::atomic<double> tempoForAudioThread { 120.0 };
     void loadMidiTakeForChannel(int index, const juce::File& file);
     void unloadMidiTakeForChannel(int index);
     void loadAudioTakeForChannel(int index, const juce::File& file);
     void unloadAudioTakeForChannel(int index);
+
+    // ---- Range state (see updateTransportRange() below) ----
+    // Deliberately a tri-state rather than just a pair of numbers: "the
+    // user has not set a range" has to stay distinguishable from "the user
+    // set one that happens to equal the full material", because only the
+    // former should silently grow when a longer Take is recorded or
+    // selected. rangeFullEnabled is the FULL toggle - it shows the
+    // material's own bounds while leaving the user's range remembered here,
+    // untouched. Held in whole seconds, matching the deliberately coarse
+    // mm:ss resolution the fields are edited at and keeping the range
+    // meaningful across a sample-rate change; converted to samples only
+    // when pushed into SessionTransport.
+    bool rangeUserSet          = false;
+    int  rangeUserStartSeconds = 0;
+    int  rangeUserEndSeconds   = 0;
+    bool rangeLoopEnabled      = false;
+    bool rangeFullEnabled      = false;
+    // Whole seconds of recorded material currently selected anywhere - the
+    // bounds FULL expands to, and the default range when the user hasn't
+    // set one. 0 means nothing is selected and there is no range at all.
+    int  materialLengthSeconds = 0;
+    // What refreshRangeState() last pushed out - i.e. the range actually in
+    // force, whether that's the user's or FULL's. The timer compares the
+    // playhead against these to decide which capture button would produce
+    // an inverted range and so has to dim.
+    int  effectiveRangeStartSeconds = 0;
+    int  effectiveRangeEndSeconds   = 0;
+
+    // The Range cluster's own click handlers, wired to GlobalSectionComponent
+    // in the constructor. Capturing or typing a value is what makes a range
+    // the user's - both therefore also drop out of FULL, since the whole
+    // point of FULL is that it is not your range.
+    void toggleRangeLoop();
+    void toggleRangeFull();
+    void captureRangeStartFromPlayhead();
+    void captureRangeEndFromPlayhead();
+    void setUserRange(int startSeconds, int endSeconds);
+
+    // Pushes the current range state out to both the transport and the bar.
+    // Separate from updateTransportRange() below only because that one also
+    // has to re-measure the material first, which is the expensive half.
+    void refreshRangeState();
 
     // Keeps the transport's Range in step with what's actually selected:
     // the range spans [0, longest selected Take] and is recomputed after
@@ -377,6 +425,11 @@ private:
     // contains all of the material rather than clipping its last fraction
     // of a second. Message thread only.
     void updateTransportRange();
+
+    // Current playhead position in whole seconds, floored - what the
+    // capture buttons pull into the range fields, and what decides which of
+    // them would produce an inverted range and so has to be dimmed.
+    int getPlayheadSeconds() const;
 
     juce::Component channelRackContent;
     juce::Viewport  channelViewport;
