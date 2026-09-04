@@ -366,6 +366,18 @@ private:
     void loadAudioTakeForChannel(int index, const juce::File& file);
     void unloadAudioTakeForChannel(int index);
 
+    // Keeps the transport's Range in step with what's actually selected:
+    // the range spans [0, longest selected Take] and is recomputed after
+    // any change to which Takes are loaded (a selection made or cleared, a
+    // channel-count change, a session load). With nothing selected the
+    // range is cleared and the transport free-runs exactly as it did
+    // before the Range existed. The end is rounded *up* to a whole second,
+    // matching the deliberately coarse mm:ss resolution the user will get
+    // to set a range at - rounding up rather than down so the range always
+    // contains all of the material rather than clipping its last fraction
+    // of a second. Message thread only.
+    void updateTransportRange();
+
     juce::Component channelRackContent;
     juce::Viewport  channelViewport;
 

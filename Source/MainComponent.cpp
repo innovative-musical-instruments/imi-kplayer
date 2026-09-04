@@ -1,6 +1,7 @@
 #include "MainComponent.h"
 #include "PluginBrowserComponent.h"
 #include <array>
+#include <cmath>
 
 namespace
 {
@@ -227,6 +228,10 @@ void MainComponent::setChannelCount(int newCount)
     // unarmed; a shrink can drop the very channels that were making the
     // aggregate true) - recompute rather than leaving a stale reflection.
     updateArmAllButtonState();
+
+    // A shrink can also drop the very channel whose Take was the longest
+    // one the Range was spanning.
+    updateTransportRange();
 }
 
 void MainComponent::resetToDefaultSession()
@@ -255,6 +260,10 @@ void MainComponent::resetToDefaultSession()
     deviceManager.addAudioCallback(this);
     globalSection.setChannelCount(defaultChannelCount);
     resized();
+
+    // Every player was just destroyed and rebuilt empty - no Take is
+    // selected any more, so there is nothing left for a Range to span.
+    updateTransportRange();
 
     for (int slot = 0; slot < MasterChainProcessor::numSlots; ++slot)
         masterChainProcessor.unloadPlugin(slot);
@@ -440,6 +449,12 @@ void MainComponent::timerCallback()
     if (loadingOverlay != nullptr && ! overlayShowingWarmup)
         loadingOverlay->setScanStatus(pluginManager.getCurrentlyScanningPluginName(),
                                        pluginManager.getScanProgress());
+
+    // The transport stops itself on reaching the end of the Range with LOOP
+    // off (see SessionTransport::advanceAndGetBlockStartPosition) - nobody
+    // clicked anything, so bring the Play button back in step here.
+    if (sessionTransport.consumeStoppedAtRangeEnd())
+        globalSection.setTransportPlaying(false);
 
     // Transport time readout (mm:ss) - see GlobalSectionComponent::
     // setDisplayedTime()'s own comment for why this single clock covers
@@ -690,6 +705,7 @@ void MainComponent::loadMidiTakeForChannel(int index, const juce::File& file)
     auto* device = deviceManager.getCurrentAudioDevice();
     double sampleRate = device != nullptr ? device->getCurrentSampleRate() : currentSampleRate;
     midiTakePlayers[(size_t) index]->loadTake(file, sampleRate, currentTempo);
+    updateTransportRange();
 }
 
 void MainComponent::unloadMidiTakeForChannel(int index)
@@ -697,6 +713,7 @@ void MainComponent::unloadMidiTakeForChannel(int index)
     if (index < 0 || index >= (int) midiTakePlayers.size())
         return;
     midiTakePlayers[(size_t) index]->unload();
+    updateTransportRange();
 }
 
 void MainComponent::resolveMidiTakeSelectionForChannel(int index)
@@ -716,6 +733,7 @@ void MainComponent::loadAudioTakeForChannel(int index, const juce::File& file)
     if (index < 0 || index >= (int) audioTakePlayers.size())
         return;
     audioTakePlayers[(size_t) index]->loadTake(file);
+    updateTransportRange();
 }
 
 void MainComponent::unloadAudioTakeForChannel(int index)
@@ -723,6 +741,31 @@ void MainComponent::unloadAudioTakeForChannel(int index)
     if (index < 0 || index >= (int) audioTakePlayers.size())
         return;
     audioTakePlayers[(size_t) index]->unload();
+    updateTransportRange();
+}
+
+void MainComponent::updateTransportRange()
+{
+    // Ask the players rather than the processors' Take identifiers: the two
+    // are always kept in step by resolveMidiTakeSelectionForChannel()/
+    // resolveAudioTakeSelectionForChannel(), and an unloaded player reports
+    // a length of 0, so a plain max over every player is both simpler and
+    // impossible to get out of sync with what is genuinely loaded and
+    // therefore genuinely audible.
+    juce::int64 longestTakeSamples = 0;
+    for (auto& player : midiTakePlayers)
+        longestTakeSamples = juce::jmax(longestTakeSamples, player->getLengthSamples());
+    for (auto& player : audioTakePlayers)
+        longestTakeSamples = juce::jmax(longestTakeSamples, player->getLengthSamples());
+
+    if (longestTakeSamples <= 0)
+    {
+        sessionTransport.clearRange();
+        return;
+    }
+
+    auto wholeSeconds = (juce::int64) std::ceil((double) longestTakeSamples / currentSampleRate);
+    sessionTransport.setRange(0, (juce::int64) (wholeSeconds * currentSampleRate));
 }
 
 void MainComponent::resolveAudioTakeSelectionForChannel(int index)
@@ -897,6 +940,12 @@ void MainComponent::refreshRecordingUI()
     // triggered it, current or future.
     if (active)
         recordArmedForNextPlay = false;
+
+    // Recording ignores the Range entirely - it captures linearly from
+    // wherever the playhead is, straight past the range end, rather than
+    // looping or stopping there. Suspending rather than clearing keeps the
+    // user's bounds intact (and on screen) for when the take finishes.
+    sessionTransport.setRangeSuspended(active);
 
     globalSection.setRecordState(active ? GlobalSectionComponent::RecordState::recording
                                         : GlobalSectionComponent::RecordState::idle);

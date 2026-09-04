@@ -48,6 +48,15 @@ public:
 
     static constexpr int ticksPerQuarterNote = 960;
 
+    // Message thread only. Length of the currently loaded Take in samples
+    // (0 when nothing is loaded), at the sample rate/tempo it was loaded
+    // with - used by MainComponent::updateTransportRange to work out the
+    // longest selected Take, which is what the transport's default Range
+    // spans. Deliberately a plain member rather than an atomic: it is only
+    // ever written by loadTake()/unload() and only ever read by the same
+    // message thread, never by renderBlock().
+    juce::int64 getLengthSamples() const { return lengthSamples; }
+
     // Audio thread. transportPositionSamples/numSamples describe this
     // block's window on the shared SessionTransport (see
     // SessionTransport::advanceAndGetBlockStartPosition, called once per
@@ -84,6 +93,10 @@ private:
     // `published`, never this directly - see publish() below.
     std::unique_ptr<LoadedTake> storage;
     std::atomic<LoadedTake*> published { nullptr };
+
+    // See getLengthSamples() - message-thread-only, kept in step with what
+    // publish() last published.
+    juce::int64 lengthSamples = 0;
 
     void publish(std::unique_ptr<LoadedTake> newTake);
 

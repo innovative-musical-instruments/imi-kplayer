@@ -1,4 +1,5 @@
 #include "MidiTakePlayer.h"
+#include <cmath>
 
 void MidiTakePlayer::publish(std::unique_ptr<LoadedTake> newTake)
 {
@@ -44,12 +45,18 @@ bool MidiTakePlayer::loadTake(const juce::File& midiFile, double sampleRate, dou
         take->sequence.addEvent(juce::MidiMessage(holder->message, samples));
     }
 
+    // The sequence's own end time is the last event's timestamp, which for
+    // a Take always includes its final note-off - already in samples here,
+    // since every timestamp was converted above.
+    lengthSamples = (juce::int64) std::ceil(take->sequence.getEndTime());
+
     publish(std::move(take));
     return true;
 }
 
 void MidiTakePlayer::unload()
 {
+    lengthSamples = 0;
     publish(nullptr);
 }
 
