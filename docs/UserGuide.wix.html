@@ -411,8 +411,8 @@
         <li><a href="#5-midi-routing"><span class="n">05</span>MIDI Routing</a></li>
         <li><a href="#6-audio-routing"><span class="n">06</span>Audio Input Routing</a></li>
         <li><a href="#7-master-bus"><span class="n">07</span>The Master Bus</a></li>
-        <li><a href="#8-tempo-sync"><span class="n">08</span>Tempo &amp; MIDI Clock Sync</a></li>
-        <li><a href="#9-transport"><span class="n">09</span>Transport</a></li>
+        <li><a href="#8-tempo-sync"><span class="n">08</span>Tempo, Sync &amp; the Metronome Click</a></li>
+        <li><a href="#9-transport"><span class="n">09</span>Transport: Play, Range &amp; Loop</a></li>
         <li><a href="#10-recording"><span class="n">10</span>Recording</a></li>
         <li><a href="#11-import-audio"><span class="n">11</span>Importing Audio to a Track</a></li>
         <li><a href="#12-sessions"><span class="n">12</span>Saving &amp; Loading Sessions</a></li>
@@ -464,9 +464,12 @@
           <li><strong>Global bar</strong> (bottom, always visible, spans the
           full window width) — left to right: the IMI logo, channel count
           controls, a Settings button, and a collapse toggle for each
-          channel's I/O rows; centered, tempo/sync controls with a MIDI sync
-          device selector, a transport time readout, the session transport
-          (Play/Pause, RTZ), and Record Ready; then Show/Work Mode, Panic,
+          channel's I/O rows; centered, a two-row transport block — tempo/sync
+          controls with a MIDI sync device selector and the metronome
+          <strong>Click</strong> toggle, then <strong>LOOP</strong>,
+          <strong>FULL</strong> and the <strong>Range</strong> start/end
+          fields above Play/Pause, Record Ready, RTZ and the playhead
+          readout with its two capture buttons; then Show/Work Mode, Panic,
           and the Tribal Tools logo.</li>
         </ul>
         <p>If your channel count doesn't fit on screen, scroll the channel
@@ -635,12 +638,16 @@
       </section>
 
       <section class="chapter" id="8-tempo-sync">
-        <h2><span class="num">08</span>Tempo &amp; MIDI Clock Sync</h2>
-        <p>The global bar includes a tempo display and Sync control:</p>
+        <h2><span class="num">08</span>Tempo, Sync &amp; the Metronome Click</h2>
+        <p>The global bar includes a tempo display, a Sync control, and a
+        metronome Click toggle:</p>
         <ul>
           <li>With sync off, click the BPM value to type a tempo directly
-          (20–300 BPM). This tempo is shared by every channel's and the
-          master bus's plugins.</li>
+          (20–1200 BPM). This tempo is shared by every channel's and the
+          master bus's plugins. The ceiling is deliberately far above what
+          reads as a musical tempo, because Kadabra's own sequencer runs
+          well past the conventional ~300 limit and KPlayer follows it
+          there.</li>
           <li>Click <strong>Sync</strong> and pick a MIDI input device to
           instead follow that device's incoming MIDI clock. While synced,
           the tempo display becomes read-only and tracks the detected clock
@@ -648,25 +655,98 @@
           turns orange and holds the last known tempo rather than reverting
           to a manual value.</li>
         </ul>
+        <p>Changing the tempo takes effect immediately, including while a
+        MIDI Take is playing. The change applies <em>from where playback
+        has reached</em> rather than re-timing what has already played, so
+        a tempo swept by an incoming clock is simply followed.</p>
+
+        <h3>The metronome click</h3>
+        <p><strong>CLICK</strong>, directly above the Sync button, toggles
+        a metronome generated inside KPlayer. It uses no MIDI channel and
+        no plugin slot, follows the session tempo, and only sounds while
+        the transport is playing.</p>
+        <p>It is mixed in after the master bus's insert chain and after the
+        recording tap, so it never runs through your master effects and
+        <strong>can never end up in a recording</strong> — you can click
+        along to a take you are recording without it being captured.</p>
+        <p>Right-click <strong>CLICK</strong> (or ctrl-click on macOS) for
+        its options:</p>
+        <ul>
+          <li><strong>Sound</strong> — <em>Click</em> (a short unpitched
+          transient) or <em>Beep</em> (a 1 kHz tone).</li>
+          <li><strong>Resolution</strong> — how often it lands:
+          <code>2/1</code> (every eight beats), <code>1</code>,
+          <code>1/2</code>, <code>1/4</code> (the default, one per beat) or
+          <code>1/8</code>.</li>
+          <li><strong>Volume</strong> — 0 dB down to −18 dB in 3 dB steps.
+          The default is −12 dB.</li>
+        </ul>
+        <p>The click's settings are saved with the session.</p>
       </section>
 
       <section class="chapter" id="9-transport">
-        <h2><span class="num">09</span>Transport</h2>
+        <h2><span class="num">09</span>Transport: Play, Range &amp; Loop</h2>
         <p>The global bar's transport controls a shared playhead used
         for MIDI Take playback (and Audio Take playback, which follows the
         same clock):</p>
         <ul>
           <li><strong>PLAY / PAUSE</strong> — starts or pauses playback of
           anything currently routed to a Recorded Take.</li>
-          <li><strong>RTZ</strong> — returns the playhead to the very
-          start.</li>
-          <li>A <strong>mm:ss</strong> time readout shows elapsed transport
-          time (and doubles as the recording-elapsed display while recording
-          is active).</li>
+          <li><strong>RTZ</strong> — returns the playhead to the start of
+          the Range (see below). With no Range set that is simply the
+          beginning.</li>
+          <li>A <strong>mm:ss</strong> playhead readout, which doubles as
+          the recording-elapsed display while recording is active.
+          <strong>Double-click it and type a time</strong> to jump the
+          playhead there — the quick way to reach a spot in a long take
+          without listening through it. It accepts <code>mm:ss</code> or a
+          plain number of seconds, and is read-only while recording.</li>
         </ul>
         <p>Playback is independent of recording — you can audition a
         recorded Take through a different instrument with Play alone, with
         nothing being written to disk.</p>
+
+        <h3>The Range</h3>
+        <p>The <strong>Range</strong> is the span of the session the
+        transport plays. It is always active whenever any channel has a
+        Recorded Take selected, and defaults to the whole of the longest
+        selected take — so the playhead stops at the end of your material
+        instead of running on into silence forever.</p>
+        <p>The two fields on the top transport row show the range
+        <strong>start</strong> and <strong>end</strong>. There are two ways
+        to set them:</p>
+        <ul>
+          <li><strong>Double-click a field</strong> and type a time
+          (<code>mm:ss</code>, or a plain number of seconds).</li>
+          <li><strong>Click the capture button (↑)</strong> beneath a field
+          to drop the current playhead position into it. This is the fast
+          way to mark a section while listening. The button that would put
+          the start after the end dims, rather than the range being
+          silently corrected.</li>
+        </ul>
+        <p>Two toggles sit alongside:</p>
+        <ul>
+          <li><strong>LOOP</strong> — wrap around to the range start on
+          reaching the end, instead of stopping there. Parked at the end,
+          pressing Play starts the range again from the top. LOOP dims
+          while recording.</li>
+          <li><strong>FULL</strong> — temporarily play the whole of the
+          recorded material while remembering the range you set. Your range
+          values grey out and go italic while it is lit, to show they are
+          not the ones in force. Click it again to get your range back. Use
+          it to hear a whole take again, or when a newly recorded, longer
+          take has outgrown a range you set earlier.</li>
+        </ul>
+        <p>Range times are set to whole seconds. The start rounds down and
+        the end rounds up, so the range always contains the moment you
+        marked.</p>
+        <p><strong>Recording ignores the Range.</strong> A take records
+        linearly from wherever the playhead is and runs straight past the
+        range end without stopping or looping, so a range you set for
+        auditioning can never truncate a recording.</p>
+        <p>The range and the LOOP setting are saved with the session. FULL
+        is not — it is a temporary view of your material rather than a
+        setting.</p>
       </section>
 
       <section class="chapter" id="10-recording">

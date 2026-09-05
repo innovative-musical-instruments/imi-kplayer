@@ -58,6 +58,21 @@ and notarization credentials already stored in Keychain (`xcrun notarytool
 store-credentials "kplayer-notary" ...`, a one-time, human-only, interactive
 step — never something to script or automate).
 
+The script notarizes and staples **both** the app and the finished DMG.
+The DMG half was added 2026-09-05: it used to only sign the disk image, so
+`spctl` reported it "rejected, source=Unnotarized Developer ID" even though
+the app inside was properly stapled — a download would hit an "unidentified
+developer" warning on the image itself, and fail outright offline. The
+0.9.7 and 0.9.8 disk images still have that gap if they're ever handed out
+again.
+
+Finished builds are copied by hand to `/Volumes/Vinch2T/IMI/IMI
+DEV/Releases/KPlayer/` (the app bundle and the DMG), alongside the other
+IMI products' release folders. Use `ditto` rather than `cp -R` for the
+`.app` so the signature and extended attributes survive the copy, and
+re-verify `codesign`/`stapler`/`spctl` on the *copies*, not just the
+originals.
+
 **Windows:**
 ```
 cmake -B build -G "Visual Studio 18 2026"
@@ -149,7 +164,7 @@ SDK swap, easy to forget since nothing in the diff will mention it.
   space auto-stop).
 - `Source/SessionIO.cpp` / `SessionMigrator.{h,cpp}` / `SessionFormat.{h,cpp}`
   — `.kplayer` session serialization and versioned migration (current
-  `formatVersion` 4 — never edit a shipped migration step, only append new
+  `formatVersion` 5 — never edit a shipped migration step, only append new
   ones). Plugin slots relink by identity, not by the saved path: a saved
   `PluginDescription`'s `fileOrIdentifier` is an absolute, machine-specific
   install path (baked in from whichever machine saved the file) that's
@@ -158,6 +173,31 @@ SDK swap, easy to forget since nothing in the diff will mention it.
   re-resolves it against this machine's own scanned `PluginManager`
   plugin list first, matched by `uniqueId` (falls back to name+manufacturer+
   format). See the "Cross-platform session plugin relink" note below.
+- `Source/SessionTransport.h` — the shared playhead every Take player
+  renders against, and the **Range**: the [start, end) span the transport
+  plays, a LOOP flag deciding whether reaching the end wraps or stops, and
+  a suspend flag recording sets (a take records linearly straight past the
+  range end). With LOOP off the audio thread parks on the end, pauses
+  itself and raises `stoppedAtRangeEnd`, which MainComponent's timer
+  consumes to resync the Play button. `MainComponent::updateTransportRange()`
+  keeps it spanning the longest selected Take.
+- `Source/MidiTakePlayer.{h,cpp}` / `AudioTakePlayer.{h,cpp}` — per-channel
+  Take playback. **MIDI Takes are kept in ticks, not samples**, and
+  converted per block against the tempo read fresh each callback, so a
+  tempo change is audible immediately (it used to be baked in at load, and
+  changing the tempo did nothing until the Take was reselected). The
+  musical position is integrated block by block, so a change applies from
+  wherever playback has reached rather than retroactively; a genuine jump
+  (RTZ, a Range loop wrap, a new Take, a typed seek) re-anchors to the
+  transport position at the current tempo, while pause/resume deliberately
+  does not.
+- `Source/ClickGenerator.h` — the metronome. Synthesized inline (no plugin,
+  no MIDI, no audio file), on the same tick clock and re-anchor rule as
+  `MidiTakePlayer` so click and Take can't drift apart. Mixed in as the
+  very last thing in the audio callback: after the master chain, after
+  `RecordingManager`'s tap (so it can never be recorded), and after the
+  peak metering (so it doesn't move the meters) — which is why its default
+  level is -12 dB, since it sits outside clip detection.
 - `Source/PluginManager.{h,cpp}` — VST3/AU scanning and caching.
 - `docs/*.md` — MVP spec, session format versioning spec, refinement spec,
   first-release backlog, and the save/load + SysEx design notes.
