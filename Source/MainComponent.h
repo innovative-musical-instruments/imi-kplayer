@@ -80,6 +80,20 @@ public:
     // component just reflects it. tempoSyncDeviceIdentifier empty means "no
     // sync source picked yet", independent of whether sync itself is on.
     bool isTempoSyncEnabled() const { return tempoSyncEnabled; }
+
+    // ---- Range, for session round-trip (see SessionIO) ----
+    // Only the user's own range is persisted, never FULL: FULL is a
+    // temporary "show me the whole thing" view of the material rather than
+    // a setting, and reopening a session parked in it would look like the
+    // range had been lost.
+    bool isRangeUserSet() const      { return rangeUserSet; }
+    int  getRangeStartSeconds() const { return rangeUserStartSeconds; }
+    int  getRangeEndSeconds() const   { return rangeUserEndSeconds; }
+    bool isRangeLoopEnabled() const   { return rangeLoopEnabled; }
+
+    // Load-side counterpart. Deliberately doesn't mark the session dirty -
+    // same convention as every other setter SessionIO drives.
+    void restoreRange(bool userSet, int startSeconds, int endSeconds, bool loopEnabled);
     void setTempoSyncEnabled(bool enabled);
     juce::String getTempoSyncDeviceIdentifier() const { return tempoSyncDeviceIdentifier; }
     void setTempoSyncDeviceIdentifier(juce::String identifier);

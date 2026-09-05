@@ -832,6 +832,23 @@ void MainComponent::refreshRangeState()
     globalSection.setLoopEnabled(rangeLoopEnabled);
 }
 
+void MainComponent::restoreRange(bool userSet, int startSeconds, int endSeconds, bool loopEnabled)
+{
+    // An inverted or empty saved range is treated as no range at all rather
+    // than trusted - a file can always have been hand-edited, and the rest
+    // of the range code is entitled to assume end > start.
+    rangeUserSet          = userSet && endSeconds > startSeconds;
+    rangeUserStartSeconds = juce::jmax(0, startSeconds);
+    rangeUserEndSeconds   = juce::jmax(0, endSeconds);
+    rangeLoopEnabled      = loopEnabled;
+    rangeFullEnabled      = false;
+
+    // The material may not be loaded yet at this point in a session load -
+    // resolving each channel's Take selection calls updateTransportRange()
+    // again afterwards, and the range restored here survives that untouched.
+    refreshRangeState();
+}
+
 int MainComponent::getPlayheadSeconds() const
 {
     return (int) ((double) sessionTransport.getPositionSamples() / currentSampleRate);

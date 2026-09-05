@@ -336,6 +336,11 @@ bool SessionIO::saveSession(const juce::File& file,
     root->setProperty("tempoSyncDeviceIdentifier", mainComponent.getTempoSyncDeviceIdentifier());
     root->setProperty("tempoSyncDeviceName", resolveMidiDeviceName(mainComponent.getTempoSyncDeviceIdentifier()));
 
+    root->setProperty("rangeUserSet", mainComponent.isRangeUserSet());
+    root->setProperty("rangeStartSeconds", mainComponent.getRangeStartSeconds());
+    root->setProperty("rangeEndSeconds", mainComponent.getRangeEndSeconds());
+    root->setProperty("rangeLoopEnabled", mainComponent.isRangeLoopEnabled());
+
     root->setProperty("recordingsFolder", mainComponent.getRecordingsFolder().getFullPathName());
     root->setProperty("recordingSilenceTimeoutSeconds", mainComponent.getRecordingSilenceTimeoutSeconds());
     root->setProperty("masterArmed", mainComponent.isMasterArmed());
@@ -429,6 +434,11 @@ bool SessionIO::loadSession(const juce::File& file,
         mainComponent.setTempoSyncDeviceIdentifier(resolveLocalMidiDeviceIdentifier(savedSyncId, savedSyncName));
     }
     mainComponent.setTempoSyncEnabled((bool) parsed.getProperty("tempoSyncEnabled", false));
+
+    mainComponent.restoreRange((bool) parsed.getProperty("rangeUserSet", false),
+                                (int)  parsed.getProperty("rangeStartSeconds", 0),
+                                (int)  parsed.getProperty("rangeEndSeconds", 0),
+                                (bool) parsed.getProperty("rangeLoopEnabled", false));
 
     mainComponent.setRecordingsFolder(juce::File(parsed.getProperty("recordingsFolder", juce::String()).toString()));
     // Picks up this session's Take groups for the Master section's bulk

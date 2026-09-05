@@ -21,6 +21,7 @@ const std::vector<SessionMigrator::MigrationStep>& SessionMigrator::getMigration
         migrate_v1_to_v2,
         migrate_v2_to_v3,
         migrate_v3_to_v4,
+        migrate_v4_to_v5,
     };
     return chain;
 }
@@ -99,5 +100,32 @@ juce::var SessionMigrator::migrate_v3_to_v4(const juce::var& v3Json)
         obj->setProperty("masterArmed", false);
 
     obj->setProperty("formatVersion", 4);
+    return upgraded;
+}
+
+// The transport Range: the span of the session the transport plays, and
+// whether it loops at the end. An older file has no range in it, which is
+// exactly the "user hasn't set one" state - so it defaults to that and the
+// range simply spans whatever material the session's Takes turn out to be,
+// which is how the session behaved before the Range existed.
+juce::var SessionMigrator::migrate_v4_to_v5(const juce::var& v4Json)
+{
+    auto upgraded = v4Json.clone();
+    auto* obj = upgraded.getDynamicObject();
+    jassert(obj != nullptr);
+
+    if (! upgraded.hasProperty("rangeUserSet"))
+        obj->setProperty("rangeUserSet", false);
+
+    if (! upgraded.hasProperty("rangeStartSeconds"))
+        obj->setProperty("rangeStartSeconds", 0);
+
+    if (! upgraded.hasProperty("rangeEndSeconds"))
+        obj->setProperty("rangeEndSeconds", 0);
+
+    if (! upgraded.hasProperty("rangeLoopEnabled"))
+        obj->setProperty("rangeLoopEnabled", false);
+
+    obj->setProperty("formatVersion", 5);
     return upgraded;
 }
