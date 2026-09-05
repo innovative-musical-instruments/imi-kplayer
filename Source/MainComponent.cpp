@@ -1,6 +1,7 @@
 #include "MainComponent.h"
 #include "PluginBrowserComponent.h"
 #include <array>
+#include <cmath>
 
 namespace
 {
@@ -35,70 +36,78 @@ MainComponent::MainComponent(juce::AudioDeviceManager& dm, PluginManager& pm)
     masterChainComponent.onVolumeChanged = [this](float linearGain) { masterVolume = linearGain; notifyDirty(); };
     masterChainProcessor.onBypassChanged = [this](int) { masterChainComponent.refresh(); };
     masterChainComponent.onMasterArmToggled = [this](bool armed) { setMasterArmed(armed); notifyDirty(); };
-    masterChainComponent.onPlayPauseClicked = [this] { toggleTransportPlaying(); };
-    masterChainComponent.onRtzClicked       = [this] { rtzTransport(); };
-    masterChainComponent.onRecordButtonClicked = [this]
+    masterChainComponent.onArmAllClicked    = [this] { toggleArmAll(); };
+    masterChainComponent.onAudioInputSelected = [this](int channelIndex, const juce::File& takeFolder)
     {
-        // Lazy prompt: ask for a recordings folder right here the first
-        // time it's needed, rather than requiring a trip to Settings first.
-        if (! recordingManager.isRecording() && recordingManager.getRecordingsFolder() == juce::File())
-        {
-            recordingFolderChooser = std::make_unique<juce::FileChooser>(
-                "Choose a folder for recordings",
-                juce::File::getSpecialLocation(juce::File::userMusicDirectory));
-
-            auto flags = juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories;
-            recordingFolderChooser->launchAsync(flags, [this](const juce::FileChooser& chooser)
-            {
-                auto result = chooser.getResult();
-                if (result == juce::File())
-                    return;
-
-                setRecordingsFolder(result);
-                notifyDirty();
-
-                auto error = toggleRecording();
-                if (error.isNotEmpty())
-                    juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, "Recording", error);
-            });
-            return;
-        }
-
-        auto error = toggleRecording();
-        if (error.isNotEmpty())
-            juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, "Recording", error);
+        applyMasterAudioInputSelection(channelIndex, takeFolder);
+    };
+    masterChainComponent.onMidiInputSelected = [this](juce::String deviceIdentifier, const juce::File& takeFolder)
+    {
+        applyMasterMidiInputSelection(deviceIdentifier, takeFolder);
+    };
+    masterChainComponent.onBypassChannelsRequested = [this](int channelSlotIndex, bool bypass)
+    {
+        applyBulkBypass(channelSlotIndex, bypass);
     };
     masterChainComponent.setLevelMeterSources(&masterPeakLeft, &masterPeakRight,
                                               &masterClipFlagLeft, &masterClipFlagRight);
     addAndMakeVisible(masterChainComponent);
-    addAndMakeVisible(brandingStrip);
 
-    collapseInputButton.setButtonText("Hide Channel I/O's");
-    collapseInputButton.onClick = [this] { toggleInputSectionCollapsed(); };
-    addAndMakeVisible(collapseInputButton);
+    // Both need MainWindow-level context this component doesn't have
+    // (a confirm dialog for a destructive shrink, opening the Settings
+    // DialogWindow) - just forwarded up to whatever Main.cpp wires there.
+    globalSection.onChannelCountChangeRequested = [this](int newCount)
+    {
+        if (onChannelCountChangeRequested) onChannelCountChangeRequested(newCount);
+    };
+    globalSection.onSettingsRequested = [this] { if (onSettingsRequested) onSettingsRequested(); };
+    globalSection.onCollapseToggled   = [this] { toggleInputSectionCollapsed(); };
+    globalSection.onPlayPauseClicked  = [this] { toggleTransportPlaying(); };
+    globalSection.onRtzClicked        = [this] { rtzTransport(); };
+    globalSection.onPanicClicked      = [this] { triggerPanic(); };
+    // Record Ready click routing (idle -> armed -> recording -> idle) -
+    // see toggleRecordArm()'s own comment for the full state machine.
+    globalSection.onRecordButtonClicked = [this] { toggleRecordArm(); };
+    globalSection.onShowModeToggled = [this] { setShowModeEnabled(! showModeEnabled); };
+
+    globalSection.onPositionEdited    = [this](int seconds) { seekToSeconds(seconds); };
+    globalSection.onLoopToggled       = [this] { toggleRangeLoop(); };
+    globalSection.onFullToggled       = [this] { toggleRangeFull(); };
+    globalSection.onCaptureRangeStart = [this] { captureRangeStartFromPlayhead(); };
+    globalSection.onCaptureRangeEnd   = [this] { captureRangeEndFromPlayhead(); };
+    globalSection.onRangeStartEdited  = [this](int seconds) { setUserRange(seconds, rangeUserSet ? rangeUserEndSeconds : materialLengthSeconds); };
+    globalSection.onRangeEndEdited    = [this](int seconds) { setUserRange(rangeUserSet ? rangeUserStartSeconds : 0, seconds); };
+    addAndMakeVisible(globalSection);
+
+    // Loaded here (not via an in-class initializer, since globalSection
+    // itself needs to already exist to receive the pushed value) - app-
+    // level persisted setting, see isShowModeEnabled()'s own comment.
+    setShowModeEnabled(getShowModeFile().loadFileAsString().trim() == "1");
 
     // Manual edits only apply while sync is off (TempoSyncComponent itself
     // won't even let the value label be edited while synced, but the guard
     // here is what actually matters). Sync-on/off and device changes are
     // deliberate user actions - unlike the sync-driven tempo ticks in
     // timerCallback(), they do mark the session dirty.
-    tempoSyncComponent.onTempoChanged = [this](double bpm)
+    auto& tempoSync = globalSection.getTempoSyncComponent();
+    tempoSync.onTempoChanged = [this](double bpm)
     {
         if (tempoSyncEnabled) return;
         setGlobalTempo(bpm);
         notifyDirty();
     };
-    tempoSyncComponent.onSyncToggled = [this](bool enabled)
+    tempoSync.onSyncToggled = [this](bool enabled)
     {
         setTempoSyncEnabled(enabled);
         notifyDirty();
     };
-    tempoSyncComponent.onSyncDeviceChanged = [this](juce::String identifier)
+    tempoSync.onClickToggled          = [this] { toggleClick(); };
+    tempoSync.onClickOptionsRequested = [this] { showClickOptionsMenu(); };
+    tempoSync.onSyncDeviceChanged = [this](juce::String identifier)
     {
         setTempoSyncDeviceIdentifier(std::move(identifier));
         notifyDirty();
     };
-    addAndMakeVisible(tempoSyncComponent);
 
     // Fires from RecordingManager's silence/disk-space watchdog (see
     // timerCallback() -> pollForAutoStop()) - refresh the arm/recording
@@ -222,13 +231,74 @@ void MainComponent::setChannelCount(int newCount)
     recordingManager.setChannelCount(newCount);
 
     deviceManager.addAudioCallback(this);
+    globalSection.setChannelCount(newCount);
     resized();
+
+    // A resize changes what "all" means (new channels always start
+    // unarmed; a shrink can drop the very channels that were making the
+    // aggregate true) - recompute rather than leaving a stale reflection.
+    updateArmAllButtonState();
+
+    // A shrink can also drop the very channel whose Take was the longest
+    // one the Range was spanning.
+    updateTransportRange();
+}
+
+void MainComponent::resetToDefaultSession()
+{
+    // See the header comment - rebuild the channel rig completely from
+    // scratch rather than going through setChannelCount() (which clamps to
+    // a minimum of 1 and so always leaves one pre-existing channel
+    // surviving, plugins and all). Clearing every vector first destroys
+    // every ChannelProcessor/ChannelComponent outright, unloading every
+    // plugin along the way, then addChannel() rebuilds defaultChannelCount
+    // fresh ones exactly as MainComponent's own constructor does. Same
+    // audio-callback detach as setChannelCount() while the vectors it
+    // reads on the audio thread are out from under it.
+    deviceManager.removeAudioCallback(this);
+
+    channelComponents.clear();
+    channelProcessors.clear();
+    midiTakePlayers.clear();
+    audioTakePlayers.clear();
+
+    for (int i = 0; i < defaultChannelCount; ++i)
+        addChannel(i);
+
+    recordingManager.setChannelCount(defaultChannelCount);
+
+    deviceManager.addAudioCallback(this);
+    globalSection.setChannelCount(defaultChannelCount);
+    resized();
+
+    // Every player was just destroyed and rebuilt empty - no Take is
+    // selected any more, so there is nothing left for a Range to span.
+    updateTransportRange();
+
+    for (int slot = 0; slot < MasterChainProcessor::numSlots; ++slot)
+        masterChainProcessor.unloadPlugin(slot);
+
+    setMasterVolume(1.0f);
+    setGlobalTempo(120.0);
+    setTempoSyncEnabled(false);
+    setTempoSyncDeviceIdentifier({});
+    setRecordingsFolder({});
+    setRecordingSilenceTimeoutSeconds(60.0);
+    setMasterArmed(false);
+    setInputSectionCollapsedState(false);
+    setLastLoadedFormatVersion(SessionMigrator::kCurrentFormatVersion);
+    setLastLoadedExtraFields({});
+
+    refreshMasterChainUI();
+    for (int i = 0; i < getNumChannels(); ++i)
+        refreshChannelUI(i);
 }
 
 void MainComponent::setInputSectionCollapsedState(bool collapsed)
 {
     inputSectionCollapsed = collapsed;
-    collapseInputButton.setButtonText(inputSectionCollapsed ? "Show Channel I/O's" : "Hide Channel I/O's");
+    globalSection.setInputSectionCollapsed(inputSectionCollapsed);
+    masterChainComponent.setInputSectionCollapsed(inputSectionCollapsed);
     for (auto& c : channelComponents)
         c->setInputSectionCollapsed(inputSectionCollapsed);
 }
@@ -237,6 +307,22 @@ void MainComponent::toggleInputSectionCollapsed()
 {
     setInputSectionCollapsedState(! inputSectionCollapsed);
     notifyDirty();
+}
+
+juce::File MainComponent::getShowModeFile()
+{
+    return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
+               .getChildFile("IMI").getChildFile("KPlayer").getChildFile("show_mode.txt");
+}
+
+void MainComponent::setShowModeEnabled(bool enabled)
+{
+    showModeEnabled = enabled;
+    globalSection.setShowModeEnabled(showModeEnabled);
+
+    auto file = getShowModeFile();
+    file.getParentDirectory().createDirectory();
+    file.replaceWithText(showModeEnabled ? "1" : "0");
 }
 
 bool MainComponent::channelHasLoadedPlugin(int index) const
@@ -303,22 +389,122 @@ MainComponent::~MainComponent()
         deviceManager.removeMidiInputDeviceCallback(input.identifier, this);
 }
 
+void MainComponent::showWarmingUpOverlay()
+{
+    if (loadingOverlay == nullptr)
+        return;
+
+    overlayShowingWarmup = true;
+    loadingOverlay->setWarmingUp();
+
+    // repaint() alone never reaches the screen here: JUCE's macOS peer only
+    // queues the region (NSViewComponentPeer::repaint() adds to
+    // deferredRepaints) and converts it to a real native redraw on the next
+    // VBlank callback - which won't fire if the caller dives straight into
+    // tryAutoLoadKadabraSession()'s own blocking work right after this
+    // returns. Deferring that call via MessageManager::callAsync isn't
+    // enough either - confirmed live via trace logging that the queued
+    // lambda ran in the same millisecond as this call, with zero paints in
+    // between, so callAsync provides no actual guarantee a VBlank has run.
+    // Briefly pumping the dispatch loop here does: it's a real (if nested)
+    // pass through the event loop, long enough for at least one VBlank/
+    // paint cycle to land, so what's frozen on screen for the coming block
+    // is genuinely this message rather than a stale "Scanning plugins...".
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+}
+
 void MainComponent::onScanComplete()
 {
     pluginsReady = true;
+    overlayShowingWarmup = false;
     loadingOverlay.reset();
+
+    // Surface a crash from the *previous* scan (this one just finished
+    // cleanly, or we wouldn't have got here at all - see PluginManager's
+    // own comment on why this list is safe to read exactly once here).
+    // The plugin(s) are already blacklisted, not silently missing - point
+    // at the plugin browser's "Failed to Load" section (Increment 4) for
+    // the retry path rather than duplicating it here.
+    auto crashed = pluginManager.getPluginsSkippedByLastCrash();
+    if (! crashed.isEmpty())
+    {
+        juce::String message = crashed.size() == 1
+            ? "1 plugin crashed during a previous scan and was automatically skipped:\n\n"
+            : juce::String(crashed.size()) + " plugins crashed during a previous scan and were automatically skipped:\n\n";
+        message += crashed.joinIntoString("\n");
+        message += "\n\nThey've been marked as failed - open the plugin browser's \"Failed to Load\" "
+                    "section to retry one.";
+
+        juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon,
+            "Plugin(s) Skipped After Crashing", message);
+    }
+}
+
+void MainComponent::rescanPlugins()
+{
+    pluginsReady = false;
+    loadingOverlay = std::make_unique<LoadingOverlayComponent>();
+    addAndMakeVisible(loadingOverlay.get());
+    loadingOverlay->setBounds(getLocalBounds());
+    pluginManager.scanPluginsAsync([this] { onScanComplete(); });
 }
 
 void MainComponent::timerCallback()
 {
+    // Live "which plugin is it on right now" status for the scan overlay
+    // (startup or Settings' Rescan button) - see PluginManager's own
+    // comment on why reading these here, on the message thread, is safe.
+    // Skipped once showWarmingUpOverlay() has switched the overlay to its
+    // post-scan message - see overlayShowingWarmup's own comment.
+    if (loadingOverlay != nullptr && ! overlayShowingWarmup)
+        loadingOverlay->setScanStatus(pluginManager.getCurrentlyScanningPluginName(),
+                                       pluginManager.getScanProgress());
+
+    // The transport stops itself on reaching the end of the Range with LOOP
+    // off (see SessionTransport::advanceAndGetBlockStartPosition) - nobody
+    // clicked anything, so bring the Play button back in step here.
+    if (sessionTransport.consumeStoppedAtRangeEnd())
+        globalSection.setTransportPlaying(false);
+
+    // The playhead moves continuously, so which capture button would invert
+    // the range changes continuously too - dimming the offender makes the
+    // invalid range unreachable rather than silently corrected. Start floors
+    // and end ceils, matching what the buttons themselves capture.
+    {
+        int playheadSeconds = getPlayheadSeconds();
+        int ceiledPlayheadSeconds = (int) std::ceil((double) sessionTransport.getPositionSamples() / currentSampleRate);
+        globalSection.setCaptureButtonsEnabled(playheadSeconds < effectiveRangeEndSeconds,
+                                                ceiledPlayheadSeconds > effectiveRangeStartSeconds);
+    }
+
+    // Transport time readout (mm:ss) - see GlobalSectionComponent::
+    // setDisplayedTime()'s own comment for why this single clock covers
+    // both "is the playhead actually moving" and recording-elapsed.
+    {
+        double seconds = (double) sessionTransport.getPositionSamples() / currentSampleRate;
+        int totalSeconds = (int) seconds;
+        globalSection.setDisplayedTime(juce::String::formatted("%02d:%02d", totalSeconds / 60, totalSeconds % 60));
+    }
+
     // Drain every processor's flag unconditionally (not short-circuiting on
     // the first hit) so none are left set from this tick to linger into the
     // next one, then notify at most once regardless of how many fired.
+    // While a post-load suppression window is active (see
+    // suppressPostLoadDirtyFlags()), parametersDirty is still drained every
+    // tick - just not allowed to actually mark anyDirty - so a plugin's
+    // delayed post-load settling notification can't pile up and fire the
+    // instant the window ends. Only this specific flag is gated: the
+    // MIDI-driven ones just below (gain/pan/bypass/arm) are never spurious
+    // in the first place, since nothing sets them without a real incoming
+    // MIDI message.
+    bool suppressingPostLoadDirty = (juce::int64) juce::Time::getMillisecondCounter() < postLoadDirtySuppressionEndMs;
     bool anyDirty = false;
     for (size_t i = 0; i < channelProcessors.size(); ++i)
     {
         auto& processor = channelProcessors[i];
-        anyDirty |= processor->consumeParametersDirtyFlag();
+        bool parametersDirty = processor->consumeParametersDirtyFlag();
+        if (! suppressingPostLoadDirty)
+            anyDirty |= parametersDirty;
 
         // A MIDI CC7 message just changed this channel's gain (see
         // ChannelProcessor::processBlock) - refresh its fader to match, and
@@ -361,13 +547,15 @@ void MainComponent::timerCallback()
             anyDirty = true;
         }
     }
-    anyDirty |= masterChainProcessor.consumeParametersDirtyFlag();
+    bool masterParametersDirty = masterChainProcessor.consumeParametersDirtyFlag();
+    if (! suppressingPostLoadDirty)
+        anyDirty |= masterParametersDirty;
 
     // Master-level commands on the Kadabra port's MIDI channel 16 (see
     // audioDeviceIOCallbackWithContext) - level-based, only acted on when
     // they actually disagree with the current state, so a continuously-
     // streaming controller (e.g. Kadabra motion) re-sending the same value
-    // doesn't repeatedly re-trigger a start/stop or arm/disarm.
+    // doesn't repeatedly re-trigger a start/stop, arm/disarm, or play/pause.
     if (masterArmChangedByMidi.exchange(false, std::memory_order_relaxed))
     {
         setMasterArmed(pendingMasterArmValueFromMidi.load(std::memory_order_relaxed));
@@ -376,9 +564,75 @@ void MainComponent::timerCallback()
 
     if (recordStateChangedByMidi.exchange(false, std::memory_order_relaxed))
     {
-        bool desiredRecording = pendingRecordStateValueFromMidi.load(std::memory_order_relaxed);
-        if (desiredRecording != recordingManager.isRecording())
-            toggleRecording(); // MIDI-triggered failures fail quietly, same as a live-arm track-creation failure - see RecordingManager::setChannelArmed's comment
+        // "On" covers both Record Ready (armed) and actively recording -
+        // toggleRecordArm() already does the right thing from either state
+        // (idle -> armed, or straight to recording if the transport's
+        // already playing; armed -> cancel; recording -> stop), same as a
+        // click on the Record button itself. MIDI-triggered failures fail
+        // quietly, same as a live-arm track-creation failure - see
+        // RecordingManager::setChannelArmed's comment.
+        bool desiredOn = pendingRecordStateValueFromMidi.load(std::memory_order_relaxed);
+        bool currentlyOn = recordingManager.isRecording() || recordArmedForNextPlay;
+        if (desiredOn != currentlyOn)
+            toggleRecordArm();
+    }
+
+    if (playStateChangedByMidi.exchange(false, std::memory_order_relaxed))
+    {
+        // Separate CC from Record above (deliberately, not one combined
+        // control) - a level-based mirror of the Play/Pause button itself,
+        // same debounce pattern. A Kadabra hardware combo that wants "arm
+        // then play" just sends both CCs.
+        bool desiredPlaying = pendingPlayStateValueFromMidi.load(std::memory_order_relaxed);
+        if (desiredPlaying != sessionTransport.isPlaying())
+            toggleTransportPlaying();
+    }
+
+    if (quitRequestedByMidi.exchange(false, std::memory_order_relaxed) && debounceOneShotMidiAction())
+    {
+        // Same choke point every other quit path already funnels through -
+        // see quitRequestedByMidi's own header comment.
+        juce::JUCEApplication::getInstance()->systemRequestedQuit();
+    }
+
+    if (int steps = tempoStepAccumulator.exchange(0, std::memory_order_relaxed); steps != 0)
+    {
+        // Same "manual edits don't apply while sync is driving tempo" rule
+        // the Tempo/Sync control's own onTempoChanged already enforces -
+        // sync would just overwrite this immediately anyway.
+        if (! tempoSyncEnabled)
+        {
+            double newTempo = juce::jlimit(TempoSyncComponent::minimumTempoBpm,
+                                            TempoSyncComponent::maximumTempoBpm,
+                                            (double) (juce::roundToInt(currentTempo) + steps));
+            setGlobalTempo(newTempo);
+            notifyDirty();
+        }
+    }
+
+    // Debounced as a group (see debounceOneShotMidiAction()'s own comment) -
+    // in particular, a momentary hardware button that sends a press value
+    // then a release value of 0 as two separate CC9 messages would
+    // otherwise fire Save and Save As back to back from a single press,
+    // since CC9 splits its action by exactly that value.
+    if (saveAsRequestedByMidi.exchange(false, std::memory_order_relaxed) && debounceOneShotMidiAction())
+    {
+        if (onSaveAsRequested) onSaveAsRequested();
+    }
+
+    if (saveRequestedByMidi.exchange(false, std::memory_order_relaxed) && debounceOneShotMidiAction())
+    {
+        if (onSaveRequested) onSaveRequested();
+    }
+
+    if (openSessionRequestedByMidi.exchange(false, std::memory_order_relaxed) && debounceOneShotMidiAction())
+    {
+        if (onOpenSessionRequested) onOpenSessionRequested();
+    }
+
+    if (openStarterRequestedByMidi.exchange(false, std::memory_order_relaxed) && debounceOneShotMidiAction())
+    {
+        if (onOpenStarterRequested) onOpenStarterRequested();
     }
 
     if (anyDirty)
@@ -387,7 +641,7 @@ void MainComponent::timerCallback()
     if (tempoSyncEnabled && tempoSyncDeviceIdentifier.isNotEmpty())
     {
         bool hasSignal = tempoClockDetector.hasSignal();
-        tempoSyncComponent.setSyncSignalWarning(! hasSignal);
+        globalSection.getTempoSyncComponent().setSyncSignalWarning(! hasSignal);
 
         // Holds the last-known tempo (rather than reverting to the manual
         // value) once the signal drops, per the earlier design discussion -
@@ -400,6 +654,15 @@ void MainComponent::timerCallback()
     recordingManager.pollMidiCapture();
 }
 
+bool MainComponent::debounceOneShotMidiAction()
+{
+    auto now = juce::Time::getMillisecondCounter();
+    if (now - lastOneShotMidiActionMs < (juce::uint32) oneShotMidiDebounceMs)
+        return false;
+    lastOneShotMidiActionMs = now;
+    return true;
+}
+
 void MainComponent::discardIncidentalDirtyFlags()
 {
     for (auto& processor : channelProcessors)
@@ -407,27 +670,40 @@ void MainComponent::discardIncidentalDirtyFlags()
     masterChainProcessor.consumeParametersDirtyFlag();
 }
 
+void MainComponent::suppressPostLoadDirtyFlags()
+{
+    postLoadDirtySuppressionEndMs = (juce::int64) juce::Time::getMillisecondCounter() + postLoadDirtySuppressionMs;
+}
+
 void MainComponent::setGlobalTempo(double bpm)
 {
     currentTempo = bpm;
+    // The audio thread's own copy - MIDI Take playback converts ticks to
+    // samples against this every block, which is what makes a tempo change
+    // audible immediately instead of only on the next reselect.
+    tempoForAudioThread.store(bpm, std::memory_order_relaxed);
     for (auto& channel : channelProcessors)
         channel->setTempo(bpm);
     masterChainProcessor.setTempo(bpm);
-    tempoSyncComponent.setDisplayedTempo(bpm);
+    globalSection.getTempoSyncComponent().setDisplayedTempo(bpm);
+
+    // A MIDI Take is a fixed number of ticks, so how many seconds of
+    // material that is just changed - and with it the default Range.
+    updateTransportRange();
 }
 
 void MainComponent::setTempoSyncEnabled(bool enabled)
 {
     tempoSyncEnabled = enabled;
-    tempoSyncComponent.setSyncEnabled(enabled);
+    globalSection.getTempoSyncComponent().setSyncEnabled(enabled);
     if (! enabled)
-        tempoSyncComponent.setSyncSignalWarning(false);
+        globalSection.getTempoSyncComponent().setSyncSignalWarning(false);
 }
 
 void MainComponent::setTempoSyncDeviceIdentifier(juce::String identifier)
 {
     tempoSyncDeviceIdentifier = std::move(identifier);
-    tempoSyncComponent.setSyncDeviceIdentifier(tempoSyncDeviceIdentifier);
+    globalSection.getTempoSyncComponent().setSyncDeviceIdentifier(tempoSyncDeviceIdentifier);
 
     // A stray interval spanning the old and new device's pulse streams
     // must not get baked into the average - see MidiClockTempoDetector::reset().
@@ -449,6 +725,7 @@ void MainComponent::setChannelArmed(int channelIndex, bool armed)
     recordingManager.setChannelArmed(channelIndex, armed, currentTempo);
     if (channelIndex >= 0 && channelIndex < (int) channelComponents.size())
         channelComponents[(size_t) channelIndex]->setArmed(armed);
+    updateArmAllButtonState();
 }
 
 void MainComponent::loadMidiTakeForChannel(int index, const juce::File& file)
@@ -456,9 +733,11 @@ void MainComponent::loadMidiTakeForChannel(int index, const juce::File& file)
     if (index < 0 || index >= (int) midiTakePlayers.size())
         return;
 
-    auto* device = deviceManager.getCurrentAudioDevice();
-    double sampleRate = device != nullptr ? device->getCurrentSampleRate() : currentSampleRate;
-    midiTakePlayers[(size_t) index]->loadTake(file, sampleRate, currentTempo);
+    // No sample rate or tempo needed any more: the take is kept in ticks
+    // and converted per block, so it follows the tempo live rather than
+    // being frozen at whatever it happened to be when selected.
+    midiTakePlayers[(size_t) index]->loadTake(file);
+    updateTransportRange();
 }
 
 void MainComponent::unloadMidiTakeForChannel(int index)
@@ -466,6 +745,7 @@ void MainComponent::unloadMidiTakeForChannel(int index)
     if (index < 0 || index >= (int) midiTakePlayers.size())
         return;
     midiTakePlayers[(size_t) index]->unload();
+    updateTransportRange();
 }
 
 void MainComponent::resolveMidiTakeSelectionForChannel(int index)
@@ -485,6 +765,7 @@ void MainComponent::loadAudioTakeForChannel(int index, const juce::File& file)
     if (index < 0 || index >= (int) audioTakePlayers.size())
         return;
     audioTakePlayers[(size_t) index]->loadTake(file);
+    updateTransportRange();
 }
 
 void MainComponent::unloadAudioTakeForChannel(int index)
@@ -492,6 +773,230 @@ void MainComponent::unloadAudioTakeForChannel(int index)
     if (index < 0 || index >= (int) audioTakePlayers.size())
         return;
     audioTakePlayers[(size_t) index]->unload();
+    updateTransportRange();
+}
+
+void MainComponent::updateTransportRange()
+{
+    // Ask the players rather than the processors' Take identifiers: the two
+    // are always kept in step by resolveMidiTakeSelectionForChannel()/
+    // resolveAudioTakeSelectionForChannel(), and an unloaded player reports
+    // a length of 0, so a plain max over every player is both simpler and
+    // impossible to get out of sync with what is genuinely loaded and
+    // therefore genuinely audible.
+    juce::int64 longestTakeSamples = 0;
+    // A MIDI Take's length in wall-clock terms depends on the tempo it's
+    // being played at, so this is re-measured whenever the tempo moves as
+    // well as whenever the selection changes - see setGlobalTempo().
+    double perTick = MidiTakePlayer::samplesPerTick(currentTempo, currentSampleRate);
+    for (auto& player : midiTakePlayers)
+        longestTakeSamples = juce::jmax(longestTakeSamples,
+                                         (juce::int64) std::ceil((double) player->getLengthTicks() * perTick));
+    for (auto& player : audioTakePlayers)
+        longestTakeSamples = juce::jmax(longestTakeSamples, player->getLengthSamples());
+
+    materialLengthSeconds = longestTakeSamples > 0
+        ? (int) std::ceil((double) longestTakeSamples / currentSampleRate)
+        : 0;
+
+    refreshRangeState();
+}
+
+void MainComponent::refreshRangeState()
+{
+    bool haveMaterial = materialLengthSeconds > 0;
+
+    // FULL only means anything once there is a user range for it to differ
+    // from, so it can't be left engaged once that range is gone.
+    if (! rangeUserSet)
+        rangeFullEnabled = false;
+
+    bool showingFull = rangeFullEnabled || ! rangeUserSet;
+    int startSeconds = showingFull ? 0 : rangeUserStartSeconds;
+    int endSeconds   = showingFull ? materialLengthSeconds : rangeUserEndSeconds;
+
+    effectiveRangeStartSeconds = startSeconds;
+    effectiveRangeEndSeconds   = endSeconds;
+
+    if (haveMaterial)
+        sessionTransport.setRange((juce::int64) (startSeconds * currentSampleRate),
+                                   (juce::int64) (endSeconds * currentSampleRate));
+    else
+        sessionTransport.clearRange();
+
+    sessionTransport.setLoopEnabled(rangeLoopEnabled);
+
+    globalSection.setRangeControlsEnabled(haveMaterial);
+    // Ghosted only while FULL is actively overriding a range the user set -
+    // the plain default range (nothing set yet) is shown as the ordinary,
+    // truthful thing it is rather than as someone else's values.
+    globalSection.setRangeValues(startSeconds, endSeconds, rangeFullEnabled);
+    globalSection.setFullState(rangeUserSet, rangeFullEnabled);
+    globalSection.setLoopEnabled(rangeLoopEnabled);
+}
+
+void MainComponent::toggleClick()
+{
+    clickGenerator.setEnabled(! clickGenerator.isEnabled());
+    globalSection.getTempoSyncComponent().setClickEnabled(clickGenerator.isEnabled());
+    notifyDirty();
+}
+
+void MainComponent::showClickOptionsMenu()
+{
+    juce::PopupMenu menu;
+
+    bool isBeep = clickGenerator.getSound() == ClickGenerator::Sound::beep;
+    juce::PopupMenu soundMenu;
+    soundMenu.addItem(1, "Click", true, ! isBeep);
+    soundMenu.addItem(2, "Beep",  true, isBeep);
+    menu.addSubMenu("Sound", soundMenu);
+
+    // Note values from two whole notes down to an eighth - see
+    // ClickGenerator::resolutions, which holds the tick count each one
+    // means so the label and the timing can't drift apart.
+    int resolutionTicks = clickGenerator.getResolutionTicks();
+    juce::PopupMenu resolutionMenu;
+    for (int i = 0; i < ClickGenerator::numResolutions; ++i)
+        resolutionMenu.addItem(100 + i, ClickGenerator::resolutions[i].label,
+                               true, resolutionTicks == ClickGenerator::resolutions[i].ticksPerClick);
+    menu.addSubMenu("Resolution", resolutionMenu);
+
+    // Discrete 3 dB steps rather than a slider living inside a menu: one
+    // click to set, and a menu item is a far easier target than a slider
+    // handle when the room is dark.
+    float volumeDb = clickGenerator.getVolumeDb();
+    juce::PopupMenu volumeMenu;
+    for (int i = 0; i <= 6; ++i)
+    {
+        float db = ClickGenerator::maximumVolumeDb - (float) i * 3.0f;
+        volumeMenu.addItem(200 + i, juce::String(db, 0) + " dB",
+                           true, std::abs(volumeDb - db) < 0.01f);
+    }
+    menu.addSubMenu("Volume", volumeMenu);
+
+    menu.showMenuAsync(juce::PopupMenu::Options()
+                           .withTargetComponent(&globalSection.getTempoSyncComponent()),
+                       [this](int result)
+    {
+        if (result == 0)
+            return;
+
+        if (result == 1)
+            clickGenerator.setSound(ClickGenerator::Sound::click);
+        else if (result == 2)
+            clickGenerator.setSound(ClickGenerator::Sound::beep);
+        else if (result >= 100 && result < 200)
+        {
+            clickGenerator.setResolutionTicks(ClickGenerator::resolutions[result - 100].ticksPerClick);
+        }
+        else if (result >= 200)
+        {
+            clickGenerator.setVolumeDb(ClickGenerator::maximumVolumeDb - (float) (result - 200) * 3.0f);
+        }
+
+        notifyDirty();
+    });
+}
+
+void MainComponent::restoreClick(bool enabled, bool beep, int resolutionTicks, float volumeDb)
+{
+    clickGenerator.setEnabled(enabled);
+    clickGenerator.setSound(beep ? ClickGenerator::Sound::beep : ClickGenerator::Sound::click);
+    clickGenerator.setResolutionTicks(resolutionTicks);
+    clickGenerator.setVolumeDb(volumeDb);
+    globalSection.getTempoSyncComponent().setClickEnabled(enabled);
+}
+
+void MainComponent::restoreRange(bool userSet, int startSeconds, int endSeconds, bool loopEnabled)
+{
+    // An inverted or empty saved range is treated as no range at all rather
+    // than trusted - a file can always have been hand-edited, and the rest
+    // of the range code is entitled to assume end > start.
+    rangeUserSet          = userSet && endSeconds > startSeconds;
+    rangeUserStartSeconds = juce::jmax(0, startSeconds);
+    rangeUserEndSeconds   = juce::jmax(0, endSeconds);
+    rangeLoopEnabled      = loopEnabled;
+    rangeFullEnabled      = false;
+
+    // The material may not be loaded yet at this point in a session load -
+    // resolving each channel's Take selection calls updateTransportRange()
+    // again afterwards, and the range restored here survives that untouched.
+    refreshRangeState();
+}
+
+void MainComponent::seekToSeconds(int seconds)
+{
+    seconds = juce::jmax(0, seconds);
+
+    if (sessionTransport.hasRange())
+        seconds = juce::jlimit(effectiveRangeStartSeconds, effectiveRangeEndSeconds, seconds);
+
+    sessionTransport.setPositionSamples((juce::int64) (seconds * currentSampleRate));
+
+    // The timer would pick this up within a tick anyway, but updating here
+    // means the readout never briefly shows the old position after a jump.
+    globalSection.setDisplayedTime(juce::String::formatted("%02d:%02d", seconds / 60, seconds % 60));
+}
+
+int MainComponent::getPlayheadSeconds() const
+{
+    return (int) ((double) sessionTransport.getPositionSamples() / currentSampleRate);
+}
+
+void MainComponent::toggleRangeLoop()
+{
+    rangeLoopEnabled = ! rangeLoopEnabled;
+    refreshRangeState();
+    notifyDirty();
+}
+
+void MainComponent::toggleRangeFull()
+{
+    if (! rangeUserSet)
+        return; // nothing to expand from - the range already is the material
+
+    rangeFullEnabled = ! rangeFullEnabled;
+    refreshRangeState();
+}
+
+void MainComponent::setUserRange(int startSeconds, int endSeconds)
+{
+    startSeconds = juce::jmax(0, startSeconds);
+    endSeconds   = juce::jmax(0, endSeconds);
+
+    // An inverted range is refused outright rather than silently swapped -
+    // the capture buttons prevent it by dimming, and a typed one should
+    // behave the same way. refreshRangeState() below puts the real values
+    // back on screen either way.
+    if (endSeconds > startSeconds)
+    {
+        rangeUserSet          = true;
+        rangeUserStartSeconds = startSeconds;
+        rangeUserEndSeconds   = endSeconds;
+        // Setting a range is the gesture that says "this one is mine", so
+        // it drops out of FULL - which exists precisely to show the range
+        // that isn't.
+        rangeFullEnabled = false;
+        notifyDirty();
+    }
+
+    refreshRangeState();
+}
+
+void MainComponent::captureRangeStartFromPlayhead()
+{
+    // Floor the start and ceil the end (below), so the range the user gets
+    // always contains the moment they gestured at rather than clipping it.
+    setUserRange(getPlayheadSeconds(),
+                 rangeUserSet ? rangeUserEndSeconds : materialLengthSeconds);
+}
+
+void MainComponent::captureRangeEndFromPlayhead()
+{
+    auto positionSamples = sessionTransport.getPositionSamples();
+    int ceiledSeconds = (int) std::ceil((double) positionSamples / currentSampleRate);
+    setUserRange(rangeUserSet ? rangeUserStartSeconds : 0, ceiledSeconds);
 }
 
 void MainComponent::resolveAudioTakeSelectionForChannel(int index)
@@ -529,6 +1034,98 @@ void MainComponent::setMasterArmed(bool armed)
     // See setChannelArmed() above for why this doesn't self-mark dirty.
     recordingManager.setMasterArmed(armed);
     masterChainComponent.setArmed(armed);
+    updateArmAllButtonState();
+}
+
+void MainComponent::updateArmAllButtonState()
+{
+    bool allArmed = isMasterArmed();
+    for (int i = 0; allArmed && i < (int) channelComponents.size(); ++i)
+        allArmed = isChannelArmed(i);
+    masterChainComponent.setArmAllState(allArmed);
+}
+
+void MainComponent::toggleArmAll()
+{
+    // Same "is everything already armed?" check updateArmAllButtonState()
+    // does, just deciding an action from it instead of a display state:
+    // arm whatever isn't armed yet if anything's missing, otherwise unarm
+    // everything. setChannelArmed()/setMasterArmed() don't self-mark dirty
+    // (see their own comments - session load reuses them), so this
+    // UI-driven action marks dirty itself, once, same as the individual
+    // arm-toggle callbacks do.
+    bool allArmed = isMasterArmed();
+    for (int i = 0; allArmed && i < (int) channelComponents.size(); ++i)
+        allArmed = isChannelArmed(i);
+
+    bool newState = ! allArmed;
+    for (int i = 0; i < (int) channelComponents.size(); ++i)
+        setChannelArmed(i, newState);
+    setMasterArmed(newState);
+    notifyDirty();
+}
+
+void MainComponent::applyMasterAudioInputSelection(int liveChannelIndex, const juce::File& takeFolder)
+{
+    for (int i = 0; i < (int) channelComponents.size(); ++i)
+    {
+        if (takeFolder != juce::File())
+        {
+            auto file = recordingManager.findChannelFileInTakeFolder(i, takeFolder, "wav");
+            if (file != juce::File())
+                channelComponents[(size_t) i]->selectAudioTake(file);
+            // Channel wasn't recorded in this take - left untouched, per
+            // the user request that introduced this ("selected for each
+            // channel that was recorded in that take", nothing else).
+        }
+        else
+        {
+            channelComponents[(size_t) i]->selectLiveAudioInput(liveChannelIndex);
+        }
+    }
+    notifyDirty();
+}
+
+void MainComponent::applyMasterMidiInputSelection(const juce::String& liveDeviceIdentifier,
+                                                  const juce::File& takeFolder)
+{
+    for (int i = 0; i < (int) channelComponents.size(); ++i)
+    {
+        if (takeFolder != juce::File())
+        {
+            auto file = recordingManager.findChannelFileInTakeFolder(i, takeFolder, "mid");
+            if (file != juce::File())
+                channelComponents[(size_t) i]->selectMidiTake(file);
+        }
+        else
+        {
+            channelComponents[(size_t) i]->selectLiveMidiInput(liveDeviceIdentifier);
+        }
+    }
+    notifyDirty();
+}
+
+void MainComponent::applyBulkBypass(int channelSlotIndex, bool bypass)
+{
+    // Empty slots get the flag too, same as a plugin loaded there later
+    // would inherit it - harmless (see ChannelProcessor::setBypassed(), a
+    // plain field write), and simpler than special-casing per channel.
+    // Each call fires the processor's own onBypassChanged, already wired
+    // (see addChannel()) to refresh that channel's UI - no manual refresh
+    // needed here.
+    for (auto& processor : channelProcessors)
+    {
+        if (channelSlotIndex < 0)
+        {
+            for (int slot = 0; slot < ChannelProcessor::totalSlotCount; ++slot)
+                processor->setBypassed(slot, bypass);
+        }
+        else
+        {
+            processor->setBypassed(channelSlotIndex, bypass);
+        }
+    }
+    notifyDirty();
 }
 
 juce::String MainComponent::toggleRecording()
@@ -545,6 +1142,7 @@ juce::String MainComponent::toggleRecording()
             refreshChannelTakeList(i);
             refreshChannelAudioTakeList(i);
         }
+        refreshMasterTakeGroups();
         return {};
     }
 
@@ -564,7 +1162,118 @@ void MainComponent::refreshRecordingUI()
     bool active = recordingManager.isRecording();
     for (auto& c : channelComponents)
         c->setRecordingActive(active);
-    masterChainComponent.setRecordingActive(active);
+
+    // Whatever armed it - the Record Ready button, or a direct MIDI CC102
+    // toggle bypassing it entirely (see timerCallback()) - it's live now,
+    // so any pending arm-and-wait-for-play request is moot. Centralising
+    // this here (the one choke point every recording start/stop already
+    // funnels through) means it stays correct regardless of which path
+    // triggered it, current or future.
+    if (active)
+        recordArmedForNextPlay = false;
+
+    // Recording ignores the Range entirely - it captures linearly from
+    // wherever the playhead is, straight past the range end, rather than
+    // looping or stopping there. Suspending rather than clearing keeps the
+    // user's bounds intact (and on screen) for when the take finishes.
+    sessionTransport.setRangeSuspended(active);
+    globalSection.setRecordingInProgress(active);
+
+    globalSection.setRecordState(active ? GlobalSectionComponent::RecordState::recording
+                                        : GlobalSectionComponent::RecordState::idle);
+}
+
+void MainComponent::toggleTransportPlaying()
+{
+    bool wasPlaying = sessionTransport.isPlaying();
+    if (wasPlaying)
+        sessionTransport.pause();
+    else
+        sessionTransport.play();
+
+    globalSection.setTransportPlaying(sessionTransport.isPlaying());
+
+    // Record Ready was waiting for exactly this play edge - if it was
+    // already playing when armed, toggleRecordArm() already started
+    // recording directly and recordArmedForNextPlay would already be
+    // false, so this can't double-fire.
+    if (! wasPlaying && sessionTransport.isPlaying() && recordArmedForNextPlay)
+        startArmedRecording();
+}
+
+void MainComponent::toggleRecordArm()
+{
+    if (recordingManager.isRecording())
+    {
+        // Actively recording - REC stops it. Playback (if any) is
+        // deliberately left untouched, same as the direct MIDI CC102 path
+        // has always done.
+        auto error = toggleRecording();
+        if (error.isNotEmpty())
+            juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, "Recording", error);
+        return;
+    }
+
+    if (recordArmedForNextPlay)
+    {
+        // Armed but nothing has actually started yet - cancel back to idle.
+        recordArmedForNextPlay = false;
+        globalSection.setRecordState(GlobalSectionComponent::RecordState::idle);
+        return;
+    }
+
+    recordArmedForNextPlay = true;
+    if (sessionTransport.isPlaying())
+        startArmedRecording(); // already rolling - no future play edge to wait for, start now
+    else
+        globalSection.setRecordState(GlobalSectionComponent::RecordState::armed);
+}
+
+void MainComponent::startArmedRecording()
+{
+    recordArmedForNextPlay = false;
+
+    // Lazy prompt: ask for a recordings folder right here the first time
+    // it's needed, rather than requiring a trip to Settings first - same
+    // as the Record button used to do directly before Record Ready existed.
+    if (recordingManager.getRecordingsFolder() == juce::File())
+    {
+        recordingFolderChooser = std::make_unique<juce::FileChooser>(
+            "Choose a folder for recordings",
+            juce::File::getSpecialLocation(juce::File::userMusicDirectory));
+
+        auto flags = juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories;
+        recordingFolderChooser->launchAsync(flags, [this](const juce::FileChooser& chooser)
+        {
+            auto result = chooser.getResult();
+            if (result == juce::File())
+            {
+                // Cancelled - nothing to record into. refreshRecordingUI()
+                // never runs in this branch (toggleRecording() is never
+                // reached), so the button would otherwise stay stuck on
+                // "armed" - revert it explicitly here instead.
+                globalSection.setRecordState(GlobalSectionComponent::RecordState::idle);
+                return;
+            }
+
+            setRecordingsFolder(result);
+            notifyDirty();
+
+            auto error = toggleRecording();
+            // Work Mode protects against a likely mistake (armed nothing,
+            // wasn't expecting silence); Show Mode trusts the performer's
+            // choice and just lets it quietly record nothing rather than
+            // interrupting the live flow with a dialog - see
+            // isShowModeEnabled()'s own comment.
+            if (error.isNotEmpty() && ! isShowModeEnabled())
+                juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, "Recording", error);
+        });
+        return;
+    }
+
+    auto error = toggleRecording();
+    if (error.isNotEmpty() && ! isShowModeEnabled())
+        juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, "Recording", error);
 }
 
 void MainComponent::showPluginBrowser(int channelIndex, int slotIndex, bool isReplace)
@@ -719,14 +1428,22 @@ void MainComponent::audioDeviceIOCallbackWithContext(
         midiSnapshot.swap(pendingMidiByDevice);
     }
 
-    // Master-level MIDI commands: arm = CC104, record start/stop = CC102,
-    // reserved on MIDI channel 16 of the Kadabra port specifically (not any
-    // device's channel 16 - master has no per-channel device selector of
-    // its own to scope this by, so it's tied to the same port the
-    // channel-auto-assign scheme already treats as "the" Kadabra input).
+    // Master-level MIDI commands: arm = CC104, record = CC102, play = CC105,
+    // quit = CC6 value 0, tempo step = CC100, save (nonzero)/save-as
+    // (value 0) = CC9, open session picker = CC3 (any value), open
+    // Starter.kplayer = CC99 value 0, reserved on MIDI channel 16 of the
+    // Kadabra port specifically (not any device's channel 16 - master has
+    // no per-channel device selector of its own to scope this by, so it's
+    // tied to the same port the channel-auto-assign scheme already treats
+    // as "the" Kadabra input). Record and Play are deliberately separate
+    // CCs, each a level-based mirror of its own GUI button - see
+    // timerCallback()'s handling for why.
     // Only reports the request here (audio thread) - timerCallback() is
-    // what actually calls setMasterArmed()/toggleRecording(), since those
-    // touch juce::Component state that must stay on the message thread.
+    // what actually calls setMasterArmed()/toggleRecordArm()/
+    // toggleTransportPlaying()/systemRequestedQuit()/setGlobalTempo()/
+    // onSaveRequested()/onSaveAsRequested()/onOpenSessionRequested()/
+    // onOpenStarterRequested(), since those touch juce::Component state
+    // that must stay on the message thread.
     auto kadabraId = getKadabraDeviceIdentifier();
     if (kadabraId.isNotEmpty())
     {
@@ -750,6 +1467,34 @@ void MainComponent::audioDeviceIOCallbackWithContext(
                     pendingRecordStateValueFromMidi.store(msg.getControllerValue() >= 64, std::memory_order_relaxed);
                     recordStateChangedByMidi.store(true, std::memory_order_relaxed);
                 }
+                else if (cc == 105)
+                {
+                    pendingPlayStateValueFromMidi.store(msg.getControllerValue() >= 64, std::memory_order_relaxed);
+                    playStateChangedByMidi.store(true, std::memory_order_relaxed);
+                }
+                else if (cc == 6 && msg.getControllerValue() == 0)
+                {
+                    quitRequestedByMidi.store(true, std::memory_order_relaxed);
+                }
+                else if (cc == 100)
+                {
+                    tempoStepAccumulator.fetch_add(msg.getControllerValue() >= 64 ? 1 : -1, std::memory_order_relaxed);
+                }
+                else if (cc == 9)
+                {
+                    if (msg.getControllerValue() == 0)
+                        saveAsRequestedByMidi.store(true, std::memory_order_relaxed);
+                    else
+                        saveRequestedByMidi.store(true, std::memory_order_relaxed);
+                }
+                else if (cc == 3)
+                {
+                    openSessionRequestedByMidi.store(true, std::memory_order_relaxed);
+                }
+                else if (cc == 99 && msg.getControllerValue() == 0)
+                {
+                    openStarterRequestedByMidi.store(true, std::memory_order_relaxed);
+                }
             }
         }
     }
@@ -764,11 +1509,25 @@ void MainComponent::audioDeviceIOCallbackWithContext(
         }
     }
 
+    // Panic (see triggerPanic()): consumed once here, then injected into
+    // every channel's MIDI buffer below, regardless of that channel's own
+    // device/MIDI-channel routing - a stuck note can be sitting in any
+    // loaded instrument, not just the one on whatever device/channel is
+    // "selected" right now.
+    bool doPanic = panicRequested.exchange(false, std::memory_order_relaxed);
+
     // MIDI Take playback (Increment B): advanced once per callback, not per
     // channel, so every channel's MidiTakePlayer renders against the same
     // block-start position this callback - see SessionTransport's header.
     auto transportBlockStart = sessionTransport.advanceAndGetBlockStartPosition(numSamples);
     bool transportIsPlaying  = sessionTransport.isPlaying();
+
+    // Read once per callback, not per channel, so every channel's Take
+    // renders against the same tempo this block even if the message thread
+    // moves it underneath us mid-callback (MIDI-clock sync can move it at
+    // any moment) - the same reason the transport position is read once
+    // above.
+    double blockTempo = tempoForAudioThread.load(std::memory_order_relaxed);
 
     for (int channelIndex = 0; channelIndex < (int) channelProcessors.size(); ++channelIndex)
     {
@@ -808,7 +1567,8 @@ void MainComponent::audioDeviceIOCallbackWithContext(
         if (RecordingManager::isTakeIdentifier(deviceId))
         {
             midiTakePlayers[(size_t) channelIndex]->renderBlock(transportBlockStart, numSamples,
-                                                                 transportIsPlaying, channelMidi);
+                                                                 transportIsPlaying, blockTempo,
+                                                                 currentSampleRate, channelMidi);
         }
         else if (deviceId.isNotEmpty())
         {
@@ -823,6 +1583,18 @@ void MainComponent::audioDeviceIOCallbackWithContext(
         // the buffer they're given, so this is the last point at which
         // channelMidi is still guaranteed to be the raw, unprocessed input.
         recordingManager.writeChannelMidiBlock(channelIndex, channelMidi);
+
+        // Injected after the MIDI Take recording tap above, deliberately -
+        // a panic is a host-level emergency action, not part of the
+        // performance, and shouldn't be captured into a take. All 16
+        // channels covers this channel regardless of which one it's
+        // actually routed to.
+        if (doPanic)
+            for (int midiCh = 1; midiCh <= 16; ++midiCh)
+            {
+                channelMidi.addEvent(juce::MidiMessage::allNotesOff(midiCh), 0);
+                channelMidi.addEvent(juce::MidiMessage::allSoundOff(midiCh), 0);
+            }
 
         channel->processBlock(channelScratch, channelMidi);
 
@@ -855,6 +1627,17 @@ void MainComponent::audioDeviceIOCallbackWithContext(
         masterClipFlagLeft.store(true, std::memory_order_relaxed);
     if (peakR >= 1.0f)
         masterClipFlagRight.store(true, std::memory_order_relaxed);
+
+    // Last thing in the callback, deliberately: after masterChainProcessor
+    // (so the click never runs through the master inserts), after
+    // writeMasterBlock (so it can never land in a recording), and after the
+    // peak/clip metering above has already read the buffer - a click on
+    // every beat has no business making the master meters dance. The cost
+    // of sitting outside the metering is that the click's own level isn't
+    // covered by clip detection, which is why its default sits at -12 dB
+    // rather than at the top of its range.
+    clickGenerator.renderBlock(transportBlockStart, numSamples, transportIsPlaying,
+                                blockTempo, currentSampleRate, masterBuffer);
 }
 
 void MainComponent::paint(juce::Graphics& g)
@@ -866,16 +1649,19 @@ void MainComponent::resized()
 {
     auto area = getLocalBounds().reduced(20);
 
-    auto masterChainArea = area.removeFromRight(130);
-    brandingStrip.setBounds(masterChainArea.removeFromTop(40));
-    masterChainArea.removeFromTop(6);
-    collapseInputButton.setBounds(masterChainArea.removeFromTop(22));
-    masterChainArea.removeFromTop(6);
-    tempoSyncComponent.setBounds(masterChainArea.removeFromTop(TempoSyncComponent::preferredHeight));
-    masterChainArea.removeFromTop(6);
+    // Bottom: Global section (branding, channel count, Settings, I/O
+    // collapse, tempo/sync, transport, Record Ready, Panic) - a horizontal
+    // bar spanning the full window width, pinned to the bottom edge. See
+    // GlobalSectionComponent's own resized() for its internal left/center/
+    // right zone layout.
+    auto globalArea = area.removeFromBottom(GlobalSectionComponent::preferredHeight);
+    globalSection.setBounds(globalArea);
+    area.removeFromBottom(12);
 
+    // Master strip: inserts, gain fader/meters, ARM only - to the right of
+    // the channel rack, above the global bar.
+    auto masterChainArea = area.removeFromRight(110);
     masterChainComponent.setBounds(masterChainArea);
-
     area.removeFromRight(20);
 
     channelViewport.setBounds(area);

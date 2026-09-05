@@ -1,26 +1,8 @@
 #include "ChannelComponent.h"
+#include "AudioInputUtils.h"
 #include <algorithm>
 
-namespace
-{
-    // Names of the device's *active* input channels, in the same order as
-    // audioDeviceIOCallbackWithContext's inputChannelData array - i.e. the
-    // Nth active channel in ascending order, not the device's full channel
-    // list (which includes channels the user hasn't enabled).
-    juce::StringArray getActiveAudioInputChannelNames(juce::AudioDeviceManager& deviceManager)
-    {
-        juce::StringArray names;
-        if (auto* device = deviceManager.getCurrentAudioDevice())
-        {
-            auto allNames = device->getInputChannelNames();
-            auto active   = device->getActiveInputChannels();
-            for (int i = 0; i < allNames.size(); ++i)
-                if (active[i])
-                    names.add(allNames[i]);
-        }
-        return names;
-    }
-}
+using AudioInputUtils::getActiveAudioInputChannelNames;
 
 ChannelComponent::ChannelComponent(ChannelProcessor& p, juce::AudioDeviceManager& dm,
                                    RecordingManager& rm, int channelNum)
@@ -426,29 +408,22 @@ void ChannelComponent::comboBoxChanged(juce::ComboBox* combo)
     else if (combo == &midiDeviceBox)
     {
         int selected = midiDeviceBox.getSelectedId();
-        if (selected <= 1)
-        {
-            processor.setMidiDeviceIdentifier({});
-            if (onMidiTakeDeselected) onMidiTakeDeselected();
-        }
-        else if (selected >= takeIdBase)
+        if (selected >= takeIdBase)
         {
             int index = selected - takeIdBase;
             if (index >= 0 && index < availableChannelTakes.size())
-            {
-                auto takeFile = availableChannelTakes.getReference(index);
-                processor.setMidiDeviceIdentifier(recordingManager.encodeTakeIdentifier(takeFile));
-                if (onMidiTakeSelected) onMidiTakeSelected(takeFile);
-            }
+                selectMidiTake(availableChannelTakes.getReference(index));
+        }
+        else if (selected <= 1)
+        {
+            selectLiveMidiInput({});
         }
         else
         {
             int index = selected - 2;
             if (index >= 0 && index < availableMidiInputs.size())
-                processor.setMidiDeviceIdentifier(availableMidiInputs[index].identifier);
-            if (onMidiTakeDeselected) onMidiTakeDeselected();
+                selectLiveMidiInput(availableMidiInputs[index].identifier);
         }
-        updateMidiDeviceWarning();
     }
     else if (combo == &audioInputBox)
     {
@@ -461,14 +436,45 @@ void ChannelComponent::comboBoxChanged(juce::ComboBox* combo)
         }
         else
         {
-            processor.setAudioInputChannelIndex(selected <= 1 ? -1 : selected - 2);
-            processor.setAudioTakeIdentifier({});
-            if (onAudioTakeDeselected) onAudioTakeDeselected();
+            selectLiveAudioInput(selected <= 1 ? -1 : selected - 2);
         }
-        updateAudioInputWarning();
     }
 
     if (onDirty) onDirty();
+}
+
+void ChannelComponent::selectMidiTake(juce::File takeFile)
+{
+    processor.setMidiDeviceIdentifier(recordingManager.encodeTakeIdentifier(takeFile));
+
+    // Same rescan-then-restore-selection treatment as selectAudioTake()
+    // above, and the same reasoning: a manual click already shows the
+    // right item, but the Master section's bulk selector
+    // (MainComponent::applyMasterMidiInputSelection) calls this with no
+    // click involved at all, so the box's own display needs refreshing
+    // explicitly either way.
+    refreshTakeList();
+    rebuildMidiInputBox();
+    updateMidiDeviceWarning();
+
+    if (onMidiTakeSelected) onMidiTakeSelected(takeFile);
+}
+
+void ChannelComponent::selectLiveAudioInput(int channelIndex)
+{
+    processor.setAudioInputChannelIndex(channelIndex);
+    processor.setAudioTakeIdentifier({});
+    rebuildAudioInputBox();
+    updateAudioInputWarning();
+    if (onAudioTakeDeselected) onAudioTakeDeselected();
+}
+
+void ChannelComponent::selectLiveMidiInput(const juce::String& deviceIdentifier)
+{
+    processor.setMidiDeviceIdentifier(deviceIdentifier);
+    rebuildMidiInputBox();
+    updateMidiDeviceWarning();
+    if (onMidiTakeDeselected) onMidiTakeDeselected();
 }
 
 void ChannelComponent::refreshMidiDeviceList()
@@ -595,9 +601,16 @@ void ChannelComponent::selectAudioTake(juce::File takeFile)
         processor.setBypassed(ChannelProcessor::slot0Index, true);
 
     // Picks up a freshly-imported file not yet in
-    // availableChannelAudioTakes, and restores the combo box selection to
-    // match what was just set above - see this method's own header comment.
+    // availableChannelAudioTakes; refreshAudioTakeList() only rebuilds the
+    // box if the *list* itself changed, so rebuildAudioInputBox() below is
+    // still needed unconditionally to restore the combo box's own
+    // selection to match what was just set above - a direct user click
+    // already shows the right item (harmless redundant rebuild in that
+    // case), but the Master section's bulk selector
+    // (MainComponent::applyMasterAudioInputSelection) calls this with no
+    // click involved at all.
     refreshAudioTakeList();
+    rebuildAudioInputBox();
     updateAudioInputWarning();
 
     if (onAudioTakeSelected) onAudioTakeSelected(takeFile);

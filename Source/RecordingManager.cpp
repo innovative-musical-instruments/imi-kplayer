@@ -20,19 +20,10 @@ RecordingManager::~RecordingManager()
 juce::Array<juce::File> RecordingManager::findChannelTakeFiles(int channelIndex, const juce::String& extension) const
 {
     juce::Array<juce::File> result;
-    if (! recordingsFolder.isDirectory())
-        return result;
-
-    juce::String baseName = "Channel " + juce::String(channelIndex + 1);
-
-    juce::Array<juce::File> takeFolders;
-    for (const auto& entry : juce::RangedDirectoryIterator(recordingsFolder, false, "*", juce::File::findDirectories))
-        takeFolders.add(entry.getFile());
-    takeFolders.sort(); // take-folder names are %Y-%m-%d_%H-%M-%S, so lexicographic order == chronological order
-
-    for (int i = takeFolders.size(); --i >= 0;) // newest-first
-        for (const auto& entry : juce::RangedDirectoryIterator(takeFolders.getReference(i), false,
-                                                                baseName + "*." + extension, juce::File::findFiles))
+    for (const auto& takeFolder : takeFoldersNewestFirst())
+        for (const auto& entry : juce::RangedDirectoryIterator(takeFolder, false,
+                                                                channelFileWildcard(channelIndex, extension),
+                                                                juce::File::findFiles))
             result.add(entry.getFile());
 
     return result;
@@ -46,6 +37,62 @@ juce::Array<juce::File> RecordingManager::findChannelMidiTakes(int channelIndex)
 juce::Array<juce::File> RecordingManager::findChannelAudioTakes(int channelIndex) const
 {
     return findChannelTakeFiles(channelIndex, "wav");
+}
+
+juce::Array<juce::File> RecordingManager::findTakeGroupFolders(const juce::String& extension) const
+{
+    juce::Array<juce::File> result;
+    for (const auto& takeFolder : takeFoldersNewestFirst())
+    {
+        bool hasChannelFile = false;
+        for (const auto& entry : juce::RangedDirectoryIterator(takeFolder, false,
+                                                                "Channel *." + extension, juce::File::findFiles))
+        {
+            hasChannelFile = true;
+            break;
+        }
+        if (hasChannelFile)
+            result.add(takeFolder);
+    }
+
+    return result;
+}
+
+juce::File RecordingManager::findChannelFileInTakeFolder(int channelIndex, const juce::File& takeFolder,
+                                                          const juce::String& extension) const
+{
+    for (const auto& entry : juce::RangedDirectoryIterator(takeFolder, false,
+                                                            channelFileWildcard(channelIndex, extension),
+                                                            juce::File::findFiles))
+        return entry.getFile();
+    return {};
+}
+
+juce::Array<juce::File> RecordingManager::takeFoldersNewestFirst() const
+{
+    juce::Array<juce::File> takeFolders;
+    if (! recordingsFolder.isDirectory())
+        return takeFolders;
+
+    for (const auto& entry : juce::RangedDirectoryIterator(recordingsFolder, false, "*", juce::File::findDirectories))
+        takeFolders.add(entry.getFile());
+    takeFolders.sort(); // take-folder names are %Y-%m-%d_%H-%M-%S, so lexicographic order == chronological order
+
+    juce::Array<juce::File> newestFirst;
+    for (int i = takeFolders.size(); --i >= 0;)
+        newestFirst.add(takeFolders.getReference(i));
+    return newestFirst;
+}
+
+juce::String RecordingManager::channelFileWildcard(int channelIndex, const juce::String& extension)
+{
+    auto baseName = "Channel " + juce::String(channelIndex + 1);
+    // Multiple wildcard patterns are semicolon-separated (RangedDirectoryIterator).
+    // Matches only this exact channel's plain file or uniqueTakeFile()'s " (2)"/
+    // " (3)"/... de-dup suffix - not other channels whose number starts with the
+    // same digits, the way a single "Channel N*.ext" wildcard would (e.g.
+    // channel 1 also matching channel 10/12/19...).
+    return baseName + "." + extension + ";" + baseName + " (*)." + extension;
 }
 
 juce::String RecordingManager::encodeTakeIdentifier(const juce::File& takeFile) const
@@ -401,6 +448,17 @@ void RecordingManager::drainAndFinalizeMidi(RecordingTrack& track, double record
         return; // channel was armed but nothing played - no .mid to write
 
     capture.sequence.updateMatchedPairs();
+
+    // Record what the take was actually played at. Every timestamp above is
+    // in ticks derived from captureBpm, so without this the file is only
+    // interpretable by someone who happens to remember that number -
+    // K-Player itself guessed with the current session tempo, and any other
+    // software opening the file assumed a default 120. Playback inside
+    // K-Player still follows the session tempo rather than this event (see
+    // MidiTakePlayer::loadTake), so this changes nothing about how a take
+    // sounds here - it just stops the file lying about itself.
+    capture.sequence.addEvent(juce::MidiMessage::tempoMetaEvent(
+        (int) std::round(60000000.0 / juce::jmax(1.0, capture.captureBpm))), 0.0);
 
     juce::MidiFile midiFile;
     midiFile.setTicksPerQuarterNote(ticksPerQuarterNote);

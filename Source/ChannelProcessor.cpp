@@ -97,6 +97,28 @@ bool ChannelProcessor::loadPlugin(int slotIndex,
     return true;
 }
 
+bool ChannelProcessor::updatePluginState(int slotIndex, const juce::MemoryBlock& newState)
+{
+    jassert(slotIndex >= 0 && slotIndex < totalSlotCount);
+    auto& slot = slots[(size_t) slotIndex];
+
+    if (slot.plugin == nullptr)
+        return false;
+
+    // Same drain-margin reasoning as loadPlugin()/unloadPlugin() - once the
+    // audio thread has observed ready==false, processBlock() won't touch
+    // this slot's plugin at all (see the ready checks there), so
+    // setStateInformation() below is safe to call concurrently with it.
+    slot.ready.store(false, std::memory_order_release);
+    juce::Thread::sleep(50);
+
+    if (newState.getSize() > 0)
+        slot.plugin->setStateInformation(newState.getData(), (int) newState.getSize());
+
+    slot.ready.store(true, std::memory_order_release);
+    return true;
+}
+
 void ChannelProcessor::unloadPlugin(int slotIndex)
 {
     jassert(slotIndex >= 0 && slotIndex < totalSlotCount);
@@ -285,12 +307,39 @@ void ChannelProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         first.plugin->processBlock(buffer, midi);
     }
 
-    juce::MidiBuffer noMidi;
+    // Insert slots (1..5) get the same channel-filtered MIDI stream as slot 0
+    // above - lets a plugin loaded in an insert (e.g. an EQ/filter/delay)
+    // respond to Kadabra's motion-controller CC output via its own MIDI-
+    // learn, same as slot 0 already could. CC7/10/84-89/103 are excluded
+    // since ChannelProcessor itself already consumes those for gain/pan/
+    // bypass/arm (see the scan above) - forwarding them too would let an
+    // insert's MIDI-learn silently shadow/duplicate that channel-level
+    // behavior. Built once per block and shared by every insert slot; same
+    // channel-match rule as slot 0's own filtered branch (midiChannel==0
+    // "All" forwards everything, otherwise only this channel or non-channel/
+    // system messages).
+    juce::MidiBuffer insertMidi;
+    for (auto meta : midi)
+    {
+        auto msg = meta.getMessage();
+        if (! (midiChannel == 0 || msg.getChannel() == midiChannel || msg.getChannel() == 0))
+            continue;
+
+        if (msg.isController())
+        {
+            int cc = msg.getControllerNumber();
+            if (cc == 7 || cc == 10 || cc == 103 || (cc >= 84 && cc < 84 + totalSlotCount))
+                continue;
+        }
+
+        insertMidi.addEvent(msg, meta.samplePosition);
+    }
+
     for (int i = 1; i < totalSlotCount; ++i)
     {
         auto& slot = slots[(size_t) i];
         if (slot.ready.load(std::memory_order_acquire) && slot.plugin != nullptr && ! slot.bypassed)
-            slot.plugin->processBlock(buffer, noMidi);
+            slot.plugin->processBlock(buffer, insertMidi);
     }
 
     applyGainAndPan(buffer);

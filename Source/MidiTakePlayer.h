@@ -29,17 +29,26 @@ public:
     // using that macro (e.g. RecordingManager, ChannelProcessor).
     MidiTakePlayer() = default;
 
-    // Message thread. Reads the .mid file, converts every event's tick
-    // timestamp to a *sample* timestamp up front using the fixed
-    // ticksPerQuarterNote (matching RecordingManager's capture-side
-    // constant) and the given bpm - K-Player has one session-wide tempo and
-    // deliberately doesn't handle capture/playback tempo drift (spec
-    // section 10), so any tempo meta-events embedded in the file are
-    // ignored; playback always uses the current session tempo. Returns
-    // false (and leaves the player unloaded) on a read failure - a fresh
-    // selection that fails shouldn't keep silently playing whatever was
-    // selected before.
-    bool loadTake(const juce::File& midiFile, double sampleRate, double bpm);
+    // Message thread. Reads the .mid file and keeps every event at its
+    // original *tick* timestamp - deliberately no conversion to samples
+    // here, because that conversion depends on the tempo and the tempo can
+    // change at any moment (a manual edit, or MIDI-clock sync moving it
+    // continuously). Converting up front is what used to freeze a take at
+    // whatever tempo happened to be current when it was selected, so that
+    // changing the tempo afterwards did nothing at all until the take was
+    // reselected. renderBlock() now does the conversion per block instead.
+    //
+    // K-Player still has one session-wide tempo and still ignores any tempo
+    // meta-event embedded in the file (spec section 10) - playback always
+    // follows the current session tempo. The meta-event RecordingManager
+    // now writes is there to record what a take was played at, and so the
+    // file reads correctly in other software; it deliberately doesn't drive
+    // playback here.
+    //
+    // Returns false (and leaves the player unloaded) on a read failure - a
+    // fresh selection that fails shouldn't keep silently playing whatever
+    // was selected before.
+    bool loadTake(const juce::File& midiFile);
 
     // Message thread. Clears the player back to "nothing selected" - used
     // when the channel's input selector moves away from a Take. Same
@@ -47,6 +56,24 @@ public:
     void unload();
 
     static constexpr int ticksPerQuarterNote = 960;
+
+    // Message thread only. Length of the currently loaded Take in *ticks*
+    // (0 when nothing is loaded) - how long that is in samples depends on
+    // the current tempo, so the caller converts with samplesPerTick() below
+    // (MainComponent::updateTransportRange, which needs the longest
+    // selected Take to size the transport's default Range, and re-measures
+    // whenever the tempo moves). Deliberately a plain member rather than an
+    // atomic: only ever written by loadTake()/unload() and read by the same
+    // message thread, never by renderBlock().
+    juce::int64 getLengthTicks() const { return lengthTicks; }
+
+    // How many samples one tick lasts at a given tempo - the single
+    // conversion this whole class turns on, shared with callers that need
+    // to reason about a take's length in wall-clock terms.
+    static double samplesPerTick(double bpm, double sampleRate)
+    {
+        return sampleRate * 60.0 / (juce::jmax(1.0, bpm) * (double) ticksPerQuarterNote);
+    }
 
     // Audio thread. transportPositionSamples/numSamples describe this
     // block's window on the shared SessionTransport (see
@@ -72,18 +99,23 @@ public:
     // the last one left off (RTZ or any other jump), or a playing->paused
     // edge (pause mid-note).
     void renderBlock(juce::int64 transportPositionSamples, int numSamples,
-                     bool transportIsPlaying, juce::MidiBuffer& outputMidi);
+                     bool transportIsPlaying, double bpm, double sampleRate,
+                     juce::MidiBuffer& outputMidi);
 
 private:
     struct LoadedTake
     {
-        juce::MidiMessageSequence sequence; // timestamps already converted to samples
+        juce::MidiMessageSequence sequence; // timestamps in ticks, as they came out of the file
     };
 
     // Message-thread-owned lifetime; the audio thread only ever touches
     // `published`, never this directly - see publish() below.
     std::unique_ptr<LoadedTake> storage;
     std::atomic<LoadedTake*> published { nullptr };
+
+    // See getLengthTicks() - message-thread-only, kept in step with what
+    // publish() last published.
+    juce::int64 lengthTicks = 0;
 
     void publish(std::unique_ptr<LoadedTake> newTake);
 
@@ -92,6 +124,14 @@ private:
     const LoadedTake* lastRenderedTake = nullptr;
     juce::int64 lastWindowEnd = -1;
     bool wasPlayingLastBlock = false;
+
+    // Where this player has got to in the take, in ticks. Integrated block
+    // by block at whatever the tempo currently is, rather than derived from
+    // the transport position, which is what makes a tempo change take
+    // effect from the moment it is made instead of retroactively re-timing
+    // everything already played. Re-anchored to the transport position (at
+    // the current tempo) on any discontinuity - see renderBlock().
+    double positionTicks = 0.0;
     std::array<bool, 16 * 128> activeNotes {};
 
     void flushActiveNotes(juce::MidiBuffer& outputMidi, int atSampleOffset);

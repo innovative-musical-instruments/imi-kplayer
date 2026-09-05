@@ -102,5 +102,29 @@ hdiutil create -volname "Kadabra K-Player" \
 echo "==> Signing the DMG"
 codesign --force --sign "Developer ID Application" --timestamp "${DMG_PATH}"
 
+# The app inside was notarized and stapled above, but the disk image is the
+# first thing Gatekeeper assesses when someone downloads it - and a DMG that
+# is merely signed has no ticket of its own, so that check needs a network
+# round-trip to Apple and fails outright offline ("unidentified developer"
+# on the disk image, even though the app inside is fine). Notarizing the DMG
+# too costs one more round-trip per release and makes the download path
+# clean, online or off.
+echo "==> Submitting the DMG to Apple notary service"
+if ! xcrun notarytool submit "${DMG_PATH}" --keychain-profile "${KEYCHAIN_PROFILE}" --wait; then
+    echo "error: DMG notarization failed or was rejected - fetching the log of the most recent submission:" >&2
+    LAST_ID="$(xcrun notarytool history --keychain-profile "${KEYCHAIN_PROFILE}" | awk '/id:/{print $2; exit}')"
+    if [ -n "${LAST_ID:-}" ]; then
+        xcrun notarytool log "${LAST_ID}" --keychain-profile "${KEYCHAIN_PROFILE}"
+    fi
+    exit 1
+fi
+
+echo "==> Stapling notarization ticket to the DMG"
+xcrun stapler staple "${DMG_PATH}"
+xcrun stapler validate "${DMG_PATH}"
+
+echo "==> Gatekeeper assessment of the DMG (should say 'accepted')"
+spctl --assess --type open --context context:primary-signature --verbose "${DMG_PATH}"
+
 echo ""
 echo "Done. Ready to distribute: ${DMG_PATH}"

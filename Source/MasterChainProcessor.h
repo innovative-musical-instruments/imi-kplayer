@@ -38,6 +38,13 @@ public:
                     const juce::MemoryBlock* initialState = nullptr);
 
     void unloadPlugin(int slotIndex);
+
+    // Delta load (see docs/KPlayer_Session_Save_Load_Design_2026-07-25.md
+    // Part B, and ChannelProcessor::updatePluginState's fuller comment for
+    // the full reasoning) - pushes newState into whatever's already loaded
+    // in this slot in place, skipping the destroy+recreate path entirely.
+    bool updatePluginState(int slotIndex, const juce::MemoryBlock& newState);
+
     bool hasPlugin(int slotIndex) const;
     bool isEditorVisible(int slotIndex) const;
     juce::String getPluginName(int slotIndex) const;

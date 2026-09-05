@@ -7,6 +7,86 @@
 #include "PluginBrowserComponent.h"
 #include "SessionIO.h"
 #include "AboutScreenComponent.h"
+#include "KPlayerLookAndFeel.h"
+
+// Global (cross-session, cross-launch) audio device state - independent of
+// any particular .kplayer file's own "audioDeviceStateXml" (SessionIO.cpp
+// saves/restores that per-session, but only ever gets applied when a
+// session happens to load - and tryAutoLoadKadabraSession() only fires at
+// all when Kadabra is connected). Without this, every launch fell back to
+// initialiseWithDefaultDevices()'s pick of the OS default device (e.g. a
+// MacBook's built-in output) instead of whatever audio interface was
+// actually in use last, e.g. a Focusrite Scarlett - this is what makes
+// that stick. Same ~/Library/IMI/KPlayer/ convention as
+// getRecentFilesStorageFile()/PluginManager's cache file.
+static juce::File getGlobalAudioDeviceStateFile()
+{
+    return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
+               .getChildFile("IMI").getChildFile("KPlayer").getChildFile("audio_device_state.xml");
+}
+
+// See KPlayerApplication::MainWindow::showSettings() - the Settings dialog
+// is deliberately non-modal, so nothing else auto-deletes it once it's
+// hidden the way a modal DialogWindow would. This is what actually deletes
+// it, the moment it stops being visible by any means (native close button,
+// Esc, our own click-to-close toggle, Rescan's close-then-scan).
+struct SettingsDialogCloseWatcher : public juce::ComponentListener
+{
+    std::function<void()> onClosed;
+
+    void componentVisibilityChanged(juce::Component& comp) override
+    {
+        if (comp.isVisible() || onClosed == nullptr)
+            return;
+
+        // Deferred rather than deleting comp synchronously from inside its
+        // own visibility-change notification - let that call stack unwind
+        // first.
+        auto callback = std::move(onClosed);
+        onClosed = nullptr;
+        juce::MessageManager::callAsync(callback);
+    }
+};
+
+// Writes deviceManager's current state to getGlobalAudioDeviceStateFile()
+// every time it changes - AudioDeviceManager is a juce::ChangeBroadcaster
+// and notifies on all of device switch, sample rate change, buffer size
+// change, and MIDI I/O enablement, so this is the single hook that keeps
+// the on-disk record current without threading a save call through every
+// place any of those can happen (Settings dialog, MIDI-driven changes,
+// etc). Note sendChangeMessage() dispatches asynchronously (via
+// AsyncUpdater), so the very last change made right before quit isn't
+// guaranteed to have been flushed here yet - shutdown() below also does
+// one final synchronous save as a safety net for that case.
+struct AudioDeviceStatePersister : public juce::ChangeListener
+{
+    explicit AudioDeviceStatePersister(juce::AudioDeviceManager& dm) : deviceManager(dm)
+    {
+        deviceManager.addChangeListener(this);
+    }
+
+    ~AudioDeviceStatePersister() override
+    {
+        deviceManager.removeChangeListener(this);
+    }
+
+    void changeListenerCallback(juce::ChangeBroadcaster*) override
+    {
+        saveNow(deviceManager);
+    }
+
+    static void saveNow(juce::AudioDeviceManager& dm)
+    {
+        if (auto xml = dm.createStateXml())
+        {
+            auto file = getGlobalAudioDeviceStateFile();
+            file.getParentDirectory().createDirectory();
+            file.replaceWithText(xml->toString());
+        }
+    }
+
+    juce::AudioDeviceManager& deviceManager;
+};
 
 class KPlayerApplication : public juce::JUCEApplication
 {
@@ -16,8 +96,45 @@ public:
     const juce::String getApplicationVersion() override
         { return JUCE_APPLICATION_VERSION_STRING; }
 
+    // Single-instance enforcement (reported anomaly: a Windows tester had
+    // two K-Player processes running simultaneously, fighting over the
+    // same MIDI devices). Default JUCEApplication behaviour allows
+    // multiple instances; returning false here makes JUCE's own
+    // moreThanOneInstanceAllowed()/anotherInstanceStarted() machinery (an
+    // OS-level IPC handshake, no extra setup needed - enabled by default
+    // for every platform except iOS/Android) detect an already-running
+    // instance *before* initialise() ever runs for the new launch attempt
+    // - the second process forwards its command line and exits immediately
+    // without touching audio devices, scanning plugins, or creating a
+    // window at all.
+    bool moreThanOneInstanceAllowed() override { return false; }
+
+    // Called on the *existing* instance when a second launch attempt was
+    // just turned away above - bring it to the front instead of the user
+    // wondering why nothing happened.
+    void anotherInstanceStarted(const juce::String&) override
+    {
+        if (mainWindow != nullptr)
+        {
+            mainWindow->setMinimised(false);
+            mainWindow->toFront(true);
+        }
+        else
+        {
+            // Arrived before mainWindow exists yet - still inside the brief
+            // device-init/plugin-scan startup window. Remember it and honor
+            // it as soon as the window actually exists (see initialise()),
+            // rather than silently doing nothing.
+            focusRequestPendingFromStartup = true;
+        }
+    }
+
     void initialise(const juce::String&) override
     {
+        // Before anything else gets painted (including the splash right
+        // below) - see KPlayerLookAndFeel's own header comment.
+        juce::LookAndFeel::setDefaultLookAndFeel(&lookAndFeel);
+
         // Splash covers the blank/delay period before the main window
         // exists (device init + MainWindow construction, both synchronous)
         // - separate from the LoadingOverlayComponent shown inside the
@@ -37,8 +154,25 @@ public:
             // Requests 2 input channels too (was 0) so per-channel audio
             // input routing (Increment 3 item 8) has something live to
             // select by default; the user can add more via Settings >
-            // Audio & MIDI.
-            deviceManager.initialiseWithDefaultDevices(2, 2);
+            // Audio & MIDI. Restores the last-used device/sample-rate/
+            // buffer-size from getGlobalAudioDeviceStateFile() when one was
+            // recorded - AudioDeviceManager::initialise() with a savedState
+            // XML already does exactly the "reconnect to what was open last
+            // if it's available, else fall back to the normal default
+            // device pick" sequence on its own (selectDefaultDeviceOnFailure
+            // = true), so no extra fallback logic is needed here. No file
+            // yet (first run, or an older version that never wrote one)
+            // behaves exactly like the previous initialiseWithDefaultDevices
+            // call did.
+            std::unique_ptr<juce::XmlElement> savedDeviceXml;
+            if (getGlobalAudioDeviceStateFile().existsAsFile())
+                savedDeviceXml = juce::XmlDocument::parse(getGlobalAudioDeviceStateFile());
+            deviceManager.initialise(2, 2, savedDeviceXml.get(), true);
+
+            // Keeps the on-disk record current from here on - see
+            // AudioDeviceStatePersister's own comment.
+            audioDeviceStatePersister = std::make_unique<AudioDeviceStatePersister>(deviceManager);
+
             if (splashScreen != nullptr)
                 splashScreen->setProgress(0.5f);
 
@@ -46,13 +180,15 @@ public:
                                             deviceManager,
                                             pluginManager));
 
-            // Kadabra-connected-only recovery/starter auto-load (see
-            // MainWindow::tryAutoLoadKadabraSession()) - sequenced before
-            // the splash screen comes down since SessionIO::loadSession is
-            // synchronous and can take a while for a large rig, so the
-            // splash naturally covers that instead of the window sitting
-            // there frozen with no explanation.
-            mainWindow->tryAutoLoadKadabraSession();
+            // Honor a second-launch focus request that arrived while this
+            // window didn't exist yet - see anotherInstanceStarted()'s
+            // else branch.
+            if (focusRequestPendingFromStartup)
+            {
+                focusRequestPendingFromStartup = false;
+                mainWindow->setMinimised(false);
+                mainWindow->toFront(true);
+            }
 
             if (splashScreen != nullptr)
                 splashScreen->setProgress(1.0f);
@@ -61,12 +197,60 @@ public:
             pluginManager.scanPluginsAsync([this]
             {
                 if (mainWindow != nullptr)
+                {
+                    // Kadabra-connected-only recovery/starter auto-load
+                    // (see MainWindow::tryAutoLoadKadabraSession()) -
+                    // deliberately sequenced *after* the scan completes,
+                    // not before. It used to run before scanPluginsAsync()
+                    // was even called, which meant SessionIO::loadSession()'s
+                    // plugin relinking (SessionIO::resolveLocalDescription(),
+                    // matched against PluginManager::getPluginList()) always
+                    // ran against a still-empty list - PluginManager's
+                    // constructor never pre-loads the plugin cache, only
+                    // scanPlugins() does. Harmless on the same machine a
+                    // session was saved on (the saved absolute path still
+                    // resolves directly, no relink needed), but silently
+                    // produced an empty rig for a cross-platform session
+                    // (e.g. Mac-saved, opened fresh on Windows) - manually
+                    // re-opening the same file minutes later, by which time
+                    // the scan had finished, always worked, which is what
+                    // gave this away. Still covered by MainComponent's
+                    // LoadingOverlayComponent throughout - its dismissal via
+                    // onScanComplete() below now also covers this. The
+                    // overlay's text is swapped to a generic "warming up"
+                    // message just before this starts (see
+                    // MainComponent::showWarmingUpOverlay()), since
+                    // tryAutoLoadKadabraSession() below blocks the message
+                    // thread for its own duration (plugin instantiation's
+                    // safety-margin sleeps) and would otherwise leave the
+                    // overlay frozen mid-scan-status, wrongly implying
+                    // scanning is still happening.
+                    // showWarmingUpOverlay() forces a real paint of this
+                    // message through before returning - see its own
+                    // comment for why a plain repaint()/callAsync deferral
+                    // isn't actually enough on its own.
+                    mainWindow->mainComponent->showWarmingUpOverlay();
+                    mainWindow->tryAutoLoadKadabraSession();
                     mainWindow->mainComponent->onScanComplete();
+                }
             });
         });
     }
 
-    void shutdown() override { mainWindow = nullptr; splashScreen = nullptr; }
+    void shutdown() override
+    {
+        // Final synchronous save - see AudioDeviceStatePersister's comment
+        // on why the listener-driven save alone isn't quite enough to
+        // guarantee the very last change is on disk before quit.
+        AudioDeviceStatePersister::saveNow(deviceManager);
+        audioDeviceStatePersister = nullptr;
+
+        mainWindow = nullptr;
+        splashScreen = nullptr;
+        // No Component still references lookAndFeel past this point - safe
+        // to drop the default before this object itself is destroyed.
+        juce::LookAndFeel::setDefaultLookAndFeel(nullptr);
+    }
     // Central choke point for every quit path (Cmd+Q, Dock quit, File >
     // Quit's cmdQuit command, and the window's close button all route here)
     // - guarding it once here covers all of them, rather than duplicating
@@ -90,14 +274,24 @@ public:
 
     enum CommandIDs
     {
-        cmdOpenSession = 1,
+        cmdNewSession = 1,
+        cmdOpenSession,
         cmdSaveSession,
         cmdSaveSessionAs,
         cmdImportAudioTrack,
+        cmdPanic,
         cmdSettings,
         cmdAbout,
         cmdHelp,
-        cmdQuit
+        cmdQuit,
+        // Not on any menu - registered purely so its default keypress (see
+        // getCommandInfo()) reaches the shared transport playhead via the
+        // commandManager.getKeyMappings() key listener already added to
+        // this window (see the constructor). Spacebar has no built-in JUCE
+        // Button binding to collide with (Button::keyPressed() only
+        // reacts to Return, confirmed against juce_Button.cpp), so this is
+        // safe to bind window-wide without a modifier key.
+        cmdPlayPause
     };
 
     struct MainWindow : public juce::DocumentWindow,
@@ -119,7 +313,14 @@ public:
         // as user-driven; see the end of the constructor and resized().
         bool programmaticResize = true;
         juce::ApplicationCommandManager commandManager;
-        juce::Component::SafePointer<SettingsComponent> activeSettings;
+        // Non-null exactly while the (deliberately non-modal, see
+        // showSettings()) Settings dialog is open - lets showSettings()
+        // toggle it closed on a second click/menu-select instead of
+        // stacking a duplicate. settingsCloseWatcher below is what actually
+        // deletes the window and nulls this out once it's hidden, by any
+        // means.
+        juce::Component::SafePointer<juce::DialogWindow> activeSettingsDialog;
+        std::unique_ptr<SettingsDialogCloseWatcher> settingsCloseWatcher;
 
         // File > Recent - persisted to disk (mirrors PluginManager's
         // ~/Library/IMI/KPlayer/ convention - note juce::File::userApplicationDataDirectory
@@ -216,8 +417,25 @@ public:
             setMenuBar(this);
             mainComponent = new MainComponent(dm, pm);
             mainComponent->onDirty = [this] { markDirty(); };
+            // Forwarded from GlobalSectionComponent's own callbacks -
+            // MainComponent doesn't have the context either of these needs
+            // (a confirm dialog for a destructive shrink, opening the
+            // Settings DialogWindow).
+            mainComponent->onChannelCountChangeRequested = [this](int newCount) { requestChannelCountChange(newCount); };
+            mainComponent->onSettingsRequested = [this] { showSettings(); };
+            mainComponent->onSaveRequested = [this] { saveSession(); };
+            mainComponent->onSaveAsRequested = [this] { saveSessionAs(); };
+            mainComponent->onOpenSessionRequested = [this] { openSession(); };
+            mainComponent->onOpenStarterRequested = [this] { openStarterSession(); };
             setContentOwned(mainComponent, true);
             setResizable(true, true);
+            // Floor width at whatever the global bar's own left/center/
+            // right zones need to stay non-overlapping (including both
+            // logos) - see GlobalSectionComponent::minimumWindowWidth's own
+            // comment. Height floor is just a sane "still usable" minimum,
+            // not tied to any particular content requirement. Both maxima
+            // left effectively unbounded.
+            setResizeLimits(GlobalSectionComponent::minimumWindowWidth, 500, 0x7fffffff, 0x7fffffff);
             centreWithSize(1152, 800);
             updateWindowTitle();
 
@@ -245,7 +463,7 @@ public:
 
         juce::StringArray getMenuBarNames() override
         {
-            return { "File", "Settings", "Help" };
+            return { "File", "Help" };
         }
 
         juce::PopupMenu getMenuForIndex(int index, const juce::String&) override
@@ -253,6 +471,7 @@ public:
             juce::PopupMenu menu;
             if (index == 0)
             {
+                menu.addCommandItem(&commandManager, cmdNewSession);
                 menu.addCommandItem(&commandManager, cmdOpenSession);
                 menu.addCommandItem(&commandManager, cmdSaveSession);
                 menu.addCommandItem(&commandManager, cmdSaveSessionAs);
@@ -266,13 +485,15 @@ public:
                 menu.addCommandItem(&commandManager, cmdImportAudioTrack);
 
                 menu.addSeparator();
+                menu.addCommandItem(&commandManager, cmdPanic);
+
+                menu.addSeparator();
+                menu.addCommandItem(&commandManager, cmdSettings);
+
+                menu.addSeparator();
                 menu.addCommandItem(&commandManager, cmdQuit);
             }
             else if (index == 1)
-            {
-                menu.addCommandItem(&commandManager, cmdSettings);
-            }
-            else if (index == 2)
             {
                 menu.addCommandItem(&commandManager, cmdAbout);
                 menu.addCommandItem(&commandManager, cmdHelp);
@@ -294,14 +515,18 @@ public:
 
         void getAllCommands(juce::Array<juce::CommandID>& commands) override
         {
-            commands.addArray({ cmdOpenSession, cmdSaveSession, cmdSaveSessionAs, cmdImportAudioTrack,
-                                cmdSettings, cmdAbout, cmdHelp, cmdQuit });
+            commands.addArray({ cmdNewSession, cmdOpenSession, cmdSaveSession, cmdSaveSessionAs, cmdImportAudioTrack,
+                                cmdPanic, cmdSettings, cmdAbout, cmdHelp, cmdQuit, cmdPlayPause });
         }
 
         void getCommandInfo(juce::CommandID commandID, juce::ApplicationCommandInfo& result) override
         {
             switch (commandID)
             {
+                case cmdNewSession:
+                    result.setInfo("New Session", "Start a new, empty session", "File", 0);
+                    result.addDefaultKeypress('n', juce::ModifierKeys::commandModifier);
+                    break;
                 case cmdOpenSession:
                     result.setInfo("Open Session...", "Open a saved session", "File", 0);
                     result.addDefaultKeypress('o', juce::ModifierKeys::commandModifier);
@@ -317,8 +542,12 @@ public:
                 case cmdImportAudioTrack:
                     result.setInfo("Import Audio to Track...", "Import an audio file as a recorded Take on a channel", "File", 0);
                     break;
+                case cmdPanic:
+                    result.setInfo("Panic (All Notes Off)", "Immediately silence every loaded instrument - all notes off / all sound off", "File", 0);
+                    result.addDefaultKeypress('.', juce::ModifierKeys::commandModifier);
+                    break;
                 case cmdSettings:
-                    result.setInfo("Audio & MIDI...", "Open audio/MIDI settings", "Settings", 0);
+                    result.setInfo("Settings...", "Open Settings (toggles closed if already open)", "File", 0);
                     break;
                 case cmdAbout:
                     result.setInfo("About", "About KPlayer", "Help", 0);
@@ -330,6 +559,12 @@ public:
                     result.setInfo("Quit", "Quit the application", "File", 0);
                     result.addDefaultKeypress('q', juce::ModifierKeys::commandModifier);
                     break;
+                case cmdPlayPause:
+                    // Deliberately not on any menu - see the enum entry's
+                    // own comment.
+                    result.setInfo("Play/Pause", "Play or pause the shared transport playhead", "Transport", 0);
+                    result.addDefaultKeypress(juce::KeyPress::spaceKey, juce::ModifierKeys::noModifiers);
+                    break;
                 default:
                     break;
             }
@@ -339,14 +574,17 @@ public:
         {
             switch (info.commandID)
             {
+                case cmdNewSession:    newSession();        return true;
                 case cmdOpenSession:   openSession();      return true;
                 case cmdSaveSession:   saveSession();       return true;
                 case cmdSaveSessionAs: saveSessionAs();      return true;
                 case cmdImportAudioTrack: importAudioToTrack(); return true;
+                case cmdPanic:         mainComponent->triggerPanic(); return true;
                 case cmdSettings:      showSettings();       return true;
                 case cmdAbout:         showAboutDialog();    return true;
                 case cmdHelp:          openHelpWebsite();    return true;
                 case cmdQuit:          juce::JUCEApplication::getInstance()->systemRequestedQuit(); return true;
+                case cmdPlayPause:     mainComponent->toggleTransportPlaying(); return true;
                 default: return false;
             }
         }
@@ -374,9 +612,13 @@ public:
 
         void updateWindowTitle()
         {
+            // Always appends ".kplayer" itself rather than trusting
+            // currentSessionFile's own on-disk extension casing - purely
+            // cosmetic, so "Untitled" and a real saved file's name both end
+            // up formatted the same way regardless.
             auto name = currentSessionFile != juce::File() ? currentSessionFile.getFileNameWithoutExtension()
-                                                             : juce::String("Untitled Session");
-            setName(name + (sessionDirty ? " *" : ""));
+                                                             : juce::String("Untitled");
+            setName(name + ".kplayer" + (sessionDirty ? " *" : ""));
         }
 
         // Called instead of confirmDiscardUnsavedChanges() at quit time
@@ -405,6 +647,21 @@ public:
             confirmDiscardUnsavedChanges(onProceed);
         }
 
+        // Show Mode: skip the confirm prompt entirely, running proceed()
+        // straight away - it's the user's own call to make in Show Mode
+        // (see MainComponent::isShowModeEnabled()'s comment for the
+        // reasoning). Work Mode (default): gated behind
+        // confirmDiscardUnsavedChanges() as usual. Shared by openSession(),
+        // openRecentFile(), and openStarterSession() below - all three
+        // wanted this exact same two-line branch.
+        void proceedOrConfirmDiscard(std::function<void()> proceed)
+        {
+            if (mainComponent->isShowModeEnabled())
+                proceed();
+            else
+                confirmDiscardUnsavedChanges(proceed);
+        }
+
         // Gates any action that would discard the current session (opening
         // another one, quitting) behind a Save/Discard/Cancel prompt when
         // there are unsaved changes. Runs onProceed immediately if the
@@ -426,18 +683,59 @@ public:
                     "Save", "Discard and Continue", "Cancel", this),
                 [this, onProceed](int result)
                 {
+                    // onProceed can fire from deep inside the AlertWindow's
+                    // own callback/modal-dismissal call stack (immediately
+                    // on Discard, or after saveSession()'s completion
+                    // callback on Save) - same hazard systemRequestedQuit()
+                    // already works around for quit(). Here onProceed often
+                    // launches a second modal of its own (openSession()'s
+                    // FileChooser, saveSessionAs()'s FileChooser) - starting
+                    // that from within the first modal's own teardown
+                    // silently failed to show it on Windows rather than
+                    // hanging/crashing, so defer to a fresh message-loop
+                    // tick the same way.
                     if (result == 1)
-                        saveSession([onProceed](bool saved) { if (saved) onProceed(); });
+                        saveSession([onProceed](bool saved) { if (saved) juce::MessageManager::callAsync(onProceed); });
                     else if (result == 2)
-                        onProceed();
+                        juce::MessageManager::callAsync(onProceed);
                     // result == 0 (Cancel): do nothing.
                 });
         }
 
+        // File > New Session - drops back to exactly the blank rig
+        // MainComponent starts in at launch when there's no
+        // recover.kplayer/Starter.kplayer to auto-load (see
+        // tryAutoLoadKadabraSession()'s "no Kadabra port connected"
+        // fallback) - see MainComponent::resetToDefaultSession() for what
+        // that actually resets. currentSessionFile is cleared same as a
+        // never-saved session, so the window title falls back to "Untitled
+        // Session" and the first manual Save behaves like Save As. Same
+        // Show/Work Mode discard-confirmation as openSession()/
+        // openRecentFile()/openStarterSession().
+        void newSession()
+        {
+            auto proceed = [this]
+            {
+                mainComponent->resetToDefaultSession();
+                currentSessionFile = juce::File();
+                clearDirty();
+            };
+
+            proceedOrConfirmDiscard(proceed);
+        }
+
         void openSession()
         {
-            confirmDiscardUnsavedChanges([this]
+            auto proceed = [this]
             {
+                // Guard against a second open/save-as trigger landing while
+                // one's already in flight (more reachable now via MIDI CC3/
+                // CC9 than it was mouse-only) - reassigning fileChooser here
+                // would destroy the first dialog out from under the user
+                // with no completion callback for their original action.
+                if (fileChooser != nullptr)
+                    return;
+
                 fileChooser = std::make_unique<juce::FileChooser>(
                     "Open Session", juce::File(), "*.kplayer");
 
@@ -446,19 +744,24 @@ public:
                     [this](const juce::FileChooser& fc)
                     {
                         auto file = fc.getResult();
+                        fileChooser.reset();
                         if (file.existsAsFile())
                             loadSessionFile(file);
                     });
-            });
+            };
+
+            proceedOrConfirmDiscard(proceed);
         }
 
         void openRecentFile(const juce::File& file)
         {
-            confirmDiscardUnsavedChanges([this, file]
+            auto proceed = [this, file]
             {
                 if (file.existsAsFile())
                     loadSessionFile(file);
-            });
+            };
+
+            proceedOrConfirmDiscard(proceed);
         }
 
         // Import Audio to Track (Increment E, see
@@ -589,6 +892,12 @@ public:
                 saveRecentFilesList();
             }
             clearDirty();
+            // Rides out plugins' own delayed post-load settling (HISE-
+            // based K-Samplers, Kontakt, Surge XT) that can otherwise
+            // dirty the session within the first second or two with zero
+            // real user/Kadabra input - see
+            // MainComponent::suppressPostLoadDirtyFlags()'s own comment.
+            mainComponent->suppressPostLoadDirtyFlags();
             applyLoadedWindowSize();
             return true;
         }
@@ -610,6 +919,26 @@ public:
             auto starterFile = getStarterSessionFile();
             if (starterFile.existsAsFile())
                 loadSessionFile(starterFile, false);
+        }
+
+        // MIDI-triggered (CC99 value 0, see MainComponent::
+        // onOpenStarterRequested) - explicit "reload the factory starter"
+        // request, as opposed to tryAutoLoadKadabraSession()'s launch-time
+        // fallback above. Same loadSessionFile(..., false) call (doesn't
+        // track Starter.kplayer as the current file, so a later Save
+        // doesn't silently overwrite the read-only factory copy), and the
+        // same Show/Work Mode discard-confirmation openSession()/
+        // openRecentFile() already use.
+        void openStarterSession()
+        {
+            auto starterFile = getStarterSessionFile();
+            auto proceed = [this, starterFile]
+            {
+                if (starterFile.existsAsFile())
+                    loadSessionFile(starterFile, false);
+            };
+
+            proceedOrConfirmDiscard(proceed);
         }
 
         // A saved window size is 0x0 for a fresh session or a file saved
@@ -653,6 +982,12 @@ public:
 
         void saveSessionAs(std::function<void(bool)> onComplete = nullptr)
         {
+            // Same guard as openSession() - both share the fileChooser
+            // member, and a concurrent trigger reassigning it mid-flight
+            // would yank whichever dialog was already open.
+            if (fileChooser != nullptr)
+                return;
+
             mainComponent->setWindowSize(getWidth(), getHeight());
 
             fileChooser = std::make_unique<juce::FileChooser>(
@@ -663,6 +998,7 @@ public:
                 [this, onComplete](const juce::FileChooser& fc)
                 {
                     auto file = fc.getResult();
+                    fileChooser.reset();
                     if (file == juce::File())
                     {
                         if (onComplete)
@@ -686,17 +1022,31 @@ public:
                 });
         }
 
+        // Toggle: clicking Settings (menu item or the Global-section button)
+        // while the dialog is already open closes it, same as the native
+        // close button - rather than doing nothing or stacking a second one.
+        //
+        // Deliberately non-modal (LaunchOptions::create(), not
+        // launchAsync()) - a fully modal dialog blocks click delivery to
+        // the rest of the app *including* the Global-section Settings
+        // button itself, which is exactly what this toggle needs to keep
+        // working. Settings doesn't gate anything that needs exclusive
+        // access (channel count moved out to the Global section already;
+        // device selection/recordings folder/Rescan are all fine to leave
+        // interactive alongside the main window).
         void showSettings()
         {
+            if (activeSettingsDialog != nullptr)
+            {
+                activeSettingsDialog->setVisible(false);
+                return;
+            }
+
             auto* settings = new SettingsComponent(deviceManager,
-                                                    mainComponent->getNumChannels(),
-                                                    MainComponent::maxChannels,
-                                                    [this](int newCount) { requestChannelCountChange(newCount); },
                                                     mainComponent->getRecordingsFolder(),
                                                     mainComponent->getRecordingSilenceTimeoutSeconds(),
                                                     [this](juce::File folder) { mainComponent->setRecordingsFolder(folder); markDirty(); },
                                                     [this](double seconds) { mainComponent->setRecordingSilenceTimeoutSeconds(seconds); markDirty(); });
-            activeSettings = settings;
 
             juce::DialogWindow::LaunchOptions opts;
             opts.content.setOwned(settings);
@@ -711,8 +1061,44 @@ public:
             // the user grow the window too means they don't have to scroll
             // at all on setups with a lot of enumerated MIDI ports.
             opts.resizable = true;
-            if (auto* dialogWindow = opts.launchAsync())
-                dialogWindow->setResizeLimits(420, 400, 900, 1200);
+
+            // create() just builds the window without entering modal state -
+            // we own showing it and cleaning it up (below), since JUCE's
+            // own auto-delete-on-close only applies to modal components.
+            activeSettingsDialog = opts.create();
+            activeSettingsDialog->setResizeLimits(420, 400, 900, 1200);
+            activeSettingsDialog->setVisible(true);
+            activeSettingsDialog->toFront(true);
+
+            // The native close button's default handler just does
+            // setVisible(false) for a non-modal DialogWindow (no
+            // ModalComponentManager watching it to trigger deletion) - this
+            // listener is what actually deletes the window once it's
+            // hidden, by any means (native close, Esc, our own toggle
+            // above, or Rescan's close-then-scan below), so there's one
+            // single cleanup path regardless of which one fired.
+            settingsCloseWatcher = std::make_unique<SettingsDialogCloseWatcher>();
+            settingsCloseWatcher->onClosed = [this]
+            {
+                if (activeSettingsDialog != nullptr)
+                {
+                    delete activeSettingsDialog.getComponent();
+                    activeSettingsDialog = nullptr;
+                }
+            };
+            activeSettingsDialog->addComponentListener(settingsCloseWatcher.get());
+
+            // Skips the confirm dialog by design (user request) - closes
+            // Settings and reuses the exact startup-scan flow (same
+            // LoadingOverlayComponent, same scanPluginsAsync call) so newly
+            // installed plugins are picked up the same way a relaunch would
+            // find them.
+            settings->onRescanRequested = [this]
+            {
+                if (activeSettingsDialog != nullptr)
+                    activeSettingsDialog->setVisible(false);
+                mainComponent->rescanPlugins();
+            };
         }
 
         // The About box draws its own fake title bar (traffic lights /
@@ -742,7 +1128,7 @@ public:
 
         void openHelpWebsite()
         {
-            juce::URL("https://www.innovativemusicalinstruments.com/Kplayer/help").launchInDefaultBrowser();
+            juce::URL("https://www.innovativemusicalinstruments.com/kplayerhelp").launchInDefaultBrowser();
         }
 
         // Grow applies immediately (adding empty channels is never
@@ -785,16 +1171,19 @@ public:
                     "Channels " + juce::String(newCount + 1) + "-" + juce::String(oldCount)
                         + " have loaded plugins that will be removed. Continue?",
                     "Reduce", "Cancel", this),
-                [this, newCount, oldCount](int confirmResult)
+                [this, newCount](int confirmResult)
                 {
+                    // Cancel needs no revert here (unlike the old Settings
+                    // slider, which visually snapped to the new value the
+                    // instant it was dragged/clicked) - GlobalSectionComponent's
+                    // +/- boxes never move their own displayed count on
+                    // click, only in response to MainComponent::setChannelCount()
+                    // actually succeeding, so an unconfirmed shrink just
+                    // never touches the display at all.
                     if (confirmResult == 1)
                     {
                         mainComponent->setChannelCount(newCount);
                         markDirty();
-                    }
-                    else if (activeSettings != nullptr)
-                    {
-                        activeSettings->setDisplayedChannelCount(oldCount);
                     }
                 });
         }
@@ -806,10 +1195,23 @@ public:
     };
 
 private:
+    // Declared first (constructed first, destroyed last) so it's already
+    // the default LookAndFeel before anything else in this class exists,
+    // and stays valid through every other member's own destruction. See
+    // KPlayerLookAndFeel's own header comment for what this is for.
+    KPlayerLookAndFeel lookAndFeel;
+
     juce::AudioDeviceManager deviceManager;
+    std::unique_ptr<AudioDeviceStatePersister> audioDeviceStatePersister;
     PluginManager pluginManager;
     std::unique_ptr<MainWindow> mainWindow;
     std::unique_ptr<AboutScreenComponent> splashScreen;
+
+    // Set when anotherInstanceStarted() arrives before mainWindow exists
+    // yet (still inside the brief device-init/plugin-scan startup window) -
+    // consumed as soon as the window is actually constructed, see
+    // initialise() and anotherInstanceStarted() above.
+    bool focusRequestPendingFromStartup = false;
 };
 
 START_JUCE_APPLICATION(KPlayerApplication)

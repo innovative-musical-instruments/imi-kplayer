@@ -112,6 +112,22 @@ public:
     // lifetime bug). The by-value copy is taken before any of that runs.
     void selectAudioTake(juce::File takeFile);
 
+    // Same as selectAudioTake() above, but for the MIDI Input Selector's
+    // "Recorded Takes" section - comboBoxChanged() below calls this too,
+    // and it's what the Master section's bulk "MIDI In" selector
+    // (MainComponent::applyMasterMidiInputSelection) calls directly for
+    // every channel that was recorded in a chosen take group.
+    void selectMidiTake(juce::File takeFile);
+
+    // Live-source equivalents of the two Take selectors above - select a
+    // live hardware input/device rather than a recording, or None
+    // (channelIndex -1 / an empty identifier). Same shared-by-manual-click-
+    // and-external-caller shape: comboBoxChanged() below calls these for a
+    // direct user pick, and the Master section's bulk selectors call them
+    // to broadcast one input to every channel at once.
+    void selectLiveAudioInput(int channelIndex);
+    void selectLiveMidiInput(const juce::String& deviceIdentifier);
+
     // Global collapse toggle (all channels move together, driven from
     // MainComponent) - hides the Audio In/MIDI In/MIDI Ch rows, leaving the
     // channel name visible. Purely a view preference, not session state.
