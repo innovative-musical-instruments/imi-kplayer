@@ -145,6 +145,43 @@ points at the same `~/SDKs/JUCE` / `C:/SDKs/JUCE` either way), only what
 lives there, so there's nothing to `git pull` for this - it's a per-machine
 SDK swap, easy to forget since nothing in the diff will mention it.
 
+## Windows: catching up to v0.9.9 (written from the Mac, 2026-09-05)
+
+macOS shipped v0.9.9 (signed, notarized, distributed). Windows has not
+been built for it, so the two platforms are no longer on the same commit.
+What that machine needs, in order:
+
+1. **`git pull`** — 11 commits: the Range, the metronome click, live
+   tempo, the 1200 BPM ceiling, the editable playhead readout, release
+   notes and docs.
+2. **Check the remote URL.** The GitHub repo is `imi-kplayer`; an older
+   clone may still point at `IMI-KPlayer`, which GitHub redirects but
+   which keeps resurfacing the wrong name — `git remote set-url origin
+   https://github.com/innovative-musical-instruments/imi-kplayer.git`.
+3. **If the checkout folder is still named `IMI_KPlayer`, rename it to
+   `imi-kplayer` and delete `build/`.** CMake hard-refuses a cache created
+   under a different source path ("The current CMakeCache.txt directory
+   ... is different than the directory ... where CMakeCache.txt was
+   created"). This bit twice on the Mac today, for both `build/` and
+   `build-release/`. Deleting the build dir is the whole fix.
+4. **The JUCE SDK swap may still be outstanding** — see the JUCE 9.0.1
+   section above. `C:/SDKs/JUCE` needs to be 9.0.1, and nothing in a
+   `git pull` will tell you if it isn't, since the path never changed.
+5. **Build Release via `scripts/build_release_windows.ps1`** (it forces
+   the fresh configure the version-resource guard needs — the guard will
+   hard-fail a stale 0.9.8-stamped binary), sign with
+   `../imi-windows-installer/scripts/sign-windows-binary.ps1`, and zip as
+   `Release/Kadabra K-Player v0.9.9 (Win64).zip`.
+6. **Then update `imi-common-docs/strategy/master-backlog.md` Section 7**,
+   which currently records "Windows has not been built for 0.9.9 yet".
+
+Worth actually looking at on Windows, since they were written on the Mac
+with that platform's font-coverage gap in mind: the Range capture buttons
+draw their up-arrow as a vector (a `"CAPTURE"` sentinel in
+`TransportButtonLookAndFeel`) and the RANGE caption is plain text with
+vector arrows either side — both deliberately avoid Unicode glyphs. Also
+check the window at its new 1204px minimum width.
+
 ## Architecture — where to look
 
 - `Source/Main.cpp` — app entry, `MainWindow`, menu/save/load/quit flow,
