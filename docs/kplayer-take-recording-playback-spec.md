@@ -77,6 +77,10 @@ No interlock needed. Every new recording pass writes to a fresh file rather than
 
 ## 10. Decisions (resolved)
 
-- **Default playback behavior**: stop at the end of the take. No loop for first release.
+- **Default playback behavior**: play the Range - the span of the session
+  the transport covers, defaulting to the whole of the longest selected
+  Take - and stop at its end, or loop it when LOOP is on (v0.9.9). Before
+  the Range existed this was simply "stop at the end of the take, no
+  loop".
 - **Take scope**: channel-owned — a channel only lists and plays back its own Takes. Cross-channel selection and full naming control remain out of scope here.
 - **Tempo mismatch handling**: out of scope for this stage. No surfacing of session-tempo-vs-capture-tempo drift to the user yet.

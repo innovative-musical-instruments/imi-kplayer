@@ -1,5 +1,71 @@
 # Kadabra K-Player — Release Notes
 
+## v0.9.9 — 2026-09-05
+
+Transport work: a Range to play and loop a section of a take, a metronome
+click, and a tempo that finally takes effect when you set it.
+
+### New Features
+
+- **Range** — the transport now plays a bounded span of the session rather
+  than advancing forever into silence past the end of the material. A
+  second row above Play/Rec/RTZ carries **LOOP** (wrap at the range end
+  instead of stopping there), **FULL** (temporarily play the whole of the
+  recorded material while remembering your own range), the range start/end
+  fields, and a capture button under each that pulls the current playhead
+  into it. The range is always present whenever any channel has a Take
+  selected, defaulting to the whole of the longest one, and **RTZ now
+  returns to the range start** rather than to zero. Resolution is
+  deliberately whole seconds: the start rounds down and the end rounds up,
+  so the range always contains what you gestured at. Range points and the
+  LOOP toggle persist in the session; FULL deliberately doesn't, since it
+  is a temporary view of the material rather than a setting.
+- **Metronome click** — a click or an unpitched noise burst generated
+  inside K-Player, taking no MIDI channel and no plugin slot. It follows
+  the session tempo and the transport, and is mixed in after the master
+  chain and after the recording tap, so it never runs through your master
+  inserts and can never end up in a recording. The **CLICK** toggle sits
+  above Sync; right-click (or ctrl-click) it for sound, resolution (2/1
+  through 1/8) and volume (0 to -18 dB). Settings persist in the session.
+- **The transport time readout is editable** — double-click it and type a
+  time to jump the playhead there, so finding a spot in a long take
+  doesn't mean listening through it. Clamped into the current range, and
+  disabled while recording.
+- **Tempo can now be set up to 1200 BPM** — Kadabra's own sequencer runs
+  well past the conventional ~300 ceiling and MIDI-clock sync has always
+  followed it up there, so a tempo you could arrive at by syncing was one
+  you were not allowed to type.
+
+### Fixes
+
+- **Changing the tempo did nothing to a MIDI Take until it was
+  reselected** — a Take was converted from ticks to samples once, when it
+  was selected, against whatever the tempo happened to be at that moment.
+  Changing the tempo afterwards had no effect at all, and a Take selected
+  after MIDI-clock sync had moved the tempo played at the wrong speed with
+  nothing on screen to indicate why. Playback now converts per block
+  against the live tempo, so a change is audible immediately and applies
+  progressively from wherever playback has reached rather than re-timing
+  what has already played. Found while testing this release: a take
+  recorded at 300 BPM was playing back at 0.76x after the tempo had been
+  caught from a Kadabra clock.
+- **Recorded MIDI files didn't record the tempo they were played at** —
+  every timestamp in a `.mid` Take is derived from the tempo at record
+  time, but that number was thrown away, so the file was only
+  interpretable by someone who happened to remember it and any other
+  software opening it assumed 120. Each `.mid` now carries a tempo
+  meta-event. Playback inside K-Player still follows the session tempo,
+  so this changes nothing about how a Take sounds here.
+
+### Notes
+
+- Session `formatVersion` is now **5**, with one appended migration step.
+  Older sessions load unchanged: they carry no range (so it spans whatever
+  material their Takes turn out to be, exactly as before) and the click
+  defaults to off.
+- The minimum window width grows from 1132 to 1204 px to fit the Range
+  controls.
+
 ## v0.9.8 — 2026-08-27
 
 Three Master section workflow additions driven by real live-use experience,
