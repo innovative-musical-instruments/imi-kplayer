@@ -16,6 +16,7 @@
 #include "MidiClockTempoDetector.h"
 #include "RecordingManager.h"
 #include "MidiTakePlayer.h"
+#include "ClickGenerator.h"
 #include "AudioTakePlayer.h"
 #include "SessionTransport.h"
 
@@ -80,6 +81,13 @@ public:
     // component just reflects it. tempoSyncDeviceIdentifier empty means "no
     // sync source picked yet", independent of whether sync itself is on.
     bool isTempoSyncEnabled() const { return tempoSyncEnabled; }
+
+    // ---- Metronome click, for session round-trip (see SessionIO) ----
+    bool  isClickEnabled() const   { return clickGenerator.isEnabled(); }
+    bool  isClickSoundBeep() const { return clickGenerator.getSound() == ClickGenerator::Sound::beep; }
+    int   getClickResolutionTicks() const { return clickGenerator.getResolutionTicks(); }
+    float getClickVolumeDb() const   { return clickGenerator.getVolumeDb(); }
+    void  restoreClick(bool enabled, bool beep, int resolutionTicks, float volumeDb);
 
     // ---- Range, for session round-trip (see SessionIO) ----
     // Only the user's own range is persisted, never FULL: FULL is a
@@ -376,6 +384,14 @@ private:
     std::vector<std::unique_ptr<AudioTakePlayer>> audioTakePlayers;
     SessionTransport sessionTransport;
 
+    // The metronome click - mixed in at the very end of the audio callback,
+    // after the master chain and after RecordingManager has taken its copy,
+    // so it never runs through the master inserts and can never end up in a
+    // recording. See ClickGenerator's own header.
+    ClickGenerator clickGenerator;
+    void toggleClick();
+    void showClickOptionsMenu();
+
     // The audio thread's copy of the session tempo, written by
     // setGlobalTempo() and read once per callback by MIDI Take playback -
     // same atomic-double shape KPlayerAudioPlayHead already uses to get the
@@ -444,6 +460,13 @@ private:
     // capture buttons pull into the range fields, and what decides which of
     // them would produce an inverted range and so has to be dimmed.
     int getPlayheadSeconds() const;
+
+    // Jump the playhead to a typed time. Clamped into the current Range
+    // when there is one: the readout exists to find a spot in the material
+    // being auditioned, and a position outside the range would either be
+    // parked on immediately (LOOP off) or wrapped away (LOOP on), neither
+    // of which is what was asked for. Use FULL to reach past your range.
+    void seekToSeconds(int seconds);
 
     juce::Component channelRackContent;
     juce::Viewport  channelViewport;

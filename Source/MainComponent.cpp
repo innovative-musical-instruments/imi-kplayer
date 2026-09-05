@@ -70,6 +70,7 @@ MainComponent::MainComponent(juce::AudioDeviceManager& dm, PluginManager& pm)
     globalSection.onRecordButtonClicked = [this] { toggleRecordArm(); };
     globalSection.onShowModeToggled = [this] { setShowModeEnabled(! showModeEnabled); };
 
+    globalSection.onPositionEdited    = [this](int seconds) { seekToSeconds(seconds); };
     globalSection.onLoopToggled       = [this] { toggleRangeLoop(); };
     globalSection.onFullToggled       = [this] { toggleRangeFull(); };
     globalSection.onCaptureRangeStart = [this] { captureRangeStartFromPlayhead(); };
@@ -100,6 +101,8 @@ MainComponent::MainComponent(juce::AudioDeviceManager& dm, PluginManager& pm)
         setTempoSyncEnabled(enabled);
         notifyDirty();
     };
+    tempoSync.onClickToggled          = [this] { toggleClick(); };
+    tempoSync.onClickOptionsRequested = [this] { showClickOptionsMenu(); };
     tempoSync.onSyncDeviceChanged = [this](juce::String identifier)
     {
         setTempoSyncDeviceIdentifier(std::move(identifier));
@@ -832,6 +835,79 @@ void MainComponent::refreshRangeState()
     globalSection.setLoopEnabled(rangeLoopEnabled);
 }
 
+void MainComponent::toggleClick()
+{
+    clickGenerator.setEnabled(! clickGenerator.isEnabled());
+    globalSection.getTempoSyncComponent().setClickEnabled(clickGenerator.isEnabled());
+    notifyDirty();
+}
+
+void MainComponent::showClickOptionsMenu()
+{
+    juce::PopupMenu menu;
+
+    bool isBeep = clickGenerator.getSound() == ClickGenerator::Sound::beep;
+    juce::PopupMenu soundMenu;
+    soundMenu.addItem(1, "Click", true, ! isBeep);
+    soundMenu.addItem(2, "Beep",  true, isBeep);
+    menu.addSubMenu("Sound", soundMenu);
+
+    // Note values from two whole notes down to an eighth - see
+    // ClickGenerator::resolutions, which holds the tick count each one
+    // means so the label and the timing can't drift apart.
+    int resolutionTicks = clickGenerator.getResolutionTicks();
+    juce::PopupMenu resolutionMenu;
+    for (int i = 0; i < ClickGenerator::numResolutions; ++i)
+        resolutionMenu.addItem(100 + i, ClickGenerator::resolutions[i].label,
+                               true, resolutionTicks == ClickGenerator::resolutions[i].ticksPerClick);
+    menu.addSubMenu("Resolution", resolutionMenu);
+
+    // Discrete 3 dB steps rather than a slider living inside a menu: one
+    // click to set, and a menu item is a far easier target than a slider
+    // handle when the room is dark.
+    float volumeDb = clickGenerator.getVolumeDb();
+    juce::PopupMenu volumeMenu;
+    for (int i = 0; i <= 6; ++i)
+    {
+        float db = ClickGenerator::maximumVolumeDb - (float) i * 3.0f;
+        volumeMenu.addItem(200 + i, juce::String(db, 0) + " dB",
+                           true, std::abs(volumeDb - db) < 0.01f);
+    }
+    menu.addSubMenu("Volume", volumeMenu);
+
+    menu.showMenuAsync(juce::PopupMenu::Options()
+                           .withTargetComponent(&globalSection.getTempoSyncComponent()),
+                       [this](int result)
+    {
+        if (result == 0)
+            return;
+
+        if (result == 1)
+            clickGenerator.setSound(ClickGenerator::Sound::click);
+        else if (result == 2)
+            clickGenerator.setSound(ClickGenerator::Sound::beep);
+        else if (result >= 100 && result < 200)
+        {
+            clickGenerator.setResolutionTicks(ClickGenerator::resolutions[result - 100].ticksPerClick);
+        }
+        else if (result >= 200)
+        {
+            clickGenerator.setVolumeDb(ClickGenerator::maximumVolumeDb - (float) (result - 200) * 3.0f);
+        }
+
+        notifyDirty();
+    });
+}
+
+void MainComponent::restoreClick(bool enabled, bool beep, int resolutionTicks, float volumeDb)
+{
+    clickGenerator.setEnabled(enabled);
+    clickGenerator.setSound(beep ? ClickGenerator::Sound::beep : ClickGenerator::Sound::click);
+    clickGenerator.setResolutionTicks(resolutionTicks);
+    clickGenerator.setVolumeDb(volumeDb);
+    globalSection.getTempoSyncComponent().setClickEnabled(enabled);
+}
+
 void MainComponent::restoreRange(bool userSet, int startSeconds, int endSeconds, bool loopEnabled)
 {
     // An inverted or empty saved range is treated as no range at all rather
@@ -847,6 +923,20 @@ void MainComponent::restoreRange(bool userSet, int startSeconds, int endSeconds,
     // resolving each channel's Take selection calls updateTransportRange()
     // again afterwards, and the range restored here survives that untouched.
     refreshRangeState();
+}
+
+void MainComponent::seekToSeconds(int seconds)
+{
+    seconds = juce::jmax(0, seconds);
+
+    if (sessionTransport.hasRange())
+        seconds = juce::jlimit(effectiveRangeStartSeconds, effectiveRangeEndSeconds, seconds);
+
+    sessionTransport.setPositionSamples((juce::int64) (seconds * currentSampleRate));
+
+    // The timer would pick this up within a tick anyway, but updating here
+    // means the readout never briefly shows the old position after a jump.
+    globalSection.setDisplayedTime(juce::String::formatted("%02d:%02d", seconds / 60, seconds % 60));
 }
 
 int MainComponent::getPlayheadSeconds() const
@@ -1537,6 +1627,17 @@ void MainComponent::audioDeviceIOCallbackWithContext(
         masterClipFlagLeft.store(true, std::memory_order_relaxed);
     if (peakR >= 1.0f)
         masterClipFlagRight.store(true, std::memory_order_relaxed);
+
+    // Last thing in the callback, deliberately: after masterChainProcessor
+    // (so the click never runs through the master inserts), after
+    // writeMasterBlock (so it can never land in a recording), and after the
+    // peak/clip metering above has already read the buffer - a click on
+    // every beat has no business making the master meters dance. The cost
+    // of sitting outside the metering is that the click's own level isn't
+    // covered by clip detection, which is why its default sits at -12 dB
+    // rather than at the top of its range.
+    clickGenerator.renderBlock(transportBlockStart, numSamples, transportIsPlaying,
+                                blockTempo, currentSampleRate, masterBuffer);
 }
 
 void MainComponent::paint(juce::Graphics& g)

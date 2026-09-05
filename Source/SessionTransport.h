@@ -61,6 +61,17 @@ public:
 
     bool isPlaying() const { return playing.load(std::memory_order_relaxed); }
 
+    // Message thread. Jump the playhead - what RTZ does, generalised to any
+    // position, for the editable time readout. Nothing else is needed to
+    // make a seek work: both take players notice the window not picking up
+    // where the last one left off and re-anchor themselves (flushing any
+    // held notes), which is the same path RTZ and a Range loop wrap already
+    // take.
+    void setPositionSamples(juce::int64 samples)
+    {
+        positionSamples.store(std::max<juce::int64>(0, samples), std::memory_order_relaxed);
+    }
+
     // For UI display only (e.g. a transport time readout) - samples, not
     // seconds, since this class has no sample-rate concept of its own; the
     // caller converts using whatever rate is currently live.

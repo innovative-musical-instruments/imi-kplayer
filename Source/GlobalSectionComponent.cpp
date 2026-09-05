@@ -57,6 +57,28 @@ GlobalSectionComponent::GlobalSectionComponent(int initialChannelCount, int maxC
     timeDisplayLabel.setFont(juce::Font(13.0f, juce::Font::bold));
     timeDisplayLabel.setJustificationType(juce::Justification::centred);
     timeDisplayLabel.setColour(juce::Label::textColourId, juce::Colours::white);
+    // Editable for the same reason the range fields are: typing a time
+    // jumps the playhead there, so finding a spot in a long Take doesn't
+    // mean sitting through it. Double-click rather than single, matching
+    // those fields - a stray click on the transport bar mid-set should not
+    // open an edit box.
+    timeDisplayLabel.setEditable(false, true, false);
+    timeDisplayLabel.setTooltip("Playhead position - Double Click to jump to a time");
+    timeDisplayLabel.onTextChange = [this]
+    {
+        int seconds = 0;
+        if (parseTimeSeconds(timeDisplayLabel.getText(), seconds) && onPositionEdited)
+        {
+            // The owner may clamp it (into the Range, say) and pushes the
+            // real position back on its next timer tick, so nothing is
+            // written back here.
+            onPositionEdited(seconds);
+        }
+        else
+        {
+            timeDisplayLabel.setText(displayedTimeText, juce::dontSendNotification);
+        }
+    };
     addAndMakeVisible(timeDisplayLabel);
 
     // Icons are vector-drawn by TransportButtonLookAndFeel rather than
@@ -178,7 +200,13 @@ void GlobalSectionComponent::setChannelCount(int count)
 
 void GlobalSectionComponent::setDisplayedTime(const juce::String& text)
 {
-    timeDisplayLabel.setText(text, juce::dontSendNotification);
+    displayedTimeText = text;
+
+    // This runs on every timer tick. While the user has the readout open
+    // for editing, overwriting it would wipe out what they were halfway
+    // through typing.
+    if (! timeDisplayLabel.isBeingEdited())
+        timeDisplayLabel.setText(text, juce::dontSendNotification);
 }
 
 void GlobalSectionComponent::setInputSectionCollapsed(bool collapsed)
@@ -259,6 +287,32 @@ void GlobalSectionComponent::updateRecordButtonColour()
     recordButton.setTooltip(tooltip);
 }
 
+bool GlobalSectionComponent::parseTimeSeconds(const juce::String& rawText, int& secondsOut)
+{
+    auto text = rawText.trim();
+
+    if (text.containsChar(':'))
+    {
+        auto minutesPart = text.upToFirstOccurrenceOf(":", false, false).trim();
+        auto secondsPart = text.fromFirstOccurrenceOf(":", false, false).trim();
+        if (minutesPart.isNotEmpty() && secondsPart.isNotEmpty()
+            && minutesPart.containsOnly("0123456789") && secondsPart.containsOnly("0123456789"))
+        {
+            secondsOut = minutesPart.getIntValue() * 60 + secondsPart.getIntValue();
+            return true;
+        }
+        return false;
+    }
+
+    if (text.isNotEmpty() && text.containsOnly("0123456789"))
+    {
+        secondsOut = text.getIntValue();
+        return true;
+    }
+
+    return false;
+}
+
 juce::String GlobalSectionComponent::formatSeconds(int seconds)
 {
     seconds = juce::jmax(0, seconds);
@@ -271,7 +325,7 @@ void GlobalSectionComponent::configureRangeField(juce::Label& field, const juce:
     field.setJustificationType(juce::Justification::centred);
     field.setColour(juce::Label::backgroundColourId, juce::Colour(0xff14141f));
     field.setColour(juce::Label::textColourId, juce::Colours::white);
-    field.setFont(juce::Font(12.0f));
+    field.setFont(juce::Font(13.0f));
     // Double-click rather than single: this bar gets clicked at speed in a
     // dark venue, and a stray single click dropping a range point into an
     // edit box mid-set would be its own small disaster. The capture buttons
@@ -281,21 +335,9 @@ void GlobalSectionComponent::configureRangeField(juce::Label& field, const juce:
 
     field.onTextChange = [this, &field, &callback]
     {
-        auto text = field.getText().trim();
         int seconds = -1;
-
-        if (text.containsChar(':'))
-        {
-            auto minutesPart = text.upToFirstOccurrenceOf(":", false, false).trim();
-            auto secondsPart = text.fromFirstOccurrenceOf(":", false, false).trim();
-            if (minutesPart.containsOnly("0123456789") && secondsPart.containsOnly("0123456789")
-                && minutesPart.isNotEmpty() && secondsPart.isNotEmpty())
-                seconds = minutesPart.getIntValue() * 60 + secondsPart.getIntValue();
-        }
-        else if (text.isNotEmpty() && text.containsOnly("0123456789"))
-        {
-            seconds = text.getIntValue();
-        }
+        if (! parseTimeSeconds(field.getText(), seconds))
+            seconds = -1;
 
         if (seconds >= 0 && callback)
         {
@@ -329,7 +371,7 @@ void GlobalSectionComponent::RangeCaptionComponent::paint(juce::Graphics& g)
     g.setColour(colour);
 
     auto bounds = getLocalBounds().toFloat();
-    g.setFont(juce::Font(10.0f));
+    g.setFont(juce::Font(11.0f));
     g.drawText("RANGE", bounds, juce::Justification::centred, false);
 
     // A small triangle hard against each edge: the left one points back at
@@ -411,6 +453,14 @@ void GlobalSectionComponent::setRecordingInProgress(bool recording)
 {
     recordingInProgress = recording;
     updateLoopButton();
+
+    // While recording, the readout is showing elapsed record time and the
+    // take is being written linearly regardless of where the playhead is -
+    // jumping it mid-pass would mean nothing useful and read as a bug.
+    timeDisplayLabel.setEditable(false, ! recording, false);
+    timeDisplayLabel.setTooltip(recording
+        ? "Recording elapsed - the playhead can't be moved mid-take"
+        : "Playhead position - Double Click to jump to a time");
 }
 
 void GlobalSectionComponent::setRangeValues(int startSeconds, int endSeconds, bool ghosted)
@@ -431,7 +481,7 @@ void GlobalSectionComponent::setRangeValues(int startSeconds, int endSeconds, bo
     // are real values, they're just not the ones the user chose.
     auto textColour = ! rangeEnabled ? juce::Colour(0xff5a5a68)
                                      : (ghosted ? juce::Colour(0xff8a8a9a) : juce::Colours::white);
-    auto font = juce::Font(12.0f);
+    auto font = juce::Font(13.0f);
     if (ghosted)
         font = font.italicised();
 

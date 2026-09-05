@@ -137,6 +137,7 @@ target_sources(IMI_KPlayer PRIVATE
     Source/AudioTakePlayer.cpp
     Source/AudioTakePlayer.h
     Source/SessionTransport.h
+    Source/ClickGenerator.h
     Source/TransportButtonLookAndFeel.h
     Source/ConsoleFaderLookAndFeel.h
     Source/LoadingOverlayComponent.h

@@ -43,6 +43,16 @@ public:
     // identifier means "None".
     std::function<void(juce::String)> onSyncDeviceChanged;
 
+    // ---- Metronome click ----
+    // The Click toggle sits directly above Sync. A left click toggles it;
+    // a right click (or ctrl-click on Mac) asks for the options menu, which
+    // GlobalSectionComponent's owner builds and shows - this component only
+    // reports the gesture, same dumb-reflector relationship it has with
+    // everything else here.
+    std::function<void()> onClickToggled;
+    std::function<void()> onClickOptionsRequested;
+    void setClickEnabled(bool enabled);
+
     TempoSyncComponent();
     ~TempoSyncComponent() override;
 
@@ -68,10 +78,34 @@ private:
     int  midiDeviceItemIdFor(const juce::String& identifier) const;
     void updateTempoValueLabel();
 
+    // A TextButton that reports right-clicks separately from left-clicks,
+    // so one control can both toggle the click and open its options.
+    class ClickToggleButton : public juce::TextButton
+    {
+    public:
+        std::function<void()> onPopupMenuRequested;
+        void mouseDown(const juce::MouseEvent& event) override
+        {
+            // isPopupMenu() covers right-click on both platforms and
+            // ctrl-click on Mac, which is the gesture people actually use
+            // there.
+            if (event.mods.isPopupMenu())
+            {
+                if (onPopupMenuRequested)
+                    onPopupMenuRequested();
+                return;
+            }
+            juce::TextButton::mouseDown(event);
+        }
+    };
+
     juce::Label tempoLabel;
     juce::Label tempoValueLabel;
+    ClickToggleButton clickButton;
     juce::TextButton syncButton;
     juce::ComboBox   syncDeviceBox;
+    bool clickEnabled = false;
+    void updateClickButton();
 
     // "Tempo" + its live value framed together as one visual group (see
     // paint()) - cached here in resized() rather than recomputed in

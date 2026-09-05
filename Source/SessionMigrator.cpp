@@ -103,11 +103,13 @@ juce::var SessionMigrator::migrate_v3_to_v4(const juce::var& v3Json)
     return upgraded;
 }
 
-// The transport Range: the span of the session the transport plays, and
-// whether it loops at the end. An older file has no range in it, which is
-// exactly the "user hasn't set one" state - so it defaults to that and the
-// range simply spans whatever material the session's Takes turn out to be,
-// which is how the session behaved before the Range existed.
+// The transport Range (the span of the session the transport plays, and
+// whether it loops at the end) plus the metronome click's settings. An
+// older file has neither in it. For the Range that's exactly the "user
+// hasn't set one" state, so it defaults to that and the range simply spans
+// whatever material the session's Takes turn out to be - how the session
+// behaved before the Range existed. The click defaults to off, so an older
+// session doesn't suddenly start ticking when it's opened.
 juce::var SessionMigrator::migrate_v4_to_v5(const juce::var& v4Json)
 {
     auto upgraded = v4Json.clone();
@@ -125,6 +127,19 @@ juce::var SessionMigrator::migrate_v4_to_v5(const juce::var& v4Json)
 
     if (! upgraded.hasProperty("rangeLoopEnabled"))
         obj->setProperty("rangeLoopEnabled", false);
+
+    if (! upgraded.hasProperty("clickEnabled"))
+        obj->setProperty("clickEnabled", false);
+
+    if (! upgraded.hasProperty("clickSoundBeep"))
+        obj->setProperty("clickSoundBeep", false);
+
+    // 960 ticks = a quarter note, i.e. one click per beat.
+    if (! upgraded.hasProperty("clickResolutionTicks"))
+        obj->setProperty("clickResolutionTicks", 960);
+
+    if (! upgraded.hasProperty("clickVolumeDb"))
+        obj->setProperty("clickVolumeDb", -12.0);
 
     obj->setProperty("formatVersion", 5);
     return upgraded;

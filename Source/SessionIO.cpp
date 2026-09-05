@@ -336,6 +336,11 @@ bool SessionIO::saveSession(const juce::File& file,
     root->setProperty("tempoSyncDeviceIdentifier", mainComponent.getTempoSyncDeviceIdentifier());
     root->setProperty("tempoSyncDeviceName", resolveMidiDeviceName(mainComponent.getTempoSyncDeviceIdentifier()));
 
+    root->setProperty("clickEnabled", mainComponent.isClickEnabled());
+    root->setProperty("clickSoundBeep", mainComponent.isClickSoundBeep());
+    root->setProperty("clickResolutionTicks", mainComponent.getClickResolutionTicks());
+    root->setProperty("clickVolumeDb", (double) mainComponent.getClickVolumeDb());
+
     root->setProperty("rangeUserSet", mainComponent.isRangeUserSet());
     root->setProperty("rangeStartSeconds", mainComponent.getRangeStartSeconds());
     root->setProperty("rangeEndSeconds", mainComponent.getRangeEndSeconds());
@@ -434,6 +439,11 @@ bool SessionIO::loadSession(const juce::File& file,
         mainComponent.setTempoSyncDeviceIdentifier(resolveLocalMidiDeviceIdentifier(savedSyncId, savedSyncName));
     }
     mainComponent.setTempoSyncEnabled((bool) parsed.getProperty("tempoSyncEnabled", false));
+
+    mainComponent.restoreClick((bool)  parsed.getProperty("clickEnabled", false),
+                                (bool)  parsed.getProperty("clickSoundBeep", false),
+                                (int)   parsed.getProperty("clickResolutionTicks", ClickGenerator::defaultResolutionTicks),
+                                (float) (double) parsed.getProperty("clickVolumeDb", (double) ClickGenerator::defaultVolumeDb));
 
     mainComponent.restoreRange((bool) parsed.getProperty("rangeUserSet", false),
                                 (int)  parsed.getProperty("rangeStartSeconds", 0),

@@ -120,6 +120,12 @@ public:
     // something is happening, rather than looking inert.
     void setDisplayedTime(const juce::String& text);
 
+    // The readout is editable too - typing a time jumps the playhead there,
+    // so finding a spot in a long Take doesn't mean listening to it. Fired
+    // with the typed value already parsed to whole seconds; unparseable
+    // text is reverted rather than reported.
+    std::function<void(int)> onPositionEdited;
+
     std::function<void()> onPlayPauseClicked;
     std::function<void()> onRtzClicked;
     void setTransportPlaying(bool playing);
@@ -259,6 +265,9 @@ private:
 
     // What setRangeValues() last put on screen, so an unparseable edit can
     // be reverted to it without the owner having to push a correction.
+    // The last time pushed in by the owner's timer, so an unparseable edit
+    // of the readout can be reverted to it.
+    juce::String displayedTimeText { "00:00" };
     int displayedRangeStartSeconds = 0;
     int displayedRangeEndSeconds   = 0;
     bool rangeValuesGhosted        = false;
@@ -272,6 +281,8 @@ private:
     void configureRangeField(juce::Label& field, const juce::String& name,
                              std::function<void(int)>& callback);
     static juce::String formatSeconds(int seconds);
+    // mm:ss, or a bare number of seconds. Returns false for anything else.
+    static bool parseTimeSeconds(const juce::String& text, int& secondsOut);
 
     juce::TextButton showModeButton;
     bool showModeEnabled = false;
