@@ -92,23 +92,16 @@ GlobalSectionComponent::GlobalSectionComponent(int initialChannelCount, int maxC
     loopButton.onClick = [this] { if (onLoopToggled) onLoopToggled(); };
     addAndMakeVisible(loopButton);
 
-    // A caption, not a control - it labels the two fields to its right.
-    // Plain "RANGE" rather than the arrow the layout study drew: an arrow
-    // glyph is exactly the Unicode font-coverage risk on Windows that
-    // TransportButtonLookAndFeel exists to avoid, and it isn't worth a
-    // vector-drawn icon for a caption.
-    rangeCaptionLabel.setText("RANGE", juce::dontSendNotification);
-    rangeCaptionLabel.setFont(juce::Font(10.0f));
-    rangeCaptionLabel.setJustificationType(juce::Justification::centred);
-    rangeCaptionLabel.setColour(juce::Label::textColourId, juce::Colour(0xffaaaaaa));
-    addAndMakeVisible(rangeCaptionLabel);
-
     fullButton.setButtonText("FULL");
     fullButton.onClick = [this] { if (onFullToggled) onFullToggled(); };
     addAndMakeVisible(fullButton);
 
-    configureRangeField(rangeStartField, onRangeStartEdited);
-    configureRangeField(rangeEndField, onRangeEndEdited);
+    // A caption, not a control - it sits between the two things it names,
+    // with an arrow pointing at each (see RangeCaptionComponent::paint).
+    addAndMakeVisible(rangeCaption);
+
+    configureRangeField(rangeStartField, "Range Start", onRangeStartEdited);
+    configureRangeField(rangeEndField, "Range End", onRangeEndEdited);
 
     // "CAPTURE" is a sentinel TransportButtonLookAndFeel dispatches on (like
     // "PLAY"/"REC" above) - it draws an up arrow, pointing at the field this
@@ -272,7 +265,8 @@ juce::String GlobalSectionComponent::formatSeconds(int seconds)
     return juce::String::formatted("%02d:%02d", seconds / 60, seconds % 60);
 }
 
-void GlobalSectionComponent::configureRangeField(juce::Label& field, std::function<void(int)>& callback)
+void GlobalSectionComponent::configureRangeField(juce::Label& field, const juce::String& name,
+                                                  std::function<void(int)>& callback)
 {
     field.setJustificationType(juce::Justification::centred);
     field.setColour(juce::Label::backgroundColourId, juce::Colour(0xff14141f));
@@ -283,7 +277,7 @@ void GlobalSectionComponent::configureRangeField(juce::Label& field, std::functi
     // edit box mid-set would be its own small disaster. The capture buttons
     // below are the fast path; typing is the precise one.
     field.setEditable(false, true, false);
-    field.setTooltip("Double-click to type a time as mm:ss, or as a plain number of seconds");
+    field.setTooltip(name + " - Double Click to enter a value or click the arrow below");
 
     field.onTextChange = [this, &field, &callback]
     {
@@ -319,6 +313,44 @@ void GlobalSectionComponent::configureRangeField(juce::Label& field, std::functi
     };
 
     addAndMakeVisible(field);
+}
+
+void GlobalSectionComponent::RangeCaptionComponent::setDimmed(bool shouldBeDimmed)
+{
+    if (dimmed == shouldBeDimmed)
+        return;
+    dimmed = shouldBeDimmed;
+    repaint();
+}
+
+void GlobalSectionComponent::RangeCaptionComponent::paint(juce::Graphics& g)
+{
+    auto colour = dimmed ? juce::Colour(0xff5a5a68) : juce::Colour(0xffaaaaaa);
+    g.setColour(colour);
+
+    auto bounds = getLocalBounds().toFloat();
+    g.setFont(juce::Font(10.0f));
+    g.drawText("RANGE", bounds, juce::Justification::centred, false);
+
+    // A small triangle hard against each edge: the left one points back at
+    // the Full toggle, the right one on at the start/end fields, so the
+    // caption reads as naming both rather than only whatever it happens to
+    // sit next to.
+    float height = juce::jmin(6.0f, bounds.getHeight() * 0.34f);
+    float width  = height * 0.62f;
+    float centreY = bounds.getCentreY();
+
+    juce::Path left;
+    left.addTriangle(bounds.getX() + 1.0f, centreY,
+                     bounds.getX() + 1.0f + width, centreY - height * 0.5f,
+                     bounds.getX() + 1.0f + width, centreY + height * 0.5f);
+    g.fillPath(left);
+
+    juce::Path right;
+    right.addTriangle(bounds.getRight() - 1.0f, centreY,
+                      bounds.getRight() - 1.0f - width, centreY - height * 0.5f,
+                      bounds.getRight() - 1.0f - width, centreY + height * 0.5f);
+    g.fillPath(right);
 }
 
 void GlobalSectionComponent::applyToggleColours(juce::TextButton& button, bool on, bool enabled)
@@ -416,8 +448,7 @@ void GlobalSectionComponent::setRangeControlsEnabled(bool enabled)
 
     rangeStartField.setEditable(false, enabled, false);
     rangeEndField.setEditable(false, enabled, false);
-    rangeCaptionLabel.setColour(juce::Label::textColourId,
-                                enabled ? juce::Colour(0xffaaaaaa) : juce::Colour(0xff5a5a68));
+    rangeCaption.setDimmed(! enabled);
 
     if (! enabled)
         setCaptureButtonsEnabled(false, false);
@@ -526,9 +557,11 @@ void GlobalSectionComponent::resized()
 
     loopButton.setBounds(topRow.removeFromLeft(transportButtonWidth));
     topRow.removeFromLeft(zoneGap);
-    rangeCaptionLabel.setBounds(topRow.removeFromLeft(transportButtonWidth));
-    topRow.removeFromLeft(zoneGap);
     fullButton.setBounds(topRow.removeFromLeft(transportButtonWidth));
+    topRow.removeFromLeft(zoneGap);
+    // The caption goes between the two things it names, so its arrows have
+    // something to point at on both sides.
+    rangeCaption.setBounds(topRow.removeFromLeft(transportButtonWidth));
     topRow.removeFromLeft(zoneGap);
     // What's left of topRow is exactly rangeGroupWidth - the span the row
     // below has to line up with.

@@ -227,10 +227,25 @@ private:
     bool blinkPhaseOn = false;
     void updateRecordButtonColour();
 
+    // The caption sitting between FULL and the range fields, with a small
+    // arrow on each side pointing at the two things it labels - the Full
+    // toggle to its left and the start/end pair to its right. Vector-drawn
+    // rather than a Unicode arrow in a Label, for the same Windows
+    // font-coverage reason TransportButtonLookAndFeel exists.
+    class RangeCaptionComponent : public juce::Component
+    {
+    public:
+        void setDimmed(bool shouldBeDimmed);
+        void paint(juce::Graphics&) override;
+
+    private:
+        bool dimmed = false;
+    };
+
     // ---- Range cluster (see the callbacks/setters above) ----
     juce::TextButton loopButton;
-    juce::Label      rangeCaptionLabel;   // "RANGE" + arrow, pointing at the fields
     juce::TextButton fullButton;
+    RangeCaptionComponent rangeCaption;
     juce::Label      rangeStartField;     // editable, mm:ss
     juce::Label      rangeEndField;
     juce::TextButton captureStartButton;  // pulls the playhead into the field above it
@@ -254,7 +269,8 @@ private:
     void updateLoopButton();
     void updateFullButton();
     static void applyToggleColours(juce::TextButton& button, bool on, bool enabled);
-    void configureRangeField(juce::Label& field, std::function<void(int)>& callback);
+    void configureRangeField(juce::Label& field, const juce::String& name,
+                             std::function<void(int)>& callback);
     static juce::String formatSeconds(int seconds);
 
     juce::TextButton showModeButton;
