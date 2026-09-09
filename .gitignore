@@ -12,3 +12,6 @@ xcuserdata/
 
 # Claude Code
 .claude/
+
+# Internal pipeline notes (kept private; canonical copy in imi-common-docs)
+CLAUDE.md
