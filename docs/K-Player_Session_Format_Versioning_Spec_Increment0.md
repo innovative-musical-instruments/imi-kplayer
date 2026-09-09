@@ -2,7 +2,7 @@
 
 **Status:** Draft for implementation
 **Priority:** Increment 0 — ahead of master-chain and audio-input work, since those changes should be the first real migration rather than an unversioned drift.
-**Owner context:** IMI_KPlayer, `.kplayer` session file format.
+**Owner context:** imi-kplayer, `.kplayer` session file format.
 
 ## 1. Motivation
 

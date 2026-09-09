@@ -69,7 +69,6 @@ No interlock needed. Every new recording pass writes to a fresh file rather than
 - **Increment A** — MIDI capture only: record raw MIDI in parallel with audio for every armed channel, no playback yet. Automatic naming (channel + timestamp), no take-management UI.
 - **Increment B** — MIDI Input Selector gains "Recorded Take" entries (own channel's Takes only) + minimal playback engine: single-shot, stops at end of take, no loop, no scrub.
 - **Increment C** — Audio Input Selector gains "Recorded Take" entries (own channel's Takes only), reusing the existing pre-insert-chain live-audio-input entry point.
-- **Increment D** (deferred, future) — playlist handling: cross-channel take selection, user-controlled naming/renaming, deleting/organizing takes, looping, scrubbing.
 - **Increment E** — Import Audio to Track: new "Import Audio to Track…" item under the File menu. Opens a file selection dialog, then prompts the user to assign the imported file to an existing track or a new one. One file at a time. The result is written as a copy into the audio files folder and saved as a regular Audio Take of the target track — reuses the existing Take storage/selection model, no new concept required.
   - **Accepted formats**: WAV, AIFF, FLAC, OGG Vorbis, MP3 (decode only) — JUCE's cross-platform built-in formats. Deliberately excludes platform-specific formats (CoreAudioFormat's AAC/M4A/ALAC on macOS, WindowsMediaFormat's WMA on Windows) so the accepted-file-types behavior is identical on both platforms.
   - **Bit depth**: conversion to 32-bit float is effectively free — JUCE's `AudioFormatReader` already normalizes reads to float regardless of source bit depth.
@@ -78,6 +77,10 @@ No interlock needed. Every new recording pass writes to a fresh file rather than
 
 ## 10. Decisions (resolved)
 
-- **Default playback behavior**: stop at the end of the take. No loop for first release.
-- **Take scope**: channel-owned — a channel only lists and plays back its own Takes. Cross-channel selection and full naming control deferred to the future playlist-handling increment (Increment D).
+- **Default playback behavior**: play the Range - the span of the session
+  the transport covers, defaulting to the whole of the longest selected
+  Take - and stop at its end, or loop it when LOOP is on (v0.9.9). Before
+  the Range existed this was simply "stop at the end of the take, no
+  loop".
+- **Take scope**: channel-owned — a channel only lists and plays back its own Takes. Cross-channel selection and full naming control remain out of scope here.
 - **Tempo mismatch handling**: out of scope for this stage. No surfacing of session-tempo-vs-capture-tempo drift to the user yet.

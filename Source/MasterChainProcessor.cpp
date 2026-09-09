@@ -69,6 +69,25 @@ bool MasterChainProcessor::loadPlugin(int slotIndex,
     return true;
 }
 
+bool MasterChainProcessor::updatePluginState(int slotIndex, const juce::MemoryBlock& newState)
+{
+    jassert(slotIndex >= 0 && slotIndex < numSlots);
+    auto& slot = slots[(size_t) slotIndex];
+
+    if (slot.plugin == nullptr)
+        return false;
+
+    // See ChannelProcessor::updatePluginState for the full reasoning.
+    slot.ready.store(false, std::memory_order_release);
+    juce::Thread::sleep(50);
+
+    if (newState.getSize() > 0)
+        slot.plugin->setStateInformation(newState.getData(), (int) newState.getSize());
+
+    slot.ready.store(true, std::memory_order_release);
+    return true;
+}
+
 void MasterChainProcessor::unloadPlugin(int slotIndex)
 {
     jassert(slotIndex >= 0 && slotIndex < numSlots);

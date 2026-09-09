@@ -27,12 +27,15 @@ bool AudioTakePlayer::loadTake(const juce::File& audioFile)
         return false;
     }
 
+    lengthSamples = reader->lengthInSamples;
+
     publish(std::move(reader));
     return true;
 }
 
 void AudioTakePlayer::unload()
 {
+    lengthSamples = 0;
     publish(nullptr);
 }
 

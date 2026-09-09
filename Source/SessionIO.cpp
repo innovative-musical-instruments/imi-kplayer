@@ -2,6 +2,7 @@
 #include "MainComponent.h"
 #include "ChannelProcessor.h"
 #include "MasterChainProcessor.h"
+#include "RecordingManager.h"
 #include "SessionMigrator.h"
 #include "SessionFormat.h"
 
@@ -24,6 +25,44 @@ namespace
                 return device.name;
 
         return {};
+    }
+
+    // A saved MIDI input identifier is a platform- (and often installation-)
+    // specific string - JUCE's CoreMIDI backend hands back a different
+    // identifier shape than its Windows backends do, so "Kadabra" saved on
+    // Mac never matches any live device's identifier on Windows, even
+    // though the exact same hardware is connected under the exact same
+    // name. Same class of problem as resolveLocalDescription() below solves
+    // for plugin paths - re-resolve against this machine's own currently
+    // available MIDI inputs, matched by name (the one thing that actually
+    // travels across platforms) whenever the raw identifier doesn't match
+    // directly. Identifier match is tried first (cheap same-machine
+    // fast path, and avoids ambiguity if the name were ever visually
+    // identical to another device's saved name), name is the fallback.
+    // Empty (no device selected) and Take references (see
+    // RecordingManager::isTakeIdentifier - encoded into this same field for
+    // channels' MIDI routing) are passed through unchanged, both being
+    // things this shouldn't touch. Falls through to the saved identifier
+    // verbatim if neither matches - same "None selected" outcome as before
+    // this fix for a genuinely unplugged/renamed device.
+    juce::String resolveLocalMidiDeviceIdentifier(const juce::String& savedIdentifier,
+                                                   const juce::String& savedName)
+    {
+        if (savedIdentifier.isEmpty() || RecordingManager::isTakeIdentifier(savedIdentifier))
+            return savedIdentifier;
+
+        auto devices = juce::MidiInput::getAvailableDevices();
+
+        for (auto& device : devices)
+            if (device.identifier == savedIdentifier)
+                return savedIdentifier;
+
+        if (savedName.isNotEmpty())
+            for (auto& device : devices)
+                if (device.name == savedName)
+                    return device.identifier;
+
+        return savedIdentifier;
     }
 
     // Templated so it works for any slot host with this method shape -
@@ -86,6 +125,18 @@ namespace
         return saved;
     }
 
+    // Delta load (see docs/KPlayer_Session_Save_Load_Design_2026-07-25.md
+    // Part B): the caller no longer unloads this slot before calling here
+    // (see applyChannelVar/applyMasterChainVar below) - this decides for
+    // itself whether the existing instance can be kept:
+    //   - saved slot is empty -> unload whatever's here, if anything.
+    //   - same plugin identity already loaded, identical state -> true
+    //     no-op, not even a setStateInformation() call.
+    //   - same plugin identity, different state -> push the new state into
+    //     the running instance in place (updatePluginState()), skipping
+    //     destroy+recreate entirely.
+    //   - anything else (different plugin, or nothing loaded yet) -> fall
+    //     back to the full unload+load path, unchanged from before.
     template <typename SlotHost>
     void applyPluginSlotVar(SlotHost& processor, int slotIndex, const juce::var& v,
                             juce::AudioPluginFormatManager& formatManager,
@@ -93,7 +144,11 @@ namespace
                             double sampleRate, int blockSize)
     {
         if (! v.isObject())
+        {
+            if (processor.hasPlugin(slotIndex))
+                processor.unloadPlugin(slotIndex);
             return;
+        }
 
         auto xmlString = v.getProperty("pluginDescriptionXml", juce::String()).toString();
         auto xml = juce::XmlDocument::parse(xmlString);
@@ -105,8 +160,24 @@ namespace
             return;
 
         auto state = decodeBase64(v.getProperty("stateBlob", juce::String()).toString());
-
         auto localDesc = resolveLocalDescription(savedDesc, knownPluginList);
+        bool targetBypassed = (bool) v.getProperty("isBypassed", false);
+
+        if (processor.hasPlugin(slotIndex)
+            && processor.getPluginDescription(slotIndex).createIdentifierString() == localDesc.createIdentifierString())
+        {
+            auto currentState = processor.getPluginState(slotIndex);
+            if (currentState != state)
+                processor.updatePluginState(slotIndex, state);
+            // else: identical plugin, identical state already loaded -
+            // nothing to push, not even setStateInformation().
+
+            processor.setBypassed(slotIndex, targetBypassed);
+            return;
+        }
+
+        if (processor.hasPlugin(slotIndex))
+            processor.unloadPlugin(slotIndex);
 
         bool loaded = processor.loadPlugin(slotIndex, localDesc, formatManager, sampleRate, blockSize, &state);
         if (! loaded && localDesc.fileOrIdentifier != savedDesc.fileOrIdentifier)
@@ -118,7 +189,7 @@ namespace
         }
 
         if (loaded)
-            processor.setBypassed(slotIndex, (bool) v.getProperty("isBypassed", false));
+            processor.setBypassed(slotIndex, targetBypassed);
     }
 
     juce::var channelToVar(ChannelProcessor& processor)
@@ -184,25 +255,31 @@ namespace
         processor.setGain((float) (double) v.getProperty("volume", 1.0));
         processor.setPan((float) (double) v.getProperty("pan", 0.0));
         processor.setMidiChannel((int) v.getProperty("midiChannel", 0));
-        processor.setMidiDeviceIdentifier(v.getProperty("midiDeviceIdentifier", juce::String()).toString());
+        auto savedMidiDeviceId   = v.getProperty("midiDeviceIdentifier", juce::String()).toString();
+        auto savedMidiDeviceName = v.getProperty("midiDeviceName", juce::String()).toString();
+        processor.setMidiDeviceIdentifier(resolveLocalMidiDeviceIdentifier(savedMidiDeviceId, savedMidiDeviceName));
         processor.setAudioInputChannelIndex((int) v.getProperty("audioInputChannel", -1));
         processor.setAudioTakeIdentifier(v.getProperty("audioTakeIdentifier", juce::String()).toString());
 
         // Loading a session onto an already-populated channel replaces
-        // whatever was there.
-        for (int slot = 0; slot < ChannelProcessor::totalSlotCount; ++slot)
-            processor.unloadPlugin(slot);
-
+        // whatever was there - but per-slot now (see applyPluginSlotVar's
+        // own comment), not via a blanket unload-everything-first pass, so
+        // a slot whose target plugin+state already matches what's running
+        // never pays a destroy+recreate cost at all.
         applyPluginSlotVar(processor, ChannelProcessor::slot0Index,
                           v.getProperty("slot0Plugin", juce::var()),
                           formatManager, knownPluginList, sampleRate, blockSize);
 
-        if (auto* insertsArray = v.getProperty("insertPlugins", juce::var()).getArray())
+        auto* insertsArray = v.getProperty("insertPlugins", juce::var()).getArray();
+        for (int i = 0; i < ChannelProcessor::numInsertSlots; ++i)
         {
-            int count = juce::jmin((int) insertsArray->size(), ChannelProcessor::numInsertSlots);
-            for (int i = 0; i < count; ++i)
-                applyPluginSlotVar(processor, i + 1, insertsArray->getReference(i),
-                                  formatManager, knownPluginList, sampleRate, blockSize);
+            // Missing/short array (older or hand-edited file) - treat any
+            // slot beyond what was actually saved as empty, same as a
+            // present-but-null entry would be.
+            auto slotVar = (insertsArray != nullptr && i < insertsArray->size())
+                             ? insertsArray->getReference(i) : juce::var();
+            applyPluginSlotVar(processor, i + 1, slotVar,
+                              formatManager, knownPluginList, sampleRate, blockSize);
         }
     }
 
@@ -219,15 +296,13 @@ namespace
                              const juce::KnownPluginList& knownPluginList,
                              double sampleRate, int blockSize)
     {
-        for (int slot = 0; slot < MasterChainProcessor::numSlots; ++slot)
-            processor.unloadPlugin(slot);
-
-        if (auto* array = v.getArray())
+        // Per-slot, same as applyChannelVar - no blanket pre-unload.
+        auto* array = v.getArray();
+        for (int i = 0; i < MasterChainProcessor::numSlots; ++i)
         {
-            int count = juce::jmin((int) array->size(), MasterChainProcessor::numSlots);
-            for (int i = 0; i < count; ++i)
-                applyPluginSlotVar(processor, i, array->getReference(i),
-                                  formatManager, knownPluginList, sampleRate, blockSize);
+            auto slotVar = (array != nullptr && i < array->size()) ? array->getReference(i) : juce::var();
+            applyPluginSlotVar(processor, i, slotVar,
+                              formatManager, knownPluginList, sampleRate, blockSize);
         }
     }
 }
@@ -259,6 +334,17 @@ bool SessionIO::saveSession(const juce::File& file,
     root->setProperty("tempo", mainComponent.getGlobalTempo());
     root->setProperty("tempoSyncEnabled", mainComponent.isTempoSyncEnabled());
     root->setProperty("tempoSyncDeviceIdentifier", mainComponent.getTempoSyncDeviceIdentifier());
+    root->setProperty("tempoSyncDeviceName", resolveMidiDeviceName(mainComponent.getTempoSyncDeviceIdentifier()));
+
+    root->setProperty("clickEnabled", mainComponent.isClickEnabled());
+    root->setProperty("clickSoundBeep", mainComponent.isClickSoundBeep());
+    root->setProperty("clickResolutionTicks", mainComponent.getClickResolutionTicks());
+    root->setProperty("clickVolumeDb", (double) mainComponent.getClickVolumeDb());
+
+    root->setProperty("rangeUserSet", mainComponent.isRangeUserSet());
+    root->setProperty("rangeStartSeconds", mainComponent.getRangeStartSeconds());
+    root->setProperty("rangeEndSeconds", mainComponent.getRangeEndSeconds());
+    root->setProperty("rangeLoopEnabled", mainComponent.isRangeLoopEnabled());
 
     root->setProperty("recordingsFolder", mainComponent.getRecordingsFolder().getFullPathName());
     root->setProperty("recordingSilenceTimeoutSeconds", mainComponent.getRecordingSilenceTimeoutSeconds());
@@ -321,17 +407,55 @@ bool SessionIO::loadSession(const juce::File& file,
     mainComponent.setLastLoadedFormatVersion(SessionFormat::resolveLoadedFormatVersion(fileFormatVersion));
     mainComponent.setLastLoadedExtraFields(SessionFormat::extractExtraFields(parsed));
 
+    // Delta load (see docs/KPlayer_Session_Save_Load_Design_2026-07-25.md
+    // Part B): AudioDeviceManager::initialise() always briefly stops/
+    // restarts the audio callback, regardless of whether anything about
+    // the device config actually changed - an audible dropout on every
+    // load/song-switch even for the common case of staying on the same
+    // interface throughout a set. Skipped entirely when the saved XML
+    // matches the live device's own current state string-for-string (a
+    // simple text comparison - same "position-based, simplest correct
+    // approach" philosophy as the plugin-slot matching above; a
+    // semantically-identical-but-differently-formatted XML string would
+    // still trigger a reinit, which is an acceptable, safe-by-default
+    // false negative rather than a risk of skipping a real device change).
     auto deviceXmlString = parsed.getProperty("audioDeviceStateXml", juce::String()).toString();
     if (deviceXmlString.isNotEmpty())
-        if (auto deviceXml = juce::XmlDocument::parse(deviceXmlString))
-            deviceManager.initialise(0, 2, deviceXml.get(), true);
+    {
+        juce::String currentDeviceXmlString;
+        if (auto currentXml = deviceManager.createStateXml())
+            currentDeviceXmlString = currentXml->toString();
+
+        if (currentDeviceXmlString != deviceXmlString)
+            if (auto deviceXml = juce::XmlDocument::parse(deviceXmlString))
+                deviceManager.initialise(0, 2, deviceXml.get(), true);
+    }
 
     mainComponent.setMasterVolume((float) (double) parsed.getProperty("masterVolume", 1.0));
     mainComponent.setGlobalTempo((double) parsed.getProperty("tempo", 120.0));
-    mainComponent.setTempoSyncDeviceIdentifier(parsed.getProperty("tempoSyncDeviceIdentifier", juce::String()).toString());
+    {
+        auto savedSyncId   = parsed.getProperty("tempoSyncDeviceIdentifier", juce::String()).toString();
+        auto savedSyncName = parsed.getProperty("tempoSyncDeviceName", juce::String()).toString();
+        mainComponent.setTempoSyncDeviceIdentifier(resolveLocalMidiDeviceIdentifier(savedSyncId, savedSyncName));
+    }
     mainComponent.setTempoSyncEnabled((bool) parsed.getProperty("tempoSyncEnabled", false));
 
+    mainComponent.restoreClick((bool)  parsed.getProperty("clickEnabled", false),
+                                (bool)  parsed.getProperty("clickSoundBeep", false),
+                                (int)   parsed.getProperty("clickResolutionTicks", ClickGenerator::defaultResolutionTicks),
+                                (float) (double) parsed.getProperty("clickVolumeDb", (double) ClickGenerator::defaultVolumeDb));
+
+    mainComponent.restoreRange((bool) parsed.getProperty("rangeUserSet", false),
+                                (int)  parsed.getProperty("rangeStartSeconds", 0),
+                                (int)  parsed.getProperty("rangeEndSeconds", 0),
+                                (bool) parsed.getProperty("rangeLoopEnabled", false));
+
     mainComponent.setRecordingsFolder(juce::File(parsed.getProperty("recordingsFolder", juce::String()).toString()));
+    // Picks up this session's Take groups for the Master section's bulk
+    // Audio In/MIDI In selectors - same timing as refreshChannelTakeList()/
+    // refreshChannelAudioTakeList() below, just once for the whole session
+    // rather than per channel.
+    mainComponent.refreshMasterTakeGroups();
     mainComponent.setRecordingSilenceTimeoutSeconds((double) parsed.getProperty("recordingSilenceTimeoutSeconds", 60.0));
     mainComponent.setMasterArmed((bool) parsed.getProperty("masterArmed", false));
 

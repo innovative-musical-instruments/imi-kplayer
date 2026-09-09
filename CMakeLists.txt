@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(IMI_KPlayer VERSION 0.9.4)
+project(IMI_KPlayer VERSION 0.9.9)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -26,6 +26,8 @@ juce_add_binary_data(KPlayerAssets SOURCES
     Assets/branding/tribal-tools-logo.png
     Assets/about/kplayer-256.png
     Assets/about/Azonix.otf
+    Assets/fonts/SpaceGrotesk-Regular.ttf
+    Assets/fonts/SpaceGrotesk-Bold.ttf
 )
 
 juce_add_gui_app(IMI_KPlayer
@@ -34,6 +36,15 @@ juce_add_gui_app(IMI_KPlayer
     BUNDLE_ID "com.imi.kplayer"
     MICROPHONE_PERMISSION_ENABLED TRUE
     MICROPHONE_PERMISSION_TEXT "Kadabra K-Player needs microphone/audio input access to route live audio input into channels."
+    # Without this, clicking "Bluetooth MIDI..." in Settings (JUCE's
+    # BluetoothMidiDevicePairingDialogue) hard-crashes the app: macOS's TCC
+    # framework aborts any process that touches Bluetooth with no
+    # NSBluetoothAlwaysUsageDescription in its Info.plist
+    # (__TCC_CRASHING_DUE_TO_PRIVACY_VIOLATION__ in the crash report), it
+    # doesn't just deny access - same root category as the microphone
+    # permission above, but a crash instead of silent denial.
+    BLUETOOTH_PERMISSION_ENABLED TRUE
+    BLUETOOTH_PERMISSION_TEXT "Kadabra K-Player uses Bluetooth to pair with Bluetooth MIDI controllers."
     HARDENED_RUNTIME_ENABLED ${KPLAYER_RELEASE_BUILD}
     HARDENED_RUNTIME_OPTIONS
         com.apple.security.cs.disable-library-validation
@@ -75,6 +86,22 @@ if(KPLAYER_RELEASE_BUILD)
     )
 endif()
 
+# --- Windows: fail the build if the linked .exe's FILEVERSION drifted
+# from project(VERSION). JUCE generates that version resource at configure
+# time; a targeted VS-generator build skips ZERO_CHECK, so a bare
+# project() version bump can otherwise ship a stale-stamped binary
+# silently (it did once - 2026-08-28). See cmake/AssertExeVersion.cmake. ---
+if(WIN32)
+    add_custom_command(TARGET IMI_KPlayer POST_BUILD
+        COMMAND "${CMAKE_COMMAND}"
+                "-DEXE_PATH=$<TARGET_FILE:IMI_KPlayer>"
+                "-DEXPECTED_VERSION=${PROJECT_VERSION}"
+                -P "${CMAKE_SOURCE_DIR}/cmake/AssertExeVersion.cmake"
+        VERBATIM
+        COMMENT "Verifying Kadabra K-Player.exe FILEVERSION == ${PROJECT_VERSION}"
+    )
+endif()
+
 target_sources(IMI_KPlayer PRIVATE
     Source/Main.cpp
     Source/MainComponent.cpp
@@ -93,6 +120,9 @@ target_sources(IMI_KPlayer PRIVATE
     Source/MasterChainProcessor.h
     Source/MasterChainComponent.cpp
     Source/MasterChainComponent.h
+    Source/GlobalSectionComponent.cpp
+    Source/GlobalSectionComponent.h
+    Source/GearButtonLookAndFeel.h
     Source/PeakMeterComponent.cpp
     Source/PeakMeterComponent.h
     Source/PluginEditorWindow.h
@@ -107,6 +137,7 @@ target_sources(IMI_KPlayer PRIVATE
     Source/AudioTakePlayer.cpp
     Source/AudioTakePlayer.h
     Source/SessionTransport.h
+    Source/ClickGenerator.h
     Source/TransportButtonLookAndFeel.h
     Source/ConsoleFaderLookAndFeel.h
     Source/LoadingOverlayComponent.h
@@ -130,6 +161,15 @@ target_compile_definitions(IMI_KPlayer PRIVATE
     # docs/kplayer-take-recording-playback-spec.md section 9) - off by
     # default in JUCE, unlike WAV/AIFF/FLAC/OggVorbis.
     JUCE_USE_MP3AUDIOFORMAT=1
+    # Off by default in JUCE (0). Needed for MessageManager::
+    # runDispatchLoopUntil() - see MainComponent::showWarmingUpOverlay(),
+    # the one place this app actually needs a real, synchronous pump of the
+    # event loop (forcing the loading overlay's startup message to actually
+    # paint before a long blocking call). Every other blocking-UI pattern in
+    # this codebase deliberately stays async (AlertWindow::showAsync,
+    # FileChooser::launchAsync, etc.) - this narrow opt-in doesn't change
+    # that, it only unlocks the one JUCE API that needed it.
+    JUCE_MODAL_LOOPS_PERMITTED=1
     JUCE_APPLICATION_NAME_STRING="$<TARGET_PROPERTY:IMI_KPlayer,JUCE_PRODUCT_NAME>"
     JUCE_APPLICATION_VERSION_STRING="$<TARGET_PROPERTY:IMI_KPlayer,JUCE_VERSION>"
 )

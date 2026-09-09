@@ -1,7 +1,22 @@
 # K-Player — First Shipping Release Backlog
 
-**Status:** Working backlog, post-MVP
+**Status:** Working backlog, post-MVP. K-Player has since passed the
+release-ready bar as a public beta prerelease (v0.9.4, distributed through
+Tribal-Tools' Installer — see `imi-common-docs/strategy/master-backlog.md`
+§1.3/§7); this backlog now tracks quality/functionality refinement toward
+the broader IMI Free release, not the original "first release to beta
+testers" milestone.
 **Context:** MVP functional prototype is complete. This backlog covers refinements toward the first release to beta testers, sequenced in incremental, independently-shippable stages.
+
+**Priority principle (2026-08-07):** this release serves Kadabra owners
+first. Ship the minimal set of highest-value, most-robust features for that
+audience before chasing broader subscriber-acquisition/PR value — the free
+release hopefully becomes a subscriber magnet and a PR aid too, but that's
+a hoped-for side effect, not what decides what goes in. Concretely: prefer
+targeted robustness/stability work (see the delta session load and Panic/
+scan-bulletproofing work already shipped) over bigger architecture bets
+whose payoff is speculative or aimed at features Kadabra owners aren't
+asking for yet.
 
 ---
 
@@ -60,15 +75,81 @@ Reviewed against the actual code before implementing (not just the backlog wordi
 
 12. ~~Manufacturer/category grouping in plugin browser~~ — done, pulled into Increment 4 above.
 13. ~~Favorites / recently-used~~ — done, pulled into Increment 4 above.
-14. Incremental hot channel add/remove (menu item + keyboard shortcut) — deferred pending audio-graph work to support live topology changes without disturbing other channels
+14. Incremental hot channel add/remove (menu item + keyboard shortcut) — deferred pending audio-graph work to support live topology changes without disturbing other channels ("channel autonomy": today's `MainComponent::setChannelCount()` detaches the whole audio callback for *any* resize, glitching every channel, not just the one changing — see item's discussion below).
 15. Audio-to-MIDI conversion — deferred, explicitly out of scope for this release; likely a future plugin rather than a host feature
 16. Full structural undo/redo — deferred; confirmation guards (Increment 1) plus this backlog's existing safety nets may be sufficient, revisit if beta feedback asks for it specifically
+
+**Channel autonomy — discussed and deliberately held (2026-08-07):** real
+benefits identified (no cross-channel glitch on add/remove, unblocks item
+14 above, protects in-progress recordings on unrelated channels during a
+resize, closes a remaining gap in Increment 6's delta load for
+different-channel-count session switches) against a real cost (the clean
+fix pre-allocates all `maxChannels` worth of channel state up front rather
+than growing/shrinking a vector, a real memory/object-count tradeoff, not
+free). Per the priority principle above: delta session load (Increment 6)
+already delivers the main live-reliability win this was chasing for the
+common case (same-channel-count song switching); channel autonomy is a
+bigger architecture bet for a narrower remaining gap. Deferred, not
+abandoned — revisit once the core experience is solid.
+
+**Aux bus / further channel routing (e.g. sidechain) — same 2026-08-07
+discussion, same disposition:** confirmed *not* a prerequisite-or-enabled-by
+relationship with channel autonomy — one's about container lifecycle, the
+other's about signal-graph shape, orthogonal concerns. Sidechain
+specifically is already listed below as out of scope, and is actively
+harder than "just build it": `ChannelProcessor::loadPlugin()` deliberately
+calls `disableNonMainBuses()` (root cause of an earlier real crash, see
+`project_kplayer_hise_crash_fixes` memory), which currently blocks exactly
+the kind of extra input bus a sidechain tap would need.
+
+## Increment 6 — Live-use robustness & flow — DONE (`4d0b89c`, `a7b35d1`, `e593929`)
+
+Not originally scoped as a numbered increment — grew out of live testing
+and direct requests in one continuous working session (2026-08-07), driven
+by the priority principle above (robustness for Kadabra owners over new
+surface area).
+
+- **Panic** (all-notes-off/all-sound-off) — injected into every loaded
+  instrument on the audio thread, regardless of a channel's own MIDI
+  routing; fixes stuck notes left behind by an external MIDI source
+  crashing mid-performance (the original trigger: a Kadabra OS crash).
+- **Rescan Plugins** in Settings, reusing the exact startup scan path.
+- **Scan bulletproofing**: crash-skip notification (dead-man's-pedal
+  snapshot surfaced once, not repeated indefinitely — a real bug in the
+  first pass, fixed same session), live scanning-plugin-name + progress
+  display (fixed a real name-lag bug found via live testing — JUCE's
+  `scanNextFile()` only reports the name *after* the slow work, not
+  before), and Rescan now actually removes plugins that were uninstalled
+  (`AudioPluginFormatManager::doesPluginStillExist`), not just adds new ones.
+- **Master strip / Global section split**: `MasterChainComponent` trimmed
+  to inserts/fader/ARM only; new `GlobalSectionComponent` (rightmost strip)
+  holds branding, channel count (+/− box, replacing the old Settings
+  slider), Settings access, I/O collapse, tempo/sync, transport, Panic, and
+  the Work/Show toggle below.
+- **Record Ready**: REC is now a 3-state idle→armed(blinking)→recording
+  button instead of immediate start/stop — arm, then the next Play starts
+  recording (or immediately, if already playing); stopping recording
+  leaves playback running.
+- **Delta session load** (Part B of
+  `KPlayer_Session_Save_Load_Design_2026-07-25.md`, re-reviewed against
+  the current code before implementing, root cause reconfirmed unchanged):
+  matching plugin+state slots skip the destroy+recreate path entirely
+  (`ChannelProcessor`/`MasterChainProcessor::updatePluginState()`),
+  turning same-rig song-to-song switching from ~1.6s/populated slot into
+  tens of milliseconds. Device reinit also now skipped when unchanged.
+- **Work Mode / Show Mode**: delta load being genuinely fast surfaced a
+  real flow problem — live MIDI-driven parameter dirtying (deliberate,
+  existing behavior) meant every song-switch still hit a Save/Discard/
+  Cancel prompt. Show Mode (Global section toggle, muted green) skips that
+  prompt for session loads only; Quit is untouched either way, already
+  covered by the existing Kadabra-connected silent-recovery-save path.
 
 ---
 
 ## Explicitly out of scope for this release
 
 - Sidechain audio routing to plugin instruments
+- Aux bus / additional send buses (see the channel-autonomy discussion above)
 - Plugin-internal parameter undo (host undo, where it exists, is structural-only)
 - Audio-to-MIDI conversion
 - Plugin-internal state blob forward-compatibility (owned by the plugin/JUCE, not K-Player's schema)

@@ -44,6 +44,26 @@ public:
                     const juce::MemoryBlock* initialState = nullptr);
 
     void unloadPlugin(int slotIndex);
+
+    // Delta load (see docs/KPlayer_Session_Save_Load_Design_2026-07-25.md
+    // Part B): pushes newState into whatever's already loaded in this slot,
+    // in place, instead of the destroy+recreate loadPlugin()/unloadPlugin()
+    // pair - skips formatManager.createPluginInstance(), bus renegotiation,
+    // prepareToPlay(), and both those calls' safety-margin sleeps entirely.
+    // Only the same 50ms drain margin loadPlugin()/unloadPlugin() also use
+    // is kept, to guarantee the audio thread has observed slot.ready==false
+    // before setStateInformation() runs concurrently with it - no HISE-
+    // style settle sleep afterward, since (confirmed for this app's actual
+    // instrument roster) K-Sampler and friends load their sample data once
+    // at instantiation, not in response to a later setStateInformation()
+    // call, so there's no async streaming work here to wait out. Revisit
+    // this assumption if a plugin that *does* reload sample data per-patch
+    // ever ends up in the roster. Caller's job to have already confirmed
+    // this is actually the same plugin identity as what's loaded - this
+    // just blindly pushes the new state into whatever's here.
+    // No-ops (returns false) if the slot is empty.
+    bool updatePluginState(int slotIndex, const juce::MemoryBlock& newState);
+
     bool hasPlugin(int slotIndex) const;
     bool isEditorVisible(int slotIndex) const;
     juce::String getPluginName(int slotIndex) const;

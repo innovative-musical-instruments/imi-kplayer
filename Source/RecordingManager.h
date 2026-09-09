@@ -63,6 +63,29 @@ public:
     // capture work.
     juce::Array<juce::File> findChannelAudioTakes(int channelIndex) const;
 
+    // Take *groups* (Master section bulk Audio In/MIDI In selectors,
+    // v0.9.8): every take folder that has at least one "Channel <N>.<ext>"
+    // file directly in it (a folder holding only "Master.wav" doesn't
+    // count - the master channel has no input concept to bulk-assign into),
+    // newest-first, same ordering as findChannelMidiTakes/AudioTakes above.
+    // Lets the Master section offer "apply this whole take to every
+    // channel that was recorded in it" as a single action -
+    // findChannelFileInTakeFolder() below resolves what one specific
+    // channel should get from a chosen group.
+    juce::Array<juce::File> findAudioTakeGroups() const { return findTakeGroupFolders("wav"); }
+    juce::Array<juce::File> findMidiTakeGroups() const { return findTakeGroupFolders("mid"); }
+
+    // First "Channel <channelIndex+1>*.<extension>" file directly inside
+    // takeFolder, or a null File() if that channel wasn't recorded in this
+    // take (the Master bulk selectors skip that channel entirely in that
+    // case, per the design note above). A channel re-armed mid-take can
+    // leave more than one matching file in the same folder (see
+    // uniqueTakeFile()) - this rare case just takes the first match,
+    // whatever order RangedDirectoryIterator happens to give; not worth a
+    // tiebreak UI for how uncommon it is.
+    juce::File findChannelFileInTakeFolder(int channelIndex, const juce::File& takeFolder,
+                                           const juce::String& extension) const;
+
     // MIDI Take identifiers (Increment B): a channel's MIDI Input Selector
     // reuses ChannelProcessor's existing midiDeviceIdentifier string field
     // to also reference a Take file, distinguished by this prefix - avoids
@@ -232,6 +255,26 @@ private:
     // Shared scan behind findChannelMidiTakes()/findChannelAudioTakes() -
     // same take-folder walk, just a different file extension.
     juce::Array<juce::File> findChannelTakeFiles(int channelIndex, const juce::String& extension) const;
+
+    // Shared scan behind findAudioTakeGroups()/findMidiTakeGroups() above -
+    // same take-folder walk as findChannelTakeFiles(), just returning the
+    // folders themselves (filtered to ones containing at least one
+    // matching channel file) rather than one channel's files within them.
+    juce::Array<juce::File> findTakeGroupFolders(const juce::String& extension) const;
+
+    // recordingsFolder's immediate subdirectories (one per recording pass),
+    // newest first. Take-folder names are %Y-%m-%d_%H-%M-%S, so lexicographic
+    // sort order is chronological order. Shared by findChannelTakeFiles() and
+    // findTakeGroupFolders() so the enumeration/sort logic lives in one place.
+    juce::Array<juce::File> takeFoldersNewestFirst() const;
+
+    // Wildcard pattern matching exactly this channel's plain take file
+    // ("Channel N.ext") or one of uniqueTakeFile()'s de-dup suffixes
+    // ("Channel N (2).ext", "Channel N (3).ext", ...) - deliberately NOT the
+    // simpler "Channel N*.ext", which would also match other channels whose
+    // number starts with the same digits (e.g. channel 1 matching channel
+    // 10/12/19...).
+    static juce::String channelFileWildcard(int channelIndex, const juce::String& extension);
 
     std::unique_ptr<RecordingTrack> createTrack(const juce::File& file, double sampleRate, int numChannels);
 

@@ -51,6 +51,19 @@ public:
     // publish-then-drain-then-destroy pattern as loadTake()'s swap.
     void unload();
 
+    // Message thread only. Length of the currently loaded Take in samples
+    // (0 when nothing is loaded) - used by MainComponent::
+    // updateTransportRange to work out the longest selected Take, which is
+    // what the transport's default Range spans. This is the file's own
+    // sample count, not seconds: playback reads it straight at the
+    // transport position with no rate conversion (see renderBlock), so a
+    // file recorded at a different rate than the device is already played
+    // back at the wrong speed - counting its raw samples is what agrees
+    // with how long it will actually take to play, which is what the Range
+    // needs. Deliberately a plain member rather than an atomic: only ever
+    // written by loadTake()/unload() and read by the same message thread.
+    juce::int64 getLengthSamples() const { return lengthSamples; }
+
     // Audio thread. transportPositionSamples/numSamples describe this
     // block's window on the shared SessionTransport (see
     // SessionTransport::advanceAndGetBlockStartPosition, called once per
@@ -74,6 +87,10 @@ private:
     // `published`, never this directly - see publish() above.
     std::unique_ptr<juce::MemoryMappedAudioFormatReader> storage;
     std::atomic<juce::MemoryMappedAudioFormatReader*> published { nullptr };
+
+    // See getLengthSamples() - message-thread-only, kept in step with what
+    // publish() last published.
+    juce::int64 lengthSamples = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AudioTakePlayer)
 };

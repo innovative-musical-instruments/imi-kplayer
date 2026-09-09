@@ -7,10 +7,11 @@
 // installed font on Windows, so JUCE fell back to the OS's last-resort
 // "unknown character" box glyph instead of the real symbol. Vector shapes
 // sidestep font coverage entirely and render identically on Mac and Windows.
-// Dispatches purely on the button's text ("PLAY"/"PAUSE"/"RTZ", set by
-// MasterChainComponent - not shown to the user, drawButtonText() below draws
-// the icon instead of the literal text) so one shared instance can serve
-// both the toggling Play/Pause button and the momentary RTZ button.
+// Dispatches purely on the button's text ("PLAY"/"PAUSE"/"RTZ"/"REC"/
+// "CAPTURE", set by MasterChainComponent/GlobalSectionComponent - not shown
+// to the user, drawButtonText() below draws the icon instead of the literal
+// text) so one shared instance can serve every button in the transport
+// cluster, toggling or momentary.
 class TransportButtonLookAndFeel : public juce::LookAndFeel_V4
 {
 public:
@@ -48,13 +49,37 @@ public:
                                  icon.getX() + barWidth * 1.6f, icon.getCentreY());
             g.fillPath(triangle);
         }
-        else // "PLAY"
+        else if (text == "PLAY")
         {
             juce::Path triangle;
             triangle.addTriangle(icon.getX(), icon.getY(),
                                  icon.getX(), icon.getBottom(),
                                  icon.getRight(), icon.getCentreY());
             g.fillPath(triangle);
+        }
+        else if (text == "CAPTURE")
+        {
+            // Up arrow - "pull the playhead up into the field above this
+            // button" (GlobalSectionComponent's Range capture buttons).
+            // Vector-drawn for the same reason as everything else here: a
+            // Unicode arrow glyph is exactly the kind of character the
+            // Windows font-coverage gap in this class's header bit on.
+            juce::Path arrow;
+            arrow.addTriangle(icon.getX(), icon.getCentreY(),
+                              icon.getRight(), icon.getCentreY(),
+                              icon.getCentreX(), icon.getY());
+            g.fillPath(arrow);
+
+            auto stemWidth = icon.getWidth() * 0.24f;
+            g.fillRect(icon.getCentreX() - stemWidth * 0.5f, icon.getCentreY(),
+                       stemWidth, icon.getHeight() * 0.5f);
+        }
+        else // "REC" - GlobalSectionComponent's Record Ready button. Same
+             // icon bounding box (halfSize above) as Play/Pause/RTZ use, so
+             // the record dot reads as proportional to the Play arrow
+             // rather than an independently-sized glyph.
+        {
+            g.fillEllipse(icon);
         }
     }
 };
