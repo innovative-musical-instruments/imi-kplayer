@@ -11,26 +11,26 @@ the result — all from one app.
 
 ## Table of Contents
 
-1. [Launching KPlayer](#1-launching-kplayer)
-2. [The Main Window at a Glance](#2-the-main-window-at-a-glance)
-3. [Channel Strip Anatomy](#3-channel-strip-anatomy)
-4. [Loading and Managing Plugins](#4-loading-and-managing-plugins)
+1. [Launching KPlayer](#1-launching)
+2. [The Main Window at a Glance](#2-main-window)
+3. [Channel Strip Anatomy](#3-channel-strip)
+4. [Loading and Managing Plugins](#4-plugins)
 5. [MIDI Routing](#5-midi-routing)
-6. [Audio Input Routing](#6-audio-input-routing)
-7. [The Master Bus](#7-the-master-bus)
-8. [Tempo, Sync, and the Metronome Click](#8-tempo-sync-and-the-metronome-click)
-9. [Transport: Play, Range, and Loop](#9-transport-play-range-and-loop)
+6. [Audio Input Routing](#6-audio-routing)
+7. [The Master Bus](#7-master-bus)
+8. [Tempo, Sync, and the Metronome Click](#8-tempo-sync)
+9. [Transport: Play, Range, and Loop](#9-transport)
 10. [Recording](#10-recording)
-11. [Importing Audio to a Track](#11-importing-audio-to-a-track)
-12. [Saving and Loading Sessions](#12-saving-and-loading-sessions)
-13. [Show Mode vs. Work Mode](#13-show-mode-vs-work-mode)
+11. [Importing Audio to a Track](#11-import-audio)
+12. [Saving and Loading Sessions](#12-sessions)
+13. [Show Mode vs. Work Mode](#13-show-work-mode)
 14. [Settings](#14-settings)
-15. [Adding and Removing Channels](#15-adding-and-removing-channels)
+15. [Adding and Removing Channels](#15-channels)
 16. [Panic](#16-panic)
-17. [Cross-Platform Notes](#17-cross-platform-notes)
-18. [Kadabra Hardware Integration](#18-kadabra-hardware-integration)
+17. [Cross-Platform Notes](#17-cross-platform)
+18. [Kadabra Hardware Integration](#18-kadabra-hardware)
 19. [Troubleshooting](#19-troubleshooting)
-20. [Keyboard Shortcuts and Menu Reference](#20-keyboard-shortcuts-and-menu-reference)
+20. [Keyboard Shortcuts and Menu Reference](#20-shortcuts)
 
 ---
 
@@ -52,7 +52,7 @@ no plugins loaded, ready to build a rig from scratch.
 launch, KPlayer automatically loads your most recent session (a "recovery"
 snapshot saved automatically the last time you quit with Kadabra connected)
 or, if none exists yet, a factory starter session. See
-[Kadabra Hardware Integration](#18-kadabra-hardware-integration) for details.
+[Kadabra Hardware Integration](#18-kadabra-hardware) for details.
 
 ## 2. The Main Window at a Glance
 
@@ -86,7 +86,7 @@ Each channel strip is divided into three sections, top to bottom:
   custom name; the number prefix always stays, so you can't accidentally
   edit or delete it.
 - **Audio In** — routes a live hardware input channel (or a previously
-  recorded Take) into this channel. See [Audio Input Routing](#6-audio-input-routing).
+  recorded Take) into this channel. See [Audio Input Routing](#6-audio-routing).
 - **MIDI In** — routes a MIDI input device (or a previously recorded MIDI
   Take) into this channel. See [MIDI Routing](#5-midi-routing).
 - **MIDI Ch** — restricts the channel to a specific MIDI channel (1–16) or
@@ -117,7 +117,7 @@ want more vertical room for plugin slots.
 - **Pan** — horizontal slider, −50 (full left) to +50 (full right).
   Double-click to reset to center.
 - **Peak meter** — a vertical level meter beside the fader with clip
-  indication.
+  indication. The gain readout under the fader shows the current level.
 - **Mute (M) / Solo (S)** — standard mute and solo buttons.
 - **Arm (●)** — arms this channel for recording. See [Recording](#10-recording).
 
@@ -155,6 +155,11 @@ The browser lists every plugin KPlayer found during its scan, and supports:
 Double-click (or select and press Enter) to load a plugin into the slot you
 opened the browser from.
 
+IMI's own plugins — the Kadabra KSamplers (instruments) and KChannel (a
+channel-strip EQ and dynamics insert) — are installed alongside KPlayer by
+the IMI Kadabra Kit installer, so they're ready to pick from the browser
+straight away.
+
 ## 5. MIDI Routing
 
 Each channel's **MIDI In** selector lists:
@@ -175,6 +180,24 @@ If a channel's selected device becomes unavailable (unplugged, or a Take
 file that's gone missing from disk), its MIDI In box turns orange as a
 warning, with a tooltip explaining why — the routing itself is left alone
 in case the device reappears.
+
+### Controlling a channel over MIDI
+
+A few standard MIDI Control Change messages, arriving on a channel's own
+MIDI In device and MIDI channel, control that channel directly — handy
+for hardware faders, or for Kadabra itself:
+
+| CC# | Controls | Value |
+|----:|----------|-------|
+| 7 | Gain | Moves the gain fader, along the same curve as dragging it |
+| 10 | Pan | 0 = full left, 64 = center, 127 = full right |
+| 84–89 | Bypass a slot | CC 84 is the instrument slot, 85–89 inserts 1–5; <64 bypasses, ≥64 activates |
+| 103 | Record arm | ≥64 arms the channel, <64 disarms it |
+
+The Pan slider's tooltip shows its CC number as a reminder. These CCs are
+used by KPlayer itself, so they aren't passed on to the plugins in the
+insert slots — every other CC is, which is how a plugin's own MIDI-learn
+(for example KChannel's, or a KSampler's) picks up a controller.
 
 ## 6. Audio Input Routing
 
@@ -207,10 +230,30 @@ the same way a channel's insert slots do — click to load, click a loaded
 slot for the show/hide/bypass/replace/remove menu — just without an
 instrument slot of its own.
 
-Below the insert slots sit the master output fader (same curve and range
-as a channel's gain fader), left/right peak meters, and a master **ARM**
-button for including the master bus in a recording. See
-[Recording](#10-recording).
+Below the insert slots sit the master **Output** fader (the same curve as
+a channel's gain fader, over −60 dB to +6 dB) with left/right peak
+meters, then two buttons: the master **Arm (●)**, which includes the
+master bus in a recording, and **All** — see below.
+
+The master strip also has three controls that act on the whole rig at
+once, so you don't have to click through every channel:
+
+- **Set All Audio In / Set All MIDI In** — the master's own Audio In and
+  MIDI In selectors (hidden along with the channels' I/O rows by
+  **Hide I/O**). Pick a live input or MIDI device to route it to every
+  channel, or **None** to clear every channel's input. Each also lists
+  **Take groups** — one entry per past recording pass, shown as "Take"
+  plus the take's date and time — and picking one
+  gives every channel its own recording from that pass (channels that
+  weren't recorded in it are left alone). These are one-shot actions: the
+  selector snaps back to "Set All…" afterwards, since the channels can
+  diverge again at any time.
+- **Byp/Act.** — opens a menu: **Bypass All** / **Activate All** for
+  every plugin in the rig, or **Bypass Slot N** / **Activate Slot N** for
+  one slot position across every channel — Slot 0 is the instrument
+  slot, Slots 1–5 the inserts (which include the master's own inserts).
+- **All** — arms (or disarms) every channel and the master together, in
+  one click. It lights only while everything really is armed.
 
 ## 8. Tempo, Sync, and the Metronome Click
 
@@ -320,8 +363,9 @@ and stopping together as a single **take**.
 
 ### Arming and recording
 
-1. Click a channel's **Arm (●)** button (or the master strip's **ARM**
-   button) for every source you want captured. Armed-but-not-recording
+1. Click a channel's **Arm (●)** button (or the master strip's **Arm (●)**
+   button) for every source you want captured — or the master's **All**
+   button to arm everything at once. Armed-but-not-recording
    shows a dim red; armed-and-recording shows solid red.
 2. Click the **Record Ready** button (the red dot icon in the global bar's
    transport controls). This is a two-step "Record Ready" control:
@@ -558,7 +602,7 @@ the first time if not).
 
 **A session saved on my other machine loaded with missing plugins.**
 Confirm the same plugin (same format — VST3 vs. Audio Unit matters, see
-[Cross-Platform Notes](#17-cross-platform-notes)) is actually installed
+[Cross-Platform Notes](#17-cross-platform)) is actually installed
 on this machine, then try **Rescan Plugins** in Settings before reloading
 the session — KPlayer can only relink to plugins its scan already knows
 about.
@@ -579,7 +623,8 @@ about.
 
 ---
 
-*This guide covers Kadabra KPlayer's features as currently shipped. Some
+*This guide covers Kadabra KPlayer's features as currently shipped
+(version 0.9.9). Some
 capabilities described in internal design documents (e.g. a Kadabra MIDI
 SysEx protocol for tighter OS/Player integration) are still in development
 and aren't part of the app yet.*
