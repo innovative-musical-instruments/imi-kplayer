@@ -5,6 +5,32 @@
 
 namespace
 {
+    // A plugin whose internal state has gone NaN/Inf (seen with a plugin
+    // chain on an 8 kHz device) keeps emitting garbage until it is reloaded;
+    // unchecked, that reaches the driver as a constant full-scale level or
+    // silence. Zeroes non-finite samples so one broken plugin can neither
+    // poison the mix nor the recording.
+    void zeroNonFiniteSamples(juce::AudioBuffer<float>& buffer, int numSamples) noexcept
+    {
+        for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+        {
+            auto* d = buffer.getWritePointer(ch);
+            for (int i = 0; i < numSamples; ++i)
+                if (! std::isfinite(d[i]))
+                    d[i] = 0.0f;
+        }
+    }
+
+    // Last line of defence before the driver: output is hard-limited to
+    // +/-1 so a runaway plugin can never hand the device an out-of-range
+    // signal (speaker safety). Call after zeroNonFiniteSamples().
+    void clampToFullScale(juce::AudioBuffer<float>& buffer, int numSamples) noexcept
+    {
+        for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+            juce::FloatVectorOperations::clip(buffer.getWritePointer(ch), buffer.getReadPointer(ch),
+                                              -1.0f, 1.0f, numSamples);
+    }
+
     // First available MIDI input device whose name contains "kadabra"
     // (case-insensitive), or an empty identifier if none is connected -
     // same match ChannelComponent used to do itself for its own default,
@@ -1405,6 +1431,32 @@ void MainComponent::audioDeviceAboutToStart(juce::AudioIODevice* device)
     for (auto& channel : channelProcessors)
         channel->prepareToPlay(currentSampleRate, currentBlockSize);
     masterChainProcessor.prepareToPlay(currentSampleRate, currentBlockSize);
+
+    // Music plugins are rarely tested below 44.1 kHz; at 8 kHz one broke
+    // badly enough to silence the output. Warn, don't block - the rate stays
+    // selectable. Only on a transition into a low rate, not on every restart.
+    constexpr double lowSampleRateThreshold = 32000.0;
+    const bool isLow = currentSampleRate < lowSampleRateThreshold;
+    if (isLow && ! lowSampleRateWarned)
+    {
+        juce::MessageManager::callAsync([safe = juce::Component::SafePointer<MainComponent>(this),
+                                         rate = currentSampleRate]
+        {
+            if (safe == nullptr)
+                return;
+            juce::AlertWindow::showAsync(
+                juce::MessageBoxOptions()
+                    .withIconType(juce::MessageBoxIconType::WarningIcon)
+                    .withTitle("Unusually low sample rate")
+                    .withMessage("The audio device is running at " + juce::String(rate, 0)
+                                 + " Hz. Many plugins misbehave at rates this low, which can cause "
+                                   "silence or noise. Choose 44100 or 48000 Hz in Settings > Audio "
+                                   "(you may also need to change it in the device's own control panel).")
+                    .withButton("OK"),
+                nullptr);
+        });
+    }
+    lowSampleRateWarned = isLow;
 }
 
 void MainComponent::audioDeviceStopped()
@@ -1597,6 +1649,7 @@ void MainComponent::audioDeviceIOCallbackWithContext(
             }
 
         channel->processBlock(channelScratch, channelMidi);
+        zeroNonFiniteSamples(channelScratch, numSamples);
 
         // Tapped post-plugin-chain/gain/pan, pre-mute (see RecordingManager's
         // header comment) - a recorded take shouldn't silently gap because a
@@ -1614,8 +1667,13 @@ void MainComponent::audioDeviceIOCallbackWithContext(
 
     // Post-volume: what the master fader actually delivers, matching "the
     // master will deliver the full mix" from the feature's original ask.
+    zeroNonFiniteSamples(masterBuffer, numSamples);
     recordingManager.writeMasterBlock(masterBuffer);
     recordingManager.noteBlockProcessed(numSamples);
+
+    // After the recording tap, so a take keeps any over-range float headroom;
+    // before the metering, so the clip flag still trips at exactly 1.0.
+    clampToFullScale(masterBuffer, numSamples);
 
     float peakL = masterBuffer.getMagnitude(0, 0, numSamples);
     float peakR = numOutputChannels > 1

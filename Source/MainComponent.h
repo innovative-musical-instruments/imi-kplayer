@@ -691,6 +691,7 @@ private:
     juce::AudioBuffer<float> channelScratch;
 
     double currentSampleRate = 44100.0;
+    bool lowSampleRateWarned = false;
     int    currentBlockSize  = 512;
     double currentTempo      = 120.0;
     int savedWindowWidth  = 0;

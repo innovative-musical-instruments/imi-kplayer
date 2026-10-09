@@ -10,6 +10,19 @@
   (build-time only, never bundled); a build without the SDK simply has no
   ASIO. Mac is unchanged.
 
+### Fixes
+
+- **A broken plugin can no longer silence or blast the output.** A
+  device running at 8000 Hz made a plugin's output go non-finite, and the
+  output stayed dead even after changing device or sample rate. Non-finite
+  (NaN/Inf) samples are now zeroed per channel and at the master, before
+  the recording tap, and the master output is hard-limited to +/-1 before
+  the driver. A plugin whose own state is already corrupted stays silent
+  until reloaded, but it no longer takes the rest of the mix with it.
+- **Warning on unusually low sample rates.** Opening an audio device below
+  32 kHz now shows a one-time message suggesting 44.1 or 48 kHz. The rate
+  remains selectable.
+
 ## v0.9.9 — 2026-09-05
 
 Transport work: a Range to play and loop a section of a take, a metronome
