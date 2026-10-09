@@ -403,6 +403,7 @@ void ChannelProcessor::showEditor(int slotIndex)
                                 slot.bypassed,
                                 [this, slotIndex](bool b) { setBypassed(slotIndex, b); });
         window->setVisible(true);
+        window->resyncScaleWhenShown();
         window->setAlwaysOnTop(true);
     }
 }

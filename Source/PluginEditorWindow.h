@@ -85,6 +85,31 @@ public:
 
     void setBypassed(bool shouldBeBypassed) { bar.setBypassed(shouldBeBypassed); }
 
+    // Re-derives the editor's logical size once the window has a peer (and so
+    // a real DPI scale). The editor is created *before* its window exists, so
+    // JUCE converts the plugin's physical-pixel size to logical using a scale
+    // of 1.0 - on a 200% display that comes out twice too large, and nothing
+    // revisits it afterwards. setScaleFactor() re-sends the content scale to
+    // the plugin and recomputes the size with the now-correct native scale;
+    // the componentMovedOrResized listener below carries it to the window.
+    //
+    // JUCE tells the plugin nativeScale * userScale (here 2.0 on a 200%
+    // display), but K-Player is per-monitor DPI aware: the plugin already
+    // draws into physical pixels, and DPI-aware plugins (Surge XT, Waves)
+    // then apply that 2.0 on top of their own scaling - a doubled GUI,
+    // Surge's own right-click Zoom even reads 200%. Pick the user scale that
+    // makes the factor the plugin receives 1.0. (The size conversion in
+    // JUCE's VST3 window uses the native scale only, so layout stays right.)
+    void resyncEditorScale()
+    {
+        float scaleForPlugin = 1.0f;
+        if (auto* peer = editor->getPeer())
+            if (auto native = peer->getPlatformScaleFactor(); native > 0.0)
+                scaleForPlugin = (float) (1.0 / native);
+
+        editor->setScaleFactor(scaleForPlugin);
+    }
+
     void resized() override
     {
         auto area = getLocalBounds();
@@ -145,6 +170,32 @@ public:
         // getWidth()/getHeight() are already correct (border included) from
         // the setContentOwned() call above - just recentre at that size.
         centreWithSize(getWidth(), getHeight());
+    }
+
+    // Call right after setVisible(true): once the window has a peer, fixes up
+    // the editor's scale/size (see PluginEditorContent::resyncEditorScale)
+    // and recentres. Repeated once after a short delay for plugins (Waves,
+    // Surge) that finish sizing their GUI a beat after attaching.
+    void resyncScaleWhenShown()
+    {
+       #if ! JUCE_WINDOWS
+        return; // the oversized-editor bug is Windows-only; leave Mac alone
+       #endif
+
+        juce::Component::SafePointer<PluginEditorWindow> safe(this);
+
+        auto resync = [safe]
+        {
+            if (safe == nullptr || safe->content == nullptr)
+                return;
+
+            safe->content->resyncEditorScale();
+            safe->centreWithSize(safe->getWidth(), safe->getHeight());
+        };
+
+        resync();
+        juce::MessageManager::callAsync(resync);
+        juce::Timer::callAfterDelay(300, resync);
     }
 
     // Called by ChannelProcessor/MasterChainProcessor::setBypassed() so this
