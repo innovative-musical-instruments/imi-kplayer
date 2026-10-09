@@ -455,8 +455,8 @@ void MainComponent::onScanComplete()
     if (! crashed.isEmpty())
     {
         juce::String message = crashed.size() == 1
-            ? "1 plugin crashed during a previous scan and was automatically skipped:\n\n"
-            : juce::String(crashed.size()) + " plugins crashed during a previous scan and were automatically skipped:\n\n";
+            ? "1 plugin crashed or hung during the scan and was automatically skipped:\n\n"
+            : juce::String(crashed.size()) + " plugins crashed or hung during the scan and were automatically skipped:\n\n";
         message += crashed.joinIntoString("\n");
         message += "\n\nThey've been marked as failed - open the plugin browser's \"Failed to Load\" "
                     "section to retry one.";

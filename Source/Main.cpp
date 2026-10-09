@@ -107,7 +107,12 @@ public:
     // - the second process forwards its command line and exits immediately
     // without touching audio devices, scanning plugins, or creating a
     // window at all.
-    bool moreThanOneInstanceAllowed() override { return false; }
+    // (The out-of-process plugin scanner re-launches this exe as a worker
+    // while the real instance is running - it must not be turned away.)
+    bool moreThanOneInstanceAllowed() override
+    {
+        return PluginManager::isScanWorkerCommandLine(getCommandLineParameters());
+    }
 
     // Called on the *existing* instance when a second launch attempt was
     // just turned away above - bring it to the front instead of the user
@@ -129,8 +134,18 @@ public:
         }
     }
 
-    void initialise(const juce::String&) override
+    void initialise(const juce::String& commandLine) override
     {
+        // Plugin-scan worker: no window, no audio, no splash. Scans the
+        // files it was handed and exits - see PluginManager::runScanWorker().
+        // Deferred a tick so the message loop is running (some plugins want
+        // the main thread's run loop during load).
+        if (PluginManager::isScanWorkerCommandLine(commandLine))
+        {
+            juce::MessageManager::callAsync([commandLine] { PluginManager::runScanWorker(commandLine); });
+            return;
+        }
+
         // Before anything else gets painted (including the splash right
         // below) - see KPlayerLookAndFeel's own header comment.
         juce::LookAndFeel::setDefaultLookAndFeel(&lookAndFeel);
@@ -369,6 +384,15 @@ public:
         static juce::File getRecoverSessionFile()
         {
             return getKadabraCommonDirectory().getChildFile("recover.kplayer");
+        }
+
+        // Written next to recover.kplayer at every Kadabra quit: line 1 is
+        // the full path of the real session file that was open (absent file
+        // = it was Untitled), line 2 is "dirty" or "clean" depending on
+        // whether it had unsaved changes. Read by tryAutoLoadKadabraSession().
+        static juce::File getLastSessionPointerFile()
+        {
+            return getKadabraCommonDirectory().getChildFile("last_session.txt");
         }
 
         // Read-only factory starter session, placed here by the Kadabra
@@ -640,6 +664,16 @@ public:
                 auto recoverFile = getRecoverSessionFile();
                 recoverFile.getParentDirectory().createDirectory();
                 SessionIO::saveSession(recoverFile, *mainComponent, deviceManager);
+
+                // Remember which real file (if any) this was, so the next
+                // launch can reopen it instead of the anonymous snapshot.
+                auto pointer = getLastSessionPointerFile();
+                if (currentSessionFile.existsAsFile())
+                    pointer.replaceWithText(currentSessionFile.getFullPathName() + "\n"
+                                            + (sessionDirty ? "dirty" : "clean") + "\n");
+                else
+                    pointer.deleteFile();
+
                 onProceed();
                 return;
             }
@@ -912,10 +946,40 @@ public:
             if (! isKadabraConnected())
                 return;
 
+            // 1. The session that was actually open at the last quit, so the
+            // window shows its real name and a plain Save writes back to it.
+            // If it had unsaved changes at quit, those live in recover.kplayer
+            // - load that content but bind it to the real file, marked dirty.
             auto recoverFile = getRecoverSessionFile();
+            auto pointer = getLastSessionPointerFile();
+            if (pointer.existsAsFile())
+            {
+                juce::StringArray lines;
+                lines.addLines(pointer.loadFileAsString());
+                juce::File lastFile(lines[0].trim());
+                bool hadUnsaved = lines[1].trim() == "dirty";
+
+                if (lines[0].trim().isNotEmpty() && lastFile.existsAsFile())
+                {
+                    if (hadUnsaved && recoverFile.existsAsFile() && loadSessionFile(recoverFile, false))
+                    {
+                        currentSessionFile = lastFile;
+                        recentFiles.addFile(lastFile);
+                        saveRecentFilesList();
+                        markDirty();
+                        return;
+                    }
+
+                    if (loadSessionFile(lastFile))
+                        return;
+                }
+            }
+
+            // 2. recover.kplayer, unbound (Save behaves as Save As).
             if (recoverFile.existsAsFile() && loadSessionFile(recoverFile, false))
                 return;
 
+            // 3. Starter.kplayer.
             auto starterFile = getStarterSessionFile();
             if (starterFile.existsAsFile())
                 loadSessionFile(starterFile, false);

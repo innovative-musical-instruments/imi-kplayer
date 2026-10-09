@@ -192,3 +192,19 @@ surfaced the message-thread-blocking ceiling concretely. Revisit when
 ready to schedule the implementation; likely a substantial single
 increment given the new worker-mode entry point, IPC protocol, and
 packaging verification — not something to fold into a smaller pass.
+
+## Implemented — 2026-10-09 (v1.0.0)
+
+Built a simpler variant than the `ChildProcessCoordinator` sketch above:
+`PluginManager::scanOutOfProcess()` launches this same exe as
+`--kplayer-scan-worker <listfile>` (one worker for the whole remaining list,
+option (b)), reads line events from its stdout (`BEGIN`/`DONE`/`END`, see the
+comment above `runScanWorker()`), and a watchdog thread kills it after 60 s of
+silence (`KPLAYER_SCAN_TIMEOUT_MS` overrides, for testing). A `BEGIN` with no
+`DONE` when the pipe closes names the culprit: it is blacklisted and the cache
+saved immediately, then a fresh worker continues with the rest — same launch,
+no relaunch of the app. If the worker can't start at all, the old in-process
+loop runs as a fallback. Verified on Windows with deliberately crashing and
+hanging test VST3s. A *deferred* crash (plugin thread dies after its scan
+returned) is blamed on whichever plugin is in flight at that moment, but the
+scan still completes. Mac untested.

@@ -9,8 +9,22 @@
   own control-panel button. Built against the Steinberg ASIO SDK 2.3.4
   (build-time only, never bundled); a build without the SDK simply has no
   ASIO. Mac is unchanged.
+- **Launching with Kadabra connected reopens the session you were actually
+  working on**, not an anonymous recovery snapshot: the title bar shows its
+  real name and Save writes straight back to it. Unsaved changes at quit are
+  kept (the session reopens modified). Falls back to the recovery snapshot,
+  then the starter session, if the file is gone.
 
 ### Fixes
+
+- **Surge XT, Waves and other DPI-aware plugins no longer open at double
+  size on high-DPI Windows displays** (the plugin was told to scale itself
+  on top of the scaling already applied).
+
+- **A plugin that crashes or hangs during the scan no longer takes
+  K-Player down.** Plugin scanning now runs in a helper copy of the app; a
+  plugin that crashes it, or goes quiet for 60 seconds (a licence dialog, say),
+  is blacklisted on the spot and the scan carries on in the same launch.
 
 - **A broken plugin can no longer silence or blast the output.** A
   device running at 8000 Hz made a plugin's output go non-finite, and the

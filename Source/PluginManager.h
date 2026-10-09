@@ -9,6 +9,14 @@ public:
     ~PluginManager();
 
     void scanPlugins();
+
+    // Out-of-process scanning: the scan itself runs in a child copy of this
+    // exe (command line "--kplayer-scan-worker <listfile>") so a plugin that
+    // crashes or hangs while loading only takes the child down. See
+    // scanPlugins() for the parent side and runScanWorker() for the child.
+    static bool isScanWorkerCommandLine(const juce::String& commandLine);
+    [[noreturn]] static void runScanWorker(const juce::String& commandLine);
+
     void scanPluginsAsync(std::function<void()> onComplete);
 
     juce::KnownPluginList& getPluginList() { return knownPluginList; }
@@ -62,6 +70,9 @@ private:
     juce::String currentlyScanningPluginName;
     float currentScanProgress = 0.0f;
     juce::StringArray lastCrashedPlugins;
+    // Returns false if the worker process couldn't be launched at all, in
+    // which case scanPlugins() falls back to the old in-process loop.
+    bool scanOutOfProcess(const juce::FileSearchPath& searchPath);
     juce::File getFavoritesFile();
     juce::File getRecentlyUsedFile();
     void loadFavoritesAndRecent();
