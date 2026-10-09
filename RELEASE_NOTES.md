@@ -1,5 +1,15 @@
 # Kadabra K-Player — Release Notes
 
+## v1.0.0 — 2026-10-09
+
+### New Features
+
+- **ASIO audio devices on Windows** — "ASIO" now appears as an audio device
+  type in Settings alongside WASAPI and DirectSound, including the driver's
+  own control-panel button. Built against the Steinberg ASIO SDK 2.3.4
+  (build-time only, never bundled); a build without the SDK simply has no
+  ASIO. Mac is unchanged.
+
 ## v0.9.9 — 2026-09-05
 
 Transport work: a Range to play and loop a section of a take, a metronome

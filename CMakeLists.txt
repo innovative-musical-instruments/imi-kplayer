@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(IMI_KPlayer VERSION 0.9.9)
+project(IMI_KPlayer VERSION 1.0.0)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -16,7 +16,36 @@ set(KPLAYER_DEVELOPMENT_TEAM "B74YHJSPSY" CACHE STRING "Apple Developer Team ID 
 if(APPLE)
     add_subdirectory(/Users/amirvinci/SDKs/JUCE JUCE)
 elseif(WIN32)
-    add_subdirectory(C:/SDKs/JUCE JUCE)
+    # The SDKs folder was moved from C:/SDKs to C:/Dev/SDKs on this machine;
+    # prefer the original location so other setups are unchanged.
+    if(EXISTS C:/SDKs/JUCE)
+        add_subdirectory(C:/SDKs/JUCE JUCE)
+    else()
+        add_subdirectory(C:/Dev/SDKs/JUCE JUCE)
+    endif()
+endif()
+
+# Steinberg ASIO SDK (Windows only). Optional: if it isn't found the build
+# just has no ASIO device type (WASAPI/DirectSound only). Set
+# KPLAYER_ASIO_SDK_DIR to the ASIOSDK folder (the one containing
+# common/iasiodrv.h) to override auto-detection.
+set(KPLAYER_ASIO_SDK_DIR "" CACHE PATH "Steinberg ASIO SDK root (the ASIOSDK folder); empty = auto-detect")
+set(KPLAYER_ENABLE_ASIO OFF)
+if(WIN32)
+    if(NOT KPLAYER_ASIO_SDK_DIR)
+        file(GLOB _asio_candidates "C:/Dev/SDKs/ASIO-SDK*/ASIOSDK" "C:/SDKs/ASIO-SDK*/ASIOSDK")
+        list(SORT _asio_candidates)
+        list(REVERSE _asio_candidates)
+        if(_asio_candidates)
+            list(GET _asio_candidates 0 KPLAYER_ASIO_SDK_DIR)
+        endif()
+    endif()
+    if(KPLAYER_ASIO_SDK_DIR AND EXISTS "${KPLAYER_ASIO_SDK_DIR}/common/iasiodrv.h")
+        set(KPLAYER_ENABLE_ASIO ON)
+        message(STATUS "ASIO enabled, SDK: ${KPLAYER_ASIO_SDK_DIR}")
+    else()
+        message(STATUS "ASIO SDK not found - building without ASIO")
+    endif()
 endif()
 
 # Binary-embedded assets (logos, About/splash art, app icons) so the app
@@ -173,6 +202,15 @@ target_compile_definitions(IMI_KPlayer PRIVATE
     JUCE_APPLICATION_NAME_STRING="$<TARGET_PROPERTY:IMI_KPlayer,JUCE_PRODUCT_NAME>"
     JUCE_APPLICATION_VERSION_STRING="$<TARGET_PROPERTY:IMI_KPlayer,JUCE_VERSION>"
 )
+
+if(KPLAYER_ENABLE_ASIO)
+    target_compile_definitions(IMI_KPlayer PRIVATE
+        JUCE_ASIO=1
+        JUCE_ASIO_USE_EXTERNAL_SDK=1
+    )
+    # JUCE locates "iasiodrv.h" via the include path.
+    target_include_directories(IMI_KPlayer PRIVATE "${KPLAYER_ASIO_SDK_DIR}/common")
+endif()
 
 target_link_libraries(IMI_KPlayer PRIVATE
     KPlayerAssets
